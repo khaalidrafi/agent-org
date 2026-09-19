@@ -225,14 +225,13 @@ CONTENT is the tool-call alist from the ACP notification."
           (insert "\n"))))))
 
 (defun agent-org-buffer-insert-system (buffer message)
-  "Insert a system notice MESSAGE into BUFFER as a comment line."
+  "Insert a system notice MESSAGE into BUFFER."
   (with-current-buffer buffer
     (let ((inhibit-read-only t))
       (save-excursion
         (goto-char (point-max))
         (unless (bolp) (insert "\n"))
-        (insert (format "\n#+begin_comment\n%s\n#+end_comment\n"
-                        message))))))
+        (insert (format "\n- System: %s\n" message))))))
 
 (provide 'agent-org-buffer)
 ;;; agent-org-buffer.el ends here

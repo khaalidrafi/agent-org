@@ -40,7 +40,7 @@ Also print a friendly message in the minibuffer."
             (lambda (buffer message)
               (unless agent-org--suppress-acp-errors
                 (with-current-buffer buffer
-                  (insert (format "\n#+begin_comment\nACP error: %s\n#+end_comment\n" message))))))
+                  (insert (format "\n- ACP error: %s\n" message))))))
 
 ;; New notification handler that integrates the loader.
 (defun agent-org--loader-on-notification (session notification)
@@ -49,13 +49,11 @@ Extract text from `agent_message_chunk` notifications and update the
 progress reporter when a loader percentage is supplied.
 All other notifications fall back to the original implementation.
 The original implementation is stored as `agent-org--default-on-notification`.
-If that symbol does not exist we simply ignore the notification.
-
+If that symbol does not exist we simply ignore the notification."
   (let* ((buffer (plist-get session :buffer))
          (method (map-elt notification 'method))
          (params (map-elt notification 'params))
          (update (map-nested-elt params '(update sessionUpdate)))
-         (loader (map-nested-elt params '(update loader)))
          (content (map-nested-elt params '(update content))))
     (cond
      ;; Session ID becomes known – clear loader.
@@ -63,8 +61,8 @@ If that symbol does not exist we simply ignore the notification.
       (let ((sid (map-elt (map-nested-elt params '(sessionInfo)) 'sessionId)))
         (when sid
           (setf (plist-get session :session-id) sid)
-                (agent-org--clear-loader)
-                (message "Session ID: %s" sid)))))
+          (agent-org--clear-loader)
+          (message "Session ID: %s" sid))))
      ;; Agent message chunk – extract plain text.
      ((and (equal method "session/update") (equal update "agent_message_chunk"))
       (let ((text (or (map-elt content 'text)
@@ -75,10 +73,10 @@ If that symbol does not exist we simply ignore the notification.
      ((and (equal method "session/update") (equal update "turn_complete"))
       (with-current-buffer buffer
         (org-ctrl-c-ctrl-c)))
-     (t nil)))
+     (t nil))
     ;; Fallback to original handler if it exists.
     (when (fboundp 'agent-org--default-on-notification)
-      (agent-org--default-on-notification session notification)))
+      (agent-org--default-on-notification session notification))))
 
 ;; Replace the original handler with our loader‑aware version.
 (when (fboundp 'agent-org--on-notification)
