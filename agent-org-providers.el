@@ -25,8 +25,7 @@
 ;; Each provider is a plist:
 ;;   :id           - symbol (e.g. 'goose)
 ;;   :name         - human-readable name
-;;   :command      - list (binary . params), e.g. '("goose" "acp")
-;;   :command-params - (kept in :command for acp-make-client)
+;;   :command      - full command line (binary . args), e.g. '("goose" "acp")
 ;;   :environment  - function returning a list of "VAR=val" strings
 ;;
 ;; Add a provider by pushing onto `agent-org-providers'.

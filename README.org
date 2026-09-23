@@ -1,0 +1,73 @@
+#+title: agent-org — Org-native ACP client for Emacs
+#+author: Khalid
+
+* What is this?
+
+~agent-org~ is a lightweight, Org-native chat UI for coding agents that
+speak [[https://agentclientprotocol.com/][ACP]] (Agent Client Protocol).  Unlike ~agent-shell~, it runs no hidden
+comint/terminal buffer: it talks to the ~acp~ package directly and
+renders agent output natively as Org headlines.
+
+All status, progress and error feedback appears in the chat buffer's
+*header line* (the top bar, as used by ~gptel~ and ~agent-shell~) —
+never in the document body.  The body only ever contains ~* User~ and
+~* Agent~ conversation content (plus ~** Tool:~ headings and
+~:thinking:~ drawers).
+
+* Prerequisites
+
+- Emacs 29.1+ (Org 9.0+ built in)
+- The ~acp~ package (e.g. from NonGNU ELPA)
+- An ACP agent binary on ~exec-path~, e.g. ~goose~ (1.50+ tested)
+
+* Install
+
+#+begin_src elisp
+(add-to-list 'load-path "~/agent-org")
+(require 'agent-org)
+#+end_src
+
+* Quickstart
+
+1. M-x ~agent-org-start~ RET ~goose~ RET
+   Opens =~*agent-org: Goose*= and shows ~Goose  Starting — Connecting…~
+   in the header line.  When the ACP ~initialize~ + ~session/new~
+   handshake completes it flips to ~Goose  Ready  [session-id]~.
+   Note: the first ~session/new~ can take tens of seconds while goose
+   loads its extensions — the buffer stays in "Connecting…" meanwhile.
+2. Compose and send:
+
+   | Key       | Action                                              |
+   |-----------+-----------------------------------------------------|
+   | ~C-c C-u~ | Open a fresh ~* User~ heading at end (buffer unlocks) |
+   | ~C-c C-c~ | Send the prompt under point (or read one in minibuffer) |
+   | ~C-c C-k~ | Cancel an empty composition, re-lock the buffer     |
+
+   With the buffer unlocked by ~C-c C-u~, just type and hit ~C-c C-c~ —
+   the typed text is sent as-is, no minibuffer prompt.
+3. Watch the reply stream under a ~* Agent~ heading; tool calls appear
+   as ~** Tool: name [id]~ and extended thinking in ~:thinking:~
+   drawers, one per turn.
+
+If the agent asks for permission, the header line shows
+~Awaiting — Permission required~ and the minibuffer offers the
+agent's options; quitting the prompt (ESC / C-g) safely declines.
+
+* Configuration
+
+- ~agent-org-use-header-line~ — when nil, status messages go to the
+  echo area via ~message~ instead of the top bar.
+- ~agent-org-providers~ — alist of provider plists (~:id~, ~:name~,
+  ~:command~ (binary + args), ~:environment~).  Add more agents by
+  customizing it or pushing onto it in your init.
+
+* Development
+
+- Offline tests (mock ~acp~, no live agent needed):
+  #+begin_src sh
+  emacs -Q --batch --eval "(add-to-list 'load-path \"$PWD\")" \
+    --eval "(load \"tests/test-agent-org.el\")" \
+    --eval "(ert-run-tests-batch-and-exit)"
+  #+end_src
+- Live smoke test against real goose: ~./run-loader-test.sh~
+- See ~AGENTS.md~ for build/lint commands and code conventions.

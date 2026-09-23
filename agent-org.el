@@ -38,7 +38,10 @@
 ;; picks a provider (e.g. Goose), opens an Org chat buffer, starts an
 ;; ACP session, and streams responses straight into it.
 ;;
-;; See `agent-org-providers.el' for adding new agents.
+;; Status, progress and errors are shown in the chat buffer's
+;; header line (the top bar), never in the document body.  See
+;; `agent-org-buffer.el' for the status model and
+;; `agent-org-providers.el' for adding new agents.
 
 ;;; Code:
 
@@ -68,8 +71,20 @@ Each entry is a plist:
   :streaming   - non-nil while a turn is streaming")
 
 (defun agent-org--register-session (entry)
-  "Add ENTRY to `agent-org--sessions'."
-  (push entry agent-org--sessions))
+  "Add ENTRY to `agent-org--sessions'.
+Installs a buffer-local hook so the entry is dropped when its buffer
+is killed."
+  (push entry agent-org--sessions)
+  (when-let* ((buf (plist-get entry :buffer)))
+    (with-current-buffer buf
+      (add-hook 'kill-buffer-hook #'agent-org--forget-session nil t))))
+
+(defun agent-org--forget-session ()
+  "Remove the current buffer's session from `agent-org--sessions'."
+  (let ((buf (current-buffer)))
+    (setq agent-org--sessions
+          (seq-remove (lambda (s) (eq (plist-get s :buffer) buf))
+                      agent-org--sessions))))
 
 (defun agent-org--session-for-buffer (buffer)
   "Return the session plist whose :buffer is BUFFER, or nil."
@@ -92,9 +107,9 @@ When called interactively, prompt for the provider."
   (let* ((provider (if (symbolp provider) provider (intern provider)))
          (spec (seq-find (lambda (p) (eq (plist-get p :id) provider))
                          agent-org-providers))
-         (command (plist-get spec :command))
-         (params (plist-get spec :command-params))
-         (env (funcall (plist-get spec :environment))))
+         (command (and spec (plist-get spec :command)))
+         (params (and command (cdr command)))
+         (env (and spec (funcall (plist-get spec :environment)))))
     (unless spec
       (user-error "Unknown provider: %S" provider))
     (unless (executable-find (car command))
@@ -114,8 +129,9 @@ When called interactively, prompt for the provider."
       (agent-org--subscribe client session)
       (agent-org-buffer-set-session buffer session)
       (switch-to-buffer buffer)
-      (agent-org--show-loader)   ;; show progress bar while initializing
-      (agent-org--initialize session))))
+      (agent-org-loader-begin buffer)
+      (agent-org--initialize session)
+      buffer)))
 
 (defun agent-org--initialize (session)
   "Run ACP initialize handshake then start a session/new for SESSION."
@@ -140,14 +156,13 @@ When called interactively, prompt for the provider."
                     :on-success (lambda (resp)
                                   (let ((sid (map-elt resp 'sessionId)))
                                     (setf (plist-get session :session-id) sid)
-                                    (agent-org-buffer-insert-system
-                                     buffer (format "Session started: %s" sid))))
-                    :on-failure (lambda (err msg)
-                                  (agent-org-buffer-insert-system
-                                   buffer (format "session/new failed: %s %S" msg err)))))
-     :on-failure (lambda (err msg)
-                   (agent-org-buffer-insert-system
-                    buffer (format "initialize failed: %s %S" msg err))))))
+                                    (agent-org-loader-finish buffer :session-id sid)))
+                    :on-failure (lambda (_err msg)
+                                  (agent-org-loader-fail buffer
+                                    (format "session/new failed: %s" msg)))))
+     :on-failure (lambda (_err msg)
+                   (agent-org-loader-fail buffer
+                     (format "initialize failed: %s" msg))))))
 
 ;;;; Event subscription
 
@@ -167,21 +182,51 @@ When called interactively, prompt for the provider."
    :client client
    :buffer (plist-get session :buffer)
    :on-error (lambda (err)
-               (agent-org-buffer-insert-system
+               (agent-org-buffer-set-status
                 (plist-get session :buffer)
-                (format "ACP error: %s"
-                        (or (map-elt err 'message)
-                            (map-elt err 'data)
-                            "unknown"))))))
+                :state 'error
+                :message (format "ACP error: %s"
+                                 (or (map-elt err 'message)
+                                     (map-elt err 'data)
+                                     "unknown"))))))
 
-(when (fboundp 'agent-org--on-notification)
-  (defalias 'agent-org--default-on-notification
-    (symbol-function 'agent-org--on-notification)))
+;;;; Notification dispatch
+
+(defun agent-org--chunk-text (content)
+  "Extract plain text from an ACP message/thought CONTENT value.
+CONTENT may be a text ContentBlock alist or a bare string."
+  (cond
+   ((stringp content) content)
+   ((and (listp content) (map-elt content 'text))
+    (map-elt content 'text))))
 
 (defun agent-org--on-notification (session notification)
-  "Dispatch notifications through the loader‑aware handler."
-  (agent-org--loader-on-notification session notification))
+  "Dispatch one ACP NOTIFICATION for SESSION into the Org buffer.
+This is the single, non-recursive notification handler; every update
+kind is handled here and nothing is delegated to another handler."
+  (let* ((buffer (plist-get session :buffer))
+         (method (map-elt notification 'method))
+         (params (map-elt notification 'params))
+         (update (map-elt params 'update))
+         (kind (map-elt update 'sessionUpdate)))
+    (when (equal method "session/update")
+      (pcase kind
+        ("session_info_update"
+         (when-let* ((sid (map-elt params 'sessionId)))
+           (setf (plist-get session :session-id) sid)
+           (agent-org-loader-finish buffer :session-id sid)))
+        ("agent_message_chunk"
+         (agent-org-buffer-set-status buffer :state 'streaming :message nil)
+         (when-let* ((text (agent-org--chunk-text (map-elt update 'content))))
+           (agent-org-buffer-append-chunk buffer text session)))
+        ("agent_thought_chunk"
+         (when-let* ((text (agent-org--chunk-text (map-elt update 'content))))
+           (agent-org-buffer-append-thought buffer text)))
+        ((or "tool_call" "tool_call_update")
+         (agent-org-buffer-insert-tool buffer update))
+        (_ nil)))))
 
+;;;; Incoming request handling
 
 (defun agent-org--on-request (session request)
   "Handle an incoming ACP REQUEST from the agent (must respond)."
@@ -192,7 +237,7 @@ When called interactively, prompt for the provider."
          (params (map-elt request 'params)))
     (pcase method
       ("fs/read_text_file"
-       (let* ((path (map-nested-elt params '(path)))
+       (let* ((path (map-elt params 'path))
               (expanded (expand-file-name path (plist-get session :cwd))))
          (if (file-readable-p expanded)
              (acp-send-response
@@ -210,8 +255,8 @@ When called interactively, prompt for the provider."
                                :code -32000
                                :message (format "File not readable: %s" path)))))))
       ("fs/write_text_file"
-       (let* ((path (map-nested-elt params '(path)))
-              (content (map-nested-elt params '(content)))
+       (let* ((path (map-elt params 'path))
+              (content (map-elt params 'content))
               (expanded (expand-file-name path (plist-get session :cwd))))
          (condition-case err
              (progn
@@ -230,25 +275,40 @@ When called interactively, prompt for the provider."
                                 :code -32000
                                 :message (format "Write failed: %S" err))))))))
       ("session/request_permission"
-       (let ((opts (map-nested-elt params '(options))))
-         (agent-org-buffer-insert-system
-          buffer (format "Permission requested: %S" (map-elt params 'toolCall)))
-         (let ((choice (agent-org--prompt-permission opts)))
-           (acp-send-response
-            :client client
-            :response (acp-make-session-request-permission-response
-                       :request-id req-id
-                       :option-id (car (split-string choice))
-                       :cancelled (equal choice "cancel"))))))
-      (_ (agent-org-buffer-insert-system
-          buffer (format "Unhandled request: %s" method))))))
+       (let ((previous
+              ;; copy: plist-put mutates the status list in place
+              (copy-sequence (buffer-local-value 'agent-org-buffer--status buffer)))
+             (opts (map-elt params 'options)))
+         (agent-org-buffer-set-status buffer :state 'awaiting :message "Permission required")
+         (unwind-protect
+             (condition-case nil
+                 (let ((choice (agent-org--prompt-permission opts)))
+                   (if (equal choice "cancel")
+                       (acp-send-response
+                        :client client
+                        :response (acp-make-session-request-permission-response
+                                   :request-id req-id :cancelled t))
+                     (acp-send-response
+                      :client client
+                      :response (acp-make-session-request-permission-response
+                                 :request-id req-id
+                                 :option-id (car (split-string choice))))))
+               (quit
+                (acp-send-response
+                 :client client
+                 :response (acp-make-session-request-permission-response
+                            :request-id req-id :cancelled t))))
+           (apply #'agent-org-buffer-set-status buffer previous))))
+      (_
+       (agent-org-buffer-set-status
+        buffer :message (format "Unhandled request: %s" method))))))
 
 (defun agent-org--prompt-permission (options)
   "Prompt the user to pick one OPTION-ID from OPTIONS (alist list).
 Returns the chosen option id string, or \"cancel\"."
   (let* ((candidates
           (seq-map (lambda (o) (cons (map-elt o 'label) (map-elt o 'id)))
-                    options))
+                   options))
          (choice (completing-read "Allow? "
                                   (append (seq-map #'car candidates)
                                           '("cancel"))
@@ -269,29 +329,39 @@ Currently supports plain text blocks only."
 
 ;;;###autoload
 (defun agent-org-send ()
-  "Send the User prompt under point (or at end) to the active session."
+  "Send the User prompt under point (or prompt in the minibuffer)."
   (interactive)
   (let* ((buffer (current-buffer))
          (session (agent-org--session-for-buffer buffer)))
     (unless session
       (user-error "Not an agent-org chat buffer"))
-    (let ((text (agent-org-buffer-read-prompt buffer)))
-      (unless (and text (not (string-empty-p (string-trim text))))
-        (user-error "Empty prompt"))
-      (agent-org-buffer-insert-user buffer text)
+    (unless (plist-get session :session-id)
+      (user-error "Session not ready"))
+    (pcase-let ((`(,text . ,composed-p) (agent-org-buffer-read-prompt buffer)))
+      (unless composed-p
+        (agent-org-buffer-insert-user buffer text))
+      (with-current-buffer buffer
+        (read-only-mode 1)
+        (goto-char (point-max)))
       (let ((client (plist-get session :client))
             (sid (plist-get session :session-id)))
-        (unless sid
-          (user-error "Session not ready"))
+        (setf (plist-get session :streaming) t)
+        (agent-org-buffer-set-status buffer :state 'streaming :message "Sending…")
         (acp-send-request
          :client client
          :request (acp-make-session-prompt-request
                    :session-id sid
                    :prompt (agent-org--make-content-blocks text))
          :buffer buffer
-         :on-failure (lambda (err msg)
-                       (agent-org-buffer-insert-system
-                        buffer (format "prompt failed: %s %S" msg err))))))))
+         :on-success (lambda (_resp)
+                       (setf (plist-get session :streaming) nil)
+                       (agent-org-buffer-end-agent-turn buffer)
+                       (agent-org-buffer-set-status buffer :state 'ready :message "Ready"))
+         :on-failure (lambda (_err msg)
+                       (setf (plist-get session :streaming) nil)
+                       (agent-org-buffer-end-agent-turn buffer)
+                       (agent-org-buffer-set-status
+                        buffer :state 'error :message (format "prompt failed: %s" msg))))))))
 
 (provide 'agent-org)
 ;;; agent-org.el ends here
