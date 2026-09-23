@@ -91,6 +91,17 @@ is killed."
   (seq-find (lambda (s) (eq (plist-get s :buffer) buffer))
             agent-org--sessions))
 
+(defun agent-org--session-ready (session sid)
+  "Mark SESSION live under ACP session id SID and open the input prompt.
+Safe to call repeatedly: prompt insertion is idempotent and skipped
+while any turn is in flight (Goose fires session_info_update mid-turn
+for title updates; the send callbacks re-open the prompt afterwards)."
+  (setf (plist-get session :session-id) sid)
+  (let ((buffer (plist-get session :buffer)))
+    (agent-org-loader-finish buffer :session-id sid)
+    (unless (plist-get session :streaming)
+      (agent-org-buffer-insert-prompt buffer))))
+
 ;;;; Lifecycle
 
 ;;;###autoload
@@ -154,9 +165,8 @@ When called interactively, prompt for the provider."
                     :request (acp-make-session-new-request :cwd cwd)
                     :buffer buffer
                     :on-success (lambda (resp)
-                                  (let ((sid (map-elt resp 'sessionId)))
-                                    (setf (plist-get session :session-id) sid)
-                                    (agent-org-loader-finish buffer :session-id sid)))
+                                  (agent-org--session-ready session
+                                    (map-elt resp 'sessionId)))
                     :on-failure (lambda (_err msg)
                                   (agent-org-loader-fail buffer
                                     (format "session/new failed: %s" msg)))))
@@ -213,8 +223,7 @@ kind is handled here and nothing is delegated to another handler."
       (pcase kind
         ("session_info_update"
          (when-let* ((sid (map-elt params 'sessionId)))
-           (setf (plist-get session :session-id) sid)
-           (agent-org-loader-finish buffer :session-id sid)))
+           (agent-org--session-ready session sid)))
         ("agent_message_chunk"
          (agent-org-buffer-set-status buffer :state 'streaming :message nil)
          (when-let* ((text (agent-org--chunk-text (map-elt update 'content))))
@@ -329,20 +338,18 @@ Currently supports plain text blocks only."
 
 ;;;###autoload
 (defun agent-org-send ()
-  "Send the User prompt under point (or prompt in the minibuffer)."
+  "Send the typed prompt at the end of the chat buffer to the agent."
   (interactive)
   (let* ((buffer (current-buffer))
          (session (agent-org--session-for-buffer buffer)))
     (unless session
       (user-error "Not an agent-org chat buffer"))
+    (when (plist-get session :streaming)
+      (user-error "Agent is still responding"))
     (unless (plist-get session :session-id)
       (user-error "Session not ready"))
-    (pcase-let ((`(,text . ,composed-p) (agent-org-buffer-read-prompt buffer)))
-      (unless composed-p
-        (agent-org-buffer-insert-user buffer text))
-      (with-current-buffer buffer
-        (read-only-mode 1)
-        (goto-char (point-max)))
+    (let ((text (agent-org-buffer-read-prompt buffer)))
+      (with-current-buffer buffer (goto-char (point-max)))
       (let ((client (plist-get session :client))
             (sid (plist-get session :session-id)))
         (setf (plist-get session :streaming) t)
@@ -356,12 +363,14 @@ Currently supports plain text blocks only."
          :on-success (lambda (_resp)
                        (setf (plist-get session :streaming) nil)
                        (agent-org-buffer-end-agent-turn buffer)
-                       (agent-org-buffer-set-status buffer :state 'ready :message "Ready"))
+                       (agent-org-buffer-set-status buffer :state 'ready :message "Ready")
+                       (agent-org-buffer-insert-prompt buffer))
          :on-failure (lambda (_err msg)
                        (setf (plist-get session :streaming) nil)
                        (agent-org-buffer-end-agent-turn buffer)
                        (agent-org-buffer-set-status
-                        buffer :state 'error :message (format "prompt failed: %s" msg))))))))
+                        buffer :state 'error :message (format "prompt failed: %s" msg))
+                       (agent-org-buffer-insert-prompt buffer)))))))
 
 (provide 'agent-org)
 ;;; agent-org.el ends here

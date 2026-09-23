@@ -35,19 +35,18 @@ never in the document body.  The body only ever contains ~* User~ and
    handshake completes it flips to ~Goose  Ready  [session-id]~.
    Note: the first ~session/new~ can take tens of seconds while goose
    loads its extensions — the buffer stays in "Connecting…" meanwhile.
-2. Compose and send:
-
-   | Key       | Action                                              |
-   |-----------+-----------------------------------------------------|
-   | ~C-c C-u~ | Open a fresh ~* User~ heading at end (buffer unlocks) |
-   | ~C-c C-c~ | Send the prompt under point (or read one in minibuffer) |
-   | ~C-c C-k~ | Cancel an empty composition, re-lock the buffer     |
-
-   With the buffer unlocked by ~C-c C-u~, just type and hit ~C-c C-c~ —
-   the typed text is sent as-is, no minibuffer prompt.
+2. Type at the end of the buffer — no unlocking, no composing step.
+   Once the session is Ready a live =~* User=~ prompt appears: the
+   heading itself is frozen, but the empty line under it is always
+   typeable.  Hit ~C-c C-c~ to send; the typed text freezes in place
+   as your turn and a fresh prompt opens under the reply.  Everything
+   the program writes (headings, agent output, tool calls) is
+   read-only via text properties, so chat history can't be mangled by
+   accident.  ~cursor-intangible-mode~ keeps point out of frozen text.
 3. Watch the reply stream under a ~* Agent~ heading; tool calls appear
    as ~** Tool: name [id]~ and extended thinking in ~:thinking:~
-   drawers, one per turn.
+   drawers, one per turn.  Sending while the agent is still
+   responding is refused (~Agent is still responding~).
 
 If the agent asks for permission, the header line shows
 ~Awaiting — Permission required~ and the minibuffer offers the

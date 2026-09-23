@@ -29,10 +29,16 @@
 ;; All status, progress and error feedback is shown in the buffer's
 ;; `header-line' (the top bar), the same way `gptel' and `agent-shell'
 ;; surface state.  Nothing but real conversation (User/Agent turns,
-;; tool calls, thoughts) is ever written into the document body.
+;; tool calls, thoughts) is ever written into the buffer body.
 ;;
-;; Design:
-;;   - No comint, no terminal, no overlays — just Org text.
+;; Design (agent-shell-style always-typable buffer):
+;;   - No comint, no terminal, no global read-only — just Org text.
+;;   - Programmatic text (headings, streamed chunks, tool calls,
+;;     thoughts) is frozen with `read-only' + `cursor-intangible'
+;;     text properties; `cursor-intangible-mode' keeps point out of it.
+;;   - Between turns the buffer ends in a live `* User' prompt: the
+;;     heading is frozen, the body below it stays typeable, so the
+;;     user just types and hits C-c C-c.
 ;;   - Status lives in `header-line', never in the buffer body.
 ;;   - Font-lock disabled during active streaming for max throughput,
 ;;     re-enabled on `agent-org-buffer-end-agent-turn'.
@@ -119,15 +125,17 @@ Pure function of the buffer-local status plist; safe to call headless."
 
 (defun agent-org-buffer-create (name)
   "Create and return a new Org chat buffer named *agent-org: NAME*.
-Buffer is in `org-mode', `agent-org-mode' minor mode, read-only, with a
-status header line installed by the minor mode."
+Buffer is in `org-mode' and `agent-org-mode' with a status header line.
+Programmatic text is protected by `read-only' text properties, not by
+a global `buffer-read-only', so the live prompt at the end is always
+typeable."
   (let ((buf (generate-new-buffer (format "*agent-org: %s*" name))))
     (with-current-buffer buf
       (org-mode)
+      (cursor-intangible-mode 1)
       (setq agent-org-buffer--status
             (list :provider name :state 'starting :message "Connecting…" :session-id nil))
-      (agent-org-mode 1)
-      (read-only-mode 1))
+      (agent-org-mode 1))
     buf))
 
 (defun agent-org-buffer-set-session (buffer session)
@@ -177,19 +185,28 @@ With `agent-org-use-header-line' nil, the rendered status is shown via
 
 ;;;; Minor mode
 
+(defun agent-org-buffer--blocked (&rest _)
+  "Refuse Org structure-editing commands in chat buffers."
+  (interactive)
+  (user-error "Chat content is managed automatically"))
+
 (defvar agent-org-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") #'agent-org-send)
-    (define-key map (kbd "C-c C-u") #'agent-org-buffer-compose-prompt)
-    (define-key map (kbd "C-c C-k") #'agent-org-buffer-cancel-compose)
+    ;; Org structure commands bypass `read-only' text properties and would
+    ;; corrupt heading boundaries; block them all.
+    (dolist (key (list (kbd "M-RET") (kbd "C-c C-t")
+                       [(meta up)] [(meta down)] [(meta left)] [(meta right)]
+                       [(shift up)] [(shift down)]
+                       (kbd "C-c -")))
+      (define-key map key #'agent-org-buffer--blocked))
     map))
 
 (define-minor-mode agent-org-mode
   "Minor mode for `agent-org' Org chat buffers.
+Type at the live `* User' prompt at the end of the buffer.
 Keys:
-  C-c C-c  Send the User prompt at point (or read one via minibuffer)
-  C-c C-u  Compose a new User prompt at end of buffer
-  C-c C-k  Cancel current composition"
+  C-c C-c  Send the typed prompt"
   :init-value nil
   :lighter " aOrg"
   :keymap agent-org-mode-map
@@ -199,73 +216,79 @@ Keys:
               '(:eval (agent-org-buffer--render-header-line))))
     (kill-local-variable 'header-line-format)))
 
-;;;; Compose / send
+;;;; Protection + live prompt
 
-(defun agent-org-buffer-compose-prompt ()
-  "Insert a new empty User prompt heading at the end of the buffer.
-Unlock the buffer for editing; point lands in the heading body so the
-typed text is sent as-is by `agent-org-send'."
-  (interactive)
-  (let ((session (agent-org-buffer--session)))
-    (with-current-buffer (plist-get session :buffer)
-      (read-only-mode -1)
-      (goto-char (point-max))
-      (unless (bolp) (insert "\n"))
-      (insert "\n* User\n\n")
-      (message "Type your prompt, then C-c C-c to send, C-c C-k to cancel"))))
+(defun agent-org-buffer--protect (beg end)
+  "Freeze buffer text between BEG and END against edits and the cursor.
+`add-text-properties' itself refuses to touch already read-only text,
+so the suppression is bound here for the fully programmatic path."
+  (let ((inhibit-read-only t))
+    (add-text-properties beg end
+                         '(read-only t cursor-intangible t
+                           front-sticky (read-only)))))
 
-(defun agent-org-buffer-cancel-compose ()
-  "Cancel composition: delete the empty User heading at point, re-lock."
-  (interactive)
-  (let ((session (agent-org-buffer--session)))
-    (with-current-buffer (plist-get session :buffer)
-      (when-let* ((body (agent-org-buffer--composed-prompt))
-                  ((string-empty-p body)))
-        (let ((inhibit-read-only t))
-          (org-back-to-heading t)
-          (kill-region (point)
-                       (min (point-max) (1+ (org-entry-end-position))))))
-      (read-only-mode 1)
-      (goto-char (point-max))
-      (message "Composition cancelled; buffer locked"))))
-
-(defun agent-org-buffer--composed-prompt ()
-  "Return the trimmed body of the User heading containing point, or nil."
+(defun agent-org-buffer--open-prompt-p ()
+  "Non-nil when the current buffer ends in a typeable User prompt."
   (condition-case nil
       (save-excursion
+        (goto-char (point-max))
         (org-back-to-heading t)
         (when (string= (org-get-heading t t t t) "User")
           (org-end-of-meta-data t)
-          (string-trim (buffer-substring-no-properties
-                        (point) (org-entry-end-position)))))
+          (not (get-text-property (point) 'read-only))))
     (error nil)))
 
-(defun agent-org-buffer-read-prompt (buffer)
-  "Return the prompt to send from BUFFER as a (TEXT . COMPOSED-P) pair.
-When point is under a `* User' heading its body is used and
-COMPOSED-P is t, so the caller must not insert another heading; an
-empty composed heading is an error, not a minibuffer fall-through.
-Otherwise the prompt is read from the minibuffer (COMPOSED-P nil)."
+;;;###autoload
+(defun agent-org-buffer-insert-prompt (buffer)
+  "Append a live `* User' prompt to BUFFER unless one is already open.
+Only the heading is frozen; the body stays typeable.  No-op while a
+turn is streaming, so mid-turn session updates never slip a prompt
+into the response."
   (with-current-buffer buffer
-    (let ((composed (agent-org-buffer--composed-prompt)))
-      (if composed
-          (progn
-            (when (string-empty-p composed)
-              (user-error "Empty prompt; type under the User heading or cancel with C-c C-k"))
-            (cons composed t))
-        (let ((input (string-trim (read-string "Prompt: "))))
-          (when (string-empty-p input)
+    (unless (or agent-org-buffer--streaming-p
+                (agent-org-buffer--open-prompt-p))
+      (let* ((inhibit-read-only t)
+             (orig (point))
+             (stay (eq orig (point-max))))
+        (goto-char (point-max))
+        (let ((beg (point)))
+          (unless (bolp) (insert "\n"))
+          (insert "* User\n\n")
+          (agent-org-buffer--protect beg (point))
+          ;; typed text after the heading must not inherit the freeze
+          (put-text-property (1- (point)) (point)
+                             'rear-nonsticky '(read-only cursor-intangible))
+          (unless stay (goto-char orig)))))))
+
+(defun agent-org-buffer-read-prompt (buffer)
+  "Freeze the live prompt in BUFFER and return its trimmed text.
+Signals a user-error when the buffer does not end in an open prompt
+or when nothing has been typed yet."
+  (with-current-buffer buffer
+    (unless (agent-org-buffer--open-prompt-p)
+      (user-error "Nothing to send; type your prompt under the User heading"))
+    (save-excursion
+      (goto-char (point-max))
+      (org-back-to-heading t)
+      (let ((beg (point)))
+        (org-end-of-meta-data t)
+        (let ((text (string-trim (buffer-substring-no-properties
+                                  (point) (point-max)))))
+          (when (string-empty-p text)
             (user-error "Empty prompt"))
-          (cons input nil))))))
+          (agent-org-buffer--protect beg (point-max))
+          text)))))
 
 (defun agent-org-buffer-insert-user (buffer text)
-  "Insert a User heading with TEXT into BUFFER."
+  "Insert a frozen User heading with TEXT into BUFFER (programmatic use)."
   (with-current-buffer buffer
     (let ((inhibit-read-only t))
       (save-excursion
         (goto-char (point-max))
-        (unless (bolp) (insert "\n"))
-        (insert (format "\n* User\n\n%s\n" text))))))
+        (let ((beg (point)))
+          (unless (bolp) (insert "\n"))
+          (insert (format "\n* User\n\n%s\n" text))
+          (agent-org-buffer--protect beg (point)))))))
 
 ;;;; Streaming (the hot path)
 
@@ -276,10 +299,12 @@ Disable font-lock for the duration of the turn."
     (let ((inhibit-read-only t))
       (unless agent-org-buffer--streaming-p
         (goto-char (point-max))
-        (unless (bolp) (insert "\n"))
-        (insert "\n* Agent\n\n")
-        (setq agent-org-buffer--streaming-p t
-              agent-org-buffer--stream-start (point))
+        (let ((beg (point)))
+          (unless (bolp) (insert "\n"))
+          (insert "* Agent\n\n")
+          (agent-org-buffer--protect beg (point))
+          (setq agent-org-buffer--streaming-p t
+                agent-org-buffer--stream-start (point)))
         (font-lock-mode -1)))))
 
 (defun agent-org-buffer-end-agent-turn (buffer)
@@ -303,7 +328,9 @@ Starts a new Agent heading if not already streaming."
       (let ((inhibit-read-only t))
         (save-excursion
           (goto-char (point-max))
-          (insert text))))))
+          (let ((beg (point)))
+            (insert text)
+            (agent-org-buffer--protect beg (point))))))))
 
 (defun agent-org-buffer-append-thought (buffer text)
   "Append thinking TEXT to a thinking drawer in BUFFER.
@@ -321,11 +348,13 @@ current heading so each Agent turn keeps its own drawer."
         (save-excursion
           (goto-char (point-max))
           (let ((drawer (save-excursion (search-backward ":thinking:" limit t)))
-                (end (save-excursion (search-backward ":end:" limit t))))
+                (end (save-excursion (search-backward ":end:" limit t)))
+                (beg (point)))
             (cond
              ((not drawer) (insert "\n:thinking:\n" text "\n:end:"))
-             (end (goto-char end) (insert text "\n"))
-             (t (insert text "\n")))))))))
+             (end (goto-char end) (setq beg (point)) (insert text "\n"))
+             (t (insert text "\n")))
+            (agent-org-buffer--protect beg (point))))))))
 
 (defun agent-org-buffer-insert-tool (buffer content)
   "Insert a tool-call heading under the current Agent turn in BUFFER.
@@ -339,11 +368,13 @@ CONTENT is the tool-call alist from the ACP notification."
       (let ((inhibit-read-only t))
         (save-excursion
           (goto-char (point-max))
-          (unless (bolp) (insert "\n"))
-          (insert (format "** Tool: %s" name))
-          (when tool-id
-            (insert (format " [%s]" tool-id)))
-          (insert "\n"))))))
+          (let ((beg (point)))
+            (unless (bolp) (insert "\n"))
+            (insert (format "** Tool: %s" name))
+            (when tool-id
+              (insert (format " [%s]" tool-id)))
+            (insert "\n")
+            (agent-org-buffer--protect beg (point))))))))
 
 (provide 'agent-org-buffer)
 ;;; agent-org-buffer.el ends here

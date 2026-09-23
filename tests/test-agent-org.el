@@ -41,14 +41,15 @@
 ;;;; Buffer creation
 
 (ert-deftest test-agent-org-buffer-create ()
-  "Creates an org-mode buffer with agent-org-mode, read-only, and status."
+  "Creates an org-mode buffer with agent-org-mode, typeable, and status."
   (let ((buf (agent-org-buffer-create "test")))
     (with-current-buffer buf
       (should buf)
       (should (buffer-live-p buf))
       (should (string-prefix-p "*agent-org: test" (buffer-name buf)))
       (should (derived-mode-p 'org-mode))
-      (should buffer-read-only)
+      (should-not buffer-read-only)
+      (should (bound-and-true-p cursor-intangible-mode))
       (should (bound-and-true-p agent-org-mode))
       (should (equal (plist-get agent-org-buffer--status :state) 'starting))
       (should header-line-format))
@@ -190,16 +191,36 @@
       (should (string-match-p "\\*\\* Tool: read_file \\[tc1\\]" (buffer-string))))
     (kill-buffer buf)))
 
-;;;; Prompt read
+;;;; Prompt protection helpers
 
-(ert-deftest test-agent-org-buffer-read-prompt-from-heading ()
-  "A User heading at point yields its text and COMPOSED-P t."
+(ert-deftest test-agent-org-buffer-insert-prompt-idempotent ()
+  "insert-prompt adds one open prompt; repeats and streaming are no-ops."
   (let ((buf (agent-org-buffer-create "prompt")))
     (with-current-buffer buf
-      (let ((inhibit-read-only t))
-        (insert "* User\n\nHello agent\n"))
-      (goto-char (point-min))
-      (should (equal (agent-org-buffer-read-prompt buf) '("Hello agent" . t))))
+      (agent-org-buffer-insert-prompt buf)
+      (should (= 1 (ao--count-substrings "* User")))
+      (should (get-text-property (point-min) 'read-only)) ; heading frozen
+      (should (agent-org-buffer--open-prompt-p)) ; body typeable
+      (agent-org-buffer-insert-prompt buf)
+      (should (= 1 (ao--count-substrings "* User"))) ; idempotent
+      (setq agent-org-buffer--streaming-p t)
+      (agent-org-buffer-insert-prompt buf)
+      (should (= 1 (ao--count-substrings "* User")))) ; no prompt mid-turn
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-buffer-read-prompt-freezes-typed-text ()
+  "read-prompt returns the typed text and freezes the whole prompt."
+  (let ((buf (agent-org-buffer-create "freeze")))
+    (with-current-buffer buf
+      (agent-org-buffer-insert-prompt buf)
+      ;; simulate typing with real self-insert-command
+      (dolist (ch (append "Hello agent" nil))
+        (let ((last-command-event ch))
+          (funcall #'self-insert-command 1)))
+      (should (equal (agent-org-buffer-read-prompt buf) "Hello agent"))
+      ;; after the freeze everything up to point-max is protected
+      (should (get-text-property (point-min) 'read-only))
+      (should (get-text-property (1- (point-max)) 'read-only)))
     (kill-buffer buf)))
 
 ;;;; Session registry cleanup
@@ -288,7 +309,7 @@
       (should (eq 'starting (plist-get agent-org-buffer--status :state))))
     (kill-buffer buf)))
 
-""(defun ao--count-substrings (substring)
+(defun ao--count-substrings (substring)
   "Number of literal occurrences of SUBSTRING in the current buffer.
 `how-many' in Emacs 30 lacks the REGEXP-P argument, so count directly."
   (save-excursion
@@ -298,7 +319,7 @@
         (cl-incf n))
       n)))
 
-;;;; Compose and send
+;;;; Live-prompt send flow
 
 (defun ao--make-test-session (name)
   "Create a chat buffer named for NAME with a registered ready session.
@@ -310,59 +331,106 @@ Returns (BUFFER . SESSION)."
     (agent-org-buffer-set-session buf session)
     (cons buf session)))
 
-(ert-deftest test-agent-org-send-uses-composed-heading ()
-  "Sending after composing uses the typed text; no second heading, no minibuffer."
-  (let* ((pair (ao--make-test-session "compose"))
+(defun ao--type (text)
+  "Simulate typing TEXT with real `self-insert-command' at point."
+  (dolist (ch (append text nil))
+    (let ((last-command-event ch))
+      (funcall #'self-insert-command 1))))
+
+(ert-deftest test-agent-org-send-freezes-prompt-and-streams ()
+  "Typing at the live prompt and sending freezes it; one User heading."
+  (let* ((pair (ao--make-test-session "send"))
          (buf (car pair))
          (session (cdr pair)))
-    (cl-letf (((symbol-function 'acp-send-request) (lambda (&rest _args) nil))
-              ((symbol-function 'read-string)
-               (lambda (&rest _) (error "minibuffer must not be used"))))
+    (cl-letf (((symbol-function 'acp-send-request) (lambda (&rest _args) nil)))
       (with-current-buffer buf
-        (agent-org-buffer-compose-prompt)
-        (should-not buffer-read-only)
-        (insert "Hi")
+        (agent-org-buffer-insert-prompt buf)
+        (ao--type "Hi")
         (agent-org-send)
         (should (= 1 (ao--count-substrings "* User")))
-        (should (save-excursion (goto-char (point-min))
-                                (search-forward "Hi" nil t)))
-        (should buffer-read-only)
+        (should (get-text-property (1- (point-max)) 'read-only)) ; frozen body
         (should (eq 'streaming (plist-get agent-org-buffer--status :state)))
         (should (plist-get session :streaming))))
     (kill-buffer buf)))
 
-(ert-deftest test-agent-org-send-empty-composed-errors ()
-  "An empty composed heading must not fall through to the minibuffer."
-  (let ((buf (car (ao--make-test-session "empty-compose"))))
-    (cl-letf (((symbol-function 'read-string)
-               (lambda (&rest _) (error "minibuffer must not be used"))))
+(ert-deftest test-agent-org-send-callback-reopens-prompt ()
+  "Ending the turn (success callback) appends a fresh live prompt."
+  (let* ((pair (ao--make-test-session "reopen"))
+         (buf (car pair))
+         (captured nil))
+    (cl-letf (((symbol-function 'acp-send-request)
+               (lambda (&rest kw) (setq captured kw))))
       (with-current-buffer buf
-        (agent-org-buffer-compose-prompt)
-        (should-error (agent-org-send) :type 'user-error)
-        (should (= 0 (ao--count-substrings "* Agent")))))
-    (kill-buffer buf)))
-
-(ert-deftest test-agent-org-send-from-minibuffer-inserts-heading ()
-  "Without a composed heading, the minibuffer prompt is captured as a User turn."
-  (let ((buf (car (ao--make-test-session "minibuffer"))))
-    (cl-letf (((symbol-function 'acp-send-request) (lambda (&rest _args) nil))
-              ((symbol-function 'read-string) (lambda (&rest _) "Hello mb")))
-      (with-current-buffer buf
-        (goto-char (point-min))
+        (agent-org-buffer-insert-prompt buf)
+        (ao--type "Hi")
         (agent-org-send)
-        (should (= 1 (ao--count-substrings "* User")))
-        (should (save-excursion (goto-char (point-min))
-                                (search-forward "Hello mb" nil t)))))
+        (funcall (plist-get captured :on-success) nil)
+        (should (= 2 (ao--count-substrings "* User")))
+        (should (agent-org-buffer--open-prompt-p))
+        (should (eq 'ready (plist-get agent-org-buffer--status :state)))))
     (kill-buffer buf)))
 
-(ert-deftest test-agent-org-cancel-compose-removes-empty-heading ()
-  "Cancelling an untouched composition deletes the empty heading and re-locks."
-  (let ((buf (car (ao--make-test-session "cancel"))))
+(ert-deftest test-agent-org-send-rejects-empty-prompt ()
+  "An empty live prompt is an error; nothing is sent."
+  (let ((buf (car (ao--make-test-session "empty"))))
     (with-current-buffer buf
-      (agent-org-buffer-compose-prompt)
-      (agent-org-buffer-cancel-compose)
-      (should (string-empty-p (string-trim (buffer-string))))
-      (should buffer-read-only))
+      (agent-org-buffer-insert-prompt buf)
+      (should-error (agent-org-send) :type 'user-error)
+      (should (= 1 (ao--count-substrings "* User"))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-send-rejects-when-no-open-prompt ()
+  "If the buffer does not end in an open prompt, send explains why."
+  (let ((buf (car (ao--make-test-session "noprompt"))))
+    (with-current-buffer buf
+      (agent-org-buffer-insert-user buf "already sent")
+      (should-error (agent-org-send) :type 'user-error))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-send-rejects-while-streaming ()
+  "The streaming guard rejects sends while the agent is responding."
+  (let* ((pair (ao--make-test-session "busy"))
+         (session (cdr pair)))
+    (setf (plist-get session :streaming) t)
+    (should-error (with-current-buffer (car pair) (agent-org-send))
+                  :type 'user-error)
+    (kill-buffer (car pair))))
+
+(ert-deftest test-agent-org-session-ready-inserts-prompt-once ()
+  "`agent-org--session-ready' is idempotent across repeated session updates."
+  (let* ((pair (ao--make-test-session "ready"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (setf (plist-get session :session-id) nil)
+    (agent-org--session-ready session "sid-1")
+    (agent-org--session-ready session "sid-1")
+    (with-current-buffer buf
+      (should (= 1 (ao--count-substrings "* User")))
+      (should (equal "sid-1" (plist-get session :session-id)))
+      (should (eq 'ready (plist-get agent-org-buffer--status :state))))
+    ;; A mid-turn session_info_update must not slip a prompt in.
+    (with-current-buffer buf
+      (agent-org-buffer--protect (point-min) (point-max)) ; as send freezes it
+      (setf (plist-get session :streaming) t)
+      (agent-org--session-ready session "sid-1")
+      (should (= 1 (ao--count-substrings "* User"))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-programmatic-text-is-protected ()
+  "Agent chunks and tool headings carry the read-only property."
+  (let ((buf (agent-org-buffer-create "props")))
+    (with-current-buffer buf
+      (agent-org-buffer-insert-prompt buf)
+      (agent-org-buffer-append-chunk buf "streamed" (list :buffer buf))
+      (should (save-excursion
+                (goto-char (point-min))
+                (and (search-forward "streamed" nil t)
+                     (get-text-property (match-beginning 0) 'read-only))))
+      (agent-org-buffer-insert-tool buf '((title . "read_file") (toolCallId . "tc")))
+      (should (save-excursion
+                (goto-char (point-min))
+                (and (search-forward "** Tool" nil t)
+                     (get-text-property (match-beginning 0) 'read-only)))))
     (kill-buffer buf)))
 
 (provide 'test-agent-org)
