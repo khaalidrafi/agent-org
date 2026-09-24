@@ -49,7 +49,7 @@
       (should (string-prefix-p "*agent-org: test" (buffer-name buf)))
       (should (derived-mode-p 'org-mode))
       (should-not buffer-read-only)
-      (should (bound-and-true-p cursor-intangible-mode))
+      (should-not (bound-and-true-p cursor-intangible-mode))
       (should (bound-and-true-p agent-org-mode))
       (should (equal (plist-get agent-org-buffer--status :state) 'starting))
       (should header-line-format))
@@ -223,7 +223,40 @@
       (should (equal (agent-org-buffer-read-prompt buf) "Hello agent"))
       ;; after the freeze everything up to point-max is protected
       (should (get-text-property (point-min) 'read-only))
-      (should (get-text-property (1- (point-max)) 'read-only)))
+      (should (get-text-property (1- (point-max)) 'read-only))
+      ;; but the cursor may still travel there
+      (should-not (get-text-property (point-min) 'cursor-intangible)))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-frozen-history-is-navigable ()
+  "Frozen text takes the cursor; only editing it is refused."
+  (let ((buf (agent-org-buffer-create "nav")))
+    (with-current-buffer buf
+      (agent-org-buffer-insert-prompt buf)
+      (agent-org-buffer-append-chunk buf "streamed" (list :buffer buf))
+      (goto-char (point-min))
+      (should (eq ?# (following-char))) ; cursor stays where put
+      (should-error
+       (let ((last-command-event ?x))
+         (funcall #'self-insert-command 1))
+       :type 'text-read-only)
+      (should (= (point) (point-min)))
+      (should-not (string-match-p "x" (buffer-string))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-insert-prompt-escapes-frozen-point ()
+  "With point trapped on frozen text, a new prompt takes point to it."
+  (let ((buf (agent-org-buffer-create "escape")))
+    (with-current-buffer buf
+      (agent-org-buffer-insert-prompt buf)
+      (ao--type "Hi")
+      (agent-org-buffer-read-prompt buf) ; as send freezes it
+      (agent-org-buffer-append-chunk buf "Hello" (list :buffer buf))
+      (agent-org-buffer-end-agent-turn buf)
+      (goto-char (point-min))
+      (agent-org-buffer-insert-prompt buf)
+      (should (agent-org-buffer--open-prompt-p))
+      (should (= (point) (point-max))))
     (kill-buffer buf)))
 
 ;;;; Session registry cleanup

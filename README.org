@@ -47,7 +47,8 @@ block at the top.
    as your turn and a fresh prompt opens under the reply.  Everything
    the program writes (headings, agent output, tool calls) is
    read-only via text properties, so chat history can't be mangled by
-   accident.  ~cursor-intangible-mode~ keeps point out of frozen text.
+   accident.  The cursor still travels freely over history — you can
+   browse and copy it; typing into frozen text is refused.
 3. Watch the reply stream under a ~* Agent~ heading; tool calls appear
    as ~** Tool: name [id]~ and extended thinking in ~:thinking:~
    drawers, one per turn.  Sending while the agent is still

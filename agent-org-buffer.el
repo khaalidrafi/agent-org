@@ -36,8 +36,9 @@
 ;; Design (agent-shell-style always-typable buffer):
 ;;   - No comint, no terminal, no global read-only — just Org text.
 ;;   - Programmatic text (headings, streamed chunks, tool calls,
-;;     thoughts) is frozen with `read-only' + `cursor-intangible'
-;;     text properties; `cursor-intangible-mode' keeps point out of it.
+;;     thoughts) is frozen with the `read-only' text property: the
+;;     cursor may travel over history freely, but editing it signals
+;;     `text-read-only'.
 ;;   - Between turns the buffer ends in a live `* User' prompt: the
 ;;     heading is frozen, the body below it stays typeable, so the
 ;;     user just types and hits C-c C-c.
@@ -208,7 +209,6 @@ typeable."
   (let ((buf (generate-new-buffer (format "*agent-org: %s*" name))))
     (with-current-buffer buf
       (org-mode)
-      (cursor-intangible-mode 1)
       (setq agent-org-buffer--status
             (list :provider name :state 'starting :message "Connecting…"
                   :session-id nil
@@ -388,13 +388,14 @@ conversation text is never touched."
 ;;;; Protection + live prompt
 
 (defun agent-org-buffer--protect (beg end)
-  "Freeze buffer text between BEG and END against edits and the cursor.
-`add-text-properties' itself refuses to touch already read-only text,
-so the suppression is bound here for the fully programmatic path."
+  "Freeze buffer text between BEG and END against editing.
+The cursor may still travel over it; only modifications signal
+`text-read-only'.  `add-text-properties' itself refuses to touch
+already read-only text, so the suppression is bound here for the
+fully programmatic path."
   (let ((inhibit-read-only t))
     (add-text-properties beg end
-                         '(read-only t cursor-intangible t
-                           front-sticky (read-only)))))
+                         '(read-only t front-sticky (read-only)))))
 
 (defun agent-org-buffer--separator ()
   "Ensure point starts a fresh line preceded by a blank one.
@@ -427,7 +428,10 @@ into the response."
                 (agent-org-buffer--open-prompt-p))
       (let* ((inhibit-read-only t)
              (orig (point))
-             (stay (eq orig (point-max))))
+             ;; keep point where it was unless it was at the end or
+             ;; trapped in frozen text (then it belongs at the prompt)
+             (stay (or (eq orig (point-max))
+                       (get-text-property orig 'read-only))))
         (goto-char (point-max))
         (let ((beg (point)))
           (agent-org-buffer--separator)
@@ -435,7 +439,7 @@ into the response."
           (agent-org-buffer--protect beg (point))
           ;; typed text after the heading must not inherit the freeze
           (put-text-property (1- (point)) (point)
-                             'rear-nonsticky '(read-only cursor-intangible))
+                             'rear-nonsticky '(read-only))
           (unless stay (goto-char orig)))))))
 
 (defun agent-org-buffer-read-prompt (buffer)
