@@ -135,7 +135,7 @@
       (should-not (string-match-p "ACP error" (buffer-string)))
       (should-not (string-match-p "Session started" (buffer-string))))
     ;; session_info_update -> ready status + session id captured; the only
-    ;; body addition is the auto-managed Session info metadata block
+    ;; body addition is the auto-managed top metadata block
     (agent-org--on-notification
      session
      `((method . "session/update")
@@ -144,7 +144,7 @@
     (with-current-buffer buf
       (should (equal (plist-get session :session-id) "sess-9"))
       (should (equal (plist-get agent-org-buffer--status :state) 'ready))
-      (should (string-match-p ":Session: +sess-9" (buffer-string)))
+      (should (string-match-p "^#\\+PROPERTY: Session +sess-9" (buffer-string)))
       ;; no status labels ever land in the body
       (should-not (string-match-p "Ready\\|Starting\\|Connecting" (buffer-string))))
     (kill-buffer buf)))
@@ -555,7 +555,7 @@ Returns (BUFFER . SESSION)."
        (currentValue . "gomodel"))])))
 
 (ert-deftest test-agent-org-metadata-section-on-ready ()
-  "session-ready with a full response builds the Org metadata block."
+  "session-ready with a full response builds the top metadata block."
   (let* ((pair (ao--make-test-session "meta"))
          (buf (car pair))
          (session (cdr pair)))
@@ -563,15 +563,17 @@ Returns (BUFFER . SESSION)."
     (agent-org--session-ready session "sid-x" (ao--fake-session-new-resp))
     (with-current-buffer buf
       (should (string-match-p "\\`#\\+TITLE:" (buffer-string)))
-      (should (string-match-p "^\\* Session info :noexport:" (buffer-string)))
-      (should (string-match-p ":PROPERTIES:" (buffer-string)))
-      (should (string-match-p ":Session: +sid-x" (buffer-string)))
-      (should (string-match-p ":Mode: +auto" (buffer-string)))
-      (should (string-match-p ":Model: +gomodel" (buffer-string)))
-      (should (string-match-p ":MODES:" (buffer-string)))
+      ;; no heading is used for metadata; conversation owns `* ' lines
+      (should-not (string-match-p "Session info" (buffer-string)))
+      (should (string-match-p "^#\\+PROPERTY: Session +sid-x" (buffer-string)))
+      (should (string-match-p "^#\\+PROPERTY: Mode +auto" (buffer-string)))
+      (should (string-match-p "^#\\+PROPERTY: Model +gomodel" (buffer-string)))
+      (should (string-match-p "^:MODES:" (buffer-string)))
       (should (string-match-p "chat (id: chat) — Chat only" (buffer-string)))
-      (should (string-match-p ":CONFIG:" (buffer-string)))
+      (should (string-match-p "^:CONFIG:" (buffer-string)))
       (should (string-match-p "Provider — gomodel" (buffer-string)))
+      ;; block ends with a blank line before the first heading
+      (should (string-match-p ":END:\n\n\\* User" (buffer-string)))
       ;; metadata is frozen and the live prompt still ends the buffer
       (should (get-text-property (point-min) 'read-only))
       (should (agent-org-buffer--open-prompt-p))
@@ -581,48 +583,55 @@ Returns (BUFFER . SESSION)."
         (should (equal (org-get-heading t t t t) "User"))))
     (kill-buffer buf)))
 
-(defun ao--metadata-folded-p ()
-  "Non-nil when the Session info subtree in the current buffer is hidden."
+(defun ao--drawer-folded-p (name)
+  "Non-nil when the drawer NAME body in the current buffer is hidden."
   (save-excursion
     (goto-char (point-min))
-    (and (re-search-forward "^\\* Session info" nil t)
+    (and (re-search-forward (format "^:%s:" name) nil t)
          (progn (forward-line 1)
                 (invisible-p (point))))))
 
 (ert-deftest test-agent-org-metadata-folded-by-default ()
-  "The metadata block is inserted folded and re-folded on refresh."
+  "Metadata drawers start folded; property lines stay visible."
   (let* ((pair (ao--make-test-session "fold"))
          (buf (car pair))
          (session (cdr pair)))
     (setf (plist-get session :session-id) nil)
     (agent-org--session-ready session "sid-x" (ao--fake-session-new-resp))
     (with-current-buffer buf
-      (should (string-match-p ":VISIBILITY: folded" (buffer-string)))
-      (should (ao--metadata-folded-p))
+      (should (ao--drawer-folded-p "MODES"))
+      (should (ao--drawer-folded-p "CONFIG"))
+      (should-not (string-match-p ":VISIBILITY:" (buffer-string)))
+      ;; visible scalars
+      (should (save-excursion
+                (goto-char (point-min))
+                (re-search-forward "^#\\+PROPERTY: Session")
+                (not (invisible-p (match-beginning 0)))))
       ;; the folded content is still there, and the prompt stays open
       (should (string-match-p ":MODES:" (buffer-string)))
       (should (agent-org-buffer--open-prompt-p))
       (agent-org--session-ready session "sid-x" (ao--fake-session-new-resp))
-      (should (ao--metadata-folded-p)))
+      (should (ao--drawer-folded-p "MODES")))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-metadata-keeps-user-expanded-state ()
-  "Refreshing a subtree the user opened does not re-fold it."
+  "Refreshing a drawer the user opened does not re-fold it."
   (let* ((pair (ao--make-test-session "unfold"))
          (buf (car pair))
          (session (cdr pair)))
     (setf (plist-get session :session-id) nil)
     (agent-org--session-ready session "sid-x" (ao--fake-session-new-resp))
     (with-current-buffer buf
-      (should (ao--metadata-folded-p))
+      (should (ao--drawer-folded-p "MODES"))
       (save-excursion
         (goto-char (point-min))
-        (re-search-forward "^\\* Session info" nil t)
-        (outline-show-subtree))
+        (re-search-forward "^:MODES:")
+        (org-fold-hide-drawer-toggle))
       (agent-org-buffer-refresh-metadata buf)
-      (should-not (ao--metadata-folded-p))
+      (should-not (ao--drawer-folded-p "MODES"))
+      (should (ao--drawer-folded-p "CONFIG"))
       ;; still a single block
-      (should (= 1 (ao--count-occurrences (buffer-string) "^\\* Session info"))))
+      (should (= 1 (ao--count-occurrences (buffer-string) "^:MODES:"))))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-metadata-refresh-idempotent ()
@@ -643,7 +652,7 @@ Returns (BUFFER . SESSION)."
                                ((name . "status")
                                 (description . "Show session status"))])))))))
     (with-current-buffer buf
-      (should (= 1 (ao--count-substrings "* Session info")))
+      (should (= 1 (ao--count-substrings ":MODES:")))
       (should (= 1 (ao--count-substrings "#+TITLE:")))
       (should (= 1 (ao--count-substrings "* User")))
       (should (string-match-p ":COMMANDS:" (buffer-string)))
@@ -665,7 +674,7 @@ Returns (BUFFER . SESSION)."
       (should (equal 12000 (plist-get agent-org-buffer--status :used)))
       (should (string-match-p "12k/128k"
                               (agent-org-buffer--render-header-line)))
-      (should (string-match-p ":Context: +12k/128k" (buffer-string))))
+      (should (string-match-p "^#\\+PROPERTY: Context +12k/128k" (buffer-string))))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-send-records-usage-cost ()

@@ -29,9 +29,10 @@
 ;; All status, progress and error feedback is shown in the buffer's
 ;; `header-line' (the top bar), the same way `gptel' and `agent-shell'
 ;; surface state.  The body holds conversation (User/Agent turns, tool
-;; calls, thoughts) plus one auto-managed Org metadata block at the
-;; top (`#+TITLE:` line and a folded `* Session info :noexport:'
-;; heading with PROPERTIES/COMMANDS/MODES/CONFIG drawers).
+;; calls, thoughts) plus one auto-managed metadata block at the very
+;; top: `#+TITLE:' and `#+PROPERTY:' lines, then folded COMMANDS,
+;; MODES and CONFIG drawers — no heading, since `* ' lines belong to
+;; the conversation.
 ;;
 ;; Design (agent-shell-style always-typable buffer):
 ;;   - No comint, no terminal, no global read-only — just Org text.
@@ -316,10 +317,11 @@ Nil when no entries; capped at 50 lines with a +N-more tail."
 
 (defun agent-org-buffer--render-metadata (status)
   "Render the buffer-top Org metadata block for STATUS (pure).
-A `#+TITLE:' keyword line plus a `* Session info' heading whose
-PROPERTIES drawer carries scalars and whose COMMANDS/MODES/CONFIG
-drawers list everything the agent reported.  Drawers whose lists are
-still unknown are omitted entirely."
+Buffer property lines at the very top (`#+TITLE:' and `#+PROPERTY:'
+per agent-shell-style scalar) plus COMMANDS/MODES/CONFIG drawers
+holding everything the agent reported.  No heading is used: `* '
+lines belong to the conversation.  Drawers whose lists are still
+unknown are omitted entirely."
   (let* ((provider (or (plist-get status :provider) "agent-org"))
          (used (plist-get status :used))
          (size (plist-get status :size))
@@ -344,58 +346,74 @@ still unknown are omitted entirely."
                                   (or (map-elt o 'currentValue) "")))
                         (plist-get status :config))))
     (concat
-     (format "#+TITLE: %s%s\n\n" provider
+     (format "#+TITLE: %s%s\n" provider
              (if-let* ((title (plist-get status :title)))
                  (format " — %s" title)
                ""))
-     "* Session info :noexport:\n"
-     ":PROPERTIES:\n"
-     ":VISIBILITY: folded\n"
-     (format ":Provider: %s\n" provider)
-     (format ":Session: %s\n" (or (plist-get status :session-id) "unknown"))
-     (format ":Mode: %s\n" (or (plist-get status :mode) "unknown"))
-     (format ":Model: %s\n" (or (plist-get status :model) "unknown"))
-     (format ":Context: %s\n" context)
-     (format ":Cost: %s\n" (or (agent-org-buffer--cost-indicator status) "$0.00"))
-     (when-let* ((tokens (plist-get status :tokens)))
-       (format ":Tokens: %d\n" tokens))
-     ":END:\n"
+     (mapconcat #'identity
+                (delq nil
+                      (list
+                       (format "#+PROPERTY: Provider %s" provider)
+                       (format "#+PROPERTY: Session %s"
+                               (or (plist-get status :session-id) "unknown"))
+                       (format "#+PROPERTY: Mode %s"
+                               (or (plist-get status :mode) "unknown"))
+                       (format "#+PROPERTY: Model %s"
+                               (or (plist-get status :model) "unknown"))
+                       (format "#+PROPERTY: Context %s" context)
+                       (format "#+PROPERTY: Cost %s"
+                               (or (agent-org-buffer--cost-indicator status) "$0.00"))
+                       (when-let* ((tokens (plist-get status :tokens)))
+                         (format "#+PROPERTY: Tokens %d" tokens))))
+                "\n")
+     "\n\n"
      (agent-org-buffer--metadata-drawer "COMMANDS" commands)
      (agent-org-buffer--metadata-drawer "MODES" modes)
      (agent-org-buffer--metadata-drawer "CONFIG" config)
+     ;; blank line separating the block from the first conversation
+     ;; heading (refresh deletes up to that heading)
      "\n")))
+
+(defconst agent-org-buffer--metadata-drawers '("COMMANDS" "MODES" "CONFIG")
+  "Names of the folded-by-default drawers in the metadata block.")
 
 ;;;###autoload
 (defun agent-org-buffer-refresh-metadata (buffer)
   "Replace the Org metadata block at the top of BUFFER from its status.
 Delete-then-insert keeps this idempotent.  The block spans point-min
-up to (but not including) the first non-metadata heading, so
-conversation text is never touched.  The rebuilt subtree is left
-folded unless the user had already opened the previous one."
+up to (but not including) the first conversation heading, so chat
+text is never touched.  Drawers the user had left folded are re-folded
+after the rebuild; ones they opened stay open."
   (with-current-buffer buffer
     (let ((inhibit-read-only t))
       (save-excursion
-        (goto-char (point-min))
-        (let ((was-folded t))
-          (when (re-search-forward "^\\* Session info" nil t)
-            (forward-line 1)
-            (setq was-folded (invisible-p (point))))
+        (let ((folded
+               (mapcar
+                (lambda (name)
+                  (cons name
+                        (save-excursion
+                          (goto-char (point-min))
+                          (if (re-search-forward (format "^:%s:" name) nil t)
+                              (progn (forward-line 1)
+                                     (invisible-p (point)))
+                            ;; drawer not present yet: fold it when created
+                            t))))
+                agent-org-buffer--metadata-drawers)))
           (goto-char (point-min))
-          (cond
-           ((not (re-search-forward "^\\* " nil t)) (goto-char (point-max)))
-           ((progn (beginning-of-line)
-                   (equal (org-get-heading t t t t) "Session info"))
-            (org-end-of-subtree t t)))
+          (if (re-search-forward "^\\* " nil t)
+              (beginning-of-line)
+            (goto-char (point-max)))
           (delete-region (point-min) (point))
           (goto-char (point-min))
           (let ((beg (point)))
             (insert (agent-org-buffer--render-metadata agent-org-buffer--status))
             (agent-org-buffer--protect beg (point))
-            (when (and was-folded
-                       (progn (goto-char beg)
-                              (re-search-forward "^\\* Session info" nil t)))
-              (beginning-of-line)
-              (outline-hide-subtree))))))))
+            (dolist (state folded)
+              (when (cdr state)
+                (save-excursion
+                  (goto-char beg)
+                  (when (re-search-forward (format "^:%s:" (car state)) nil t)
+                    (org-fold-hide-drawer-toggle)))))))))))
 
 ;;;; Protection + live prompt
 

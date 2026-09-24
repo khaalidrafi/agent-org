@@ -47,6 +47,7 @@ emacs -Q --batch \
 #   line (top bar) via `agent-org-buffer-set-status'.  NEVER write system
 #   messages, comment blocks, or bullet lines into the Org body.  The body
 #   holds User/Agent conversation content plus ONE auto-managed block at
-#   the top: `#+TITLE:` line and `* Session info :noexport:` (PROPERTIES +
-#   COMMANDS/MODES/CONFIG drawers), rewritten folded-by-default by
-#   `agent-org-buffer-refresh-metadata' — never edit it by hand.
+#   the very top: `#+TITLE:` + `#+PROPERTY:` lines and folded COMMANDS/
+#   MODES/CONFIG drawers — no heading (headings belong to the
+#   conversation).  Rewritten by `agent-org-buffer-refresh-metadata';
+#   never edit it by hand.

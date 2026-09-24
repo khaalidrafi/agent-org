@@ -12,8 +12,8 @@ All status, progress and error feedback appears in the chat buffer's
 *header line* (the top bar, as used by ~gptel~ and ~agent-shell~) —
 never as system messages in the document body.  The body contains the
 ~* User~ / ~* Agent~ conversation (plus ~** Tool:~ headings and
-~:thinking:~ drawers) and one auto-managed ~* Session info :noexport:~
-block at the top.
+~:thinking:~ drawers) and one auto-managed metadata block at the very
+top (see [[#session-metadata][Session metadata]]).
 
 * Prerequisites
 
@@ -58,23 +58,23 @@ If the agent asks for permission, the header line shows
 ~… ➤ Awaiting permission~ and the minibuffer offers the agent's
 options; quitting the prompt (ESC / C-g) safely declines.
 
-* Session info block
+* Session metadata
 
 At the top of every chat buffer, above the first conversation
 heading, ~agent-org~ keeps a frozen Org-native metadata section that
 refreshes itself as the session reports new facts:
 
 - a ~#+TITLE:~ keyword line (provider — session title),
-- a ~* Session info :noexport:~ heading whose ~:PROPERTIES:~ drawer
-  carries the scalars (Provider, Session, Mode, Model, Context, Cost,
-  Tokens),
+- ~#+PROPERTY:~ buffer property lines carrying the scalars (Provider,
+  Session, Mode, Model, Context, Cost, Tokens),
 - ~:COMMANDS:~ (available ~/slash-commands~), ~:MODES:~ and
   ~:CONFIG:~ drawers listing everything the agent advertised.
 
-The subtree is folded by default (~:VISIBILITY: folded~) so it stays
-out of the way; press ~TAB~ on the heading to open or close it.  It is
-deleted and re-inserted on every update, so it never duplicates and
-never disturbs the conversation below it.
+No heading is used — ~* ~ lines belong to the conversation.  The
+drawers start folded so the block stays two glances small; ~TAB~ on a
+drawer line opens or closes it.  The block is deleted and re-inserted
+on every update, so it never duplicates and never disturbs the
+conversation below it.
 
 * Configuration
 
