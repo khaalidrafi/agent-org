@@ -48,5 +48,5 @@ emacs -Q --batch \
 #   messages, comment blocks, or bullet lines into the Org body.  The body
 #   holds User/Agent conversation content plus ONE auto-managed block at
 #   the top: `#+TITLE:` line and `* Session info :noexport:` (PROPERTIES +
-#   COMMANDS/MODES/CONFIG drawers), rewritten by
+#   COMMANDS/MODES/CONFIG drawers), rewritten folded-by-default by
 #   `agent-org-buffer-refresh-metadata' — never edit it by hand.

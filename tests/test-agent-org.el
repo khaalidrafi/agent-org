@@ -581,6 +581,50 @@ Returns (BUFFER . SESSION)."
         (should (equal (org-get-heading t t t t) "User"))))
     (kill-buffer buf)))
 
+(defun ao--metadata-folded-p ()
+  "Non-nil when the Session info subtree in the current buffer is hidden."
+  (save-excursion
+    (goto-char (point-min))
+    (and (re-search-forward "^\\* Session info" nil t)
+         (progn (forward-line 1)
+                (invisible-p (point))))))
+
+(ert-deftest test-agent-org-metadata-folded-by-default ()
+  "The metadata block is inserted folded and re-folded on refresh."
+  (let* ((pair (ao--make-test-session "fold"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (setf (plist-get session :session-id) nil)
+    (agent-org--session-ready session "sid-x" (ao--fake-session-new-resp))
+    (with-current-buffer buf
+      (should (string-match-p ":VISIBILITY: folded" (buffer-string)))
+      (should (ao--metadata-folded-p))
+      ;; the folded content is still there, and the prompt stays open
+      (should (string-match-p ":MODES:" (buffer-string)))
+      (should (agent-org-buffer--open-prompt-p))
+      (agent-org--session-ready session "sid-x" (ao--fake-session-new-resp))
+      (should (ao--metadata-folded-p)))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-metadata-keeps-user-expanded-state ()
+  "Refreshing a subtree the user opened does not re-fold it."
+  (let* ((pair (ao--make-test-session "unfold"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (setf (plist-get session :session-id) nil)
+    (agent-org--session-ready session "sid-x" (ao--fake-session-new-resp))
+    (with-current-buffer buf
+      (should (ao--metadata-folded-p))
+      (save-excursion
+        (goto-char (point-min))
+        (re-search-forward "^\\* Session info" nil t)
+        (outline-show-subtree))
+      (agent-org-buffer-refresh-metadata buf)
+      (should-not (ao--metadata-folded-p))
+      ;; still a single block
+      (should (= 1 (ao--count-occurrences (buffer-string) "^\\* Session info"))))
+    (kill-buffer buf)))
+
 (ert-deftest test-agent-org-metadata-refresh-idempotent ()
   "Repeated ready/notification updates never duplicate the block."
   (let* ((pair (ao--make-test-session "meta2"))

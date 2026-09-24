@@ -30,8 +30,8 @@
 ;; `header-line' (the top bar), the same way `gptel' and `agent-shell'
 ;; surface state.  The body holds conversation (User/Agent turns, tool
 ;; calls, thoughts) plus one auto-managed Org metadata block at the
-;; top (`#+TITLE:` line and a `* Session info :noexport:' heading with
-;; PROPERTIES/COMMANDS/MODES/CONFIG drawers).
+;; top (`#+TITLE:` line and a folded `* Session info :noexport:'
+;; heading with PROPERTIES/COMMANDS/MODES/CONFIG drawers).
 ;;
 ;; Design (agent-shell-style always-typable buffer):
 ;;   - No comint, no terminal, no global read-only — just Org text.
@@ -350,6 +350,7 @@ still unknown are omitted entirely."
                ""))
      "* Session info :noexport:\n"
      ":PROPERTIES:\n"
+     ":VISIBILITY: folded\n"
      (format ":Provider: %s\n" provider)
      (format ":Session: %s\n" (or (plist-get status :session-id) "unknown"))
      (format ":Mode: %s\n" (or (plist-get status :mode) "unknown"))
@@ -369,21 +370,32 @@ still unknown are omitted entirely."
   "Replace the Org metadata block at the top of BUFFER from its status.
 Delete-then-insert keeps this idempotent.  The block spans point-min
 up to (but not including) the first non-metadata heading, so
-conversation text is never touched."
+conversation text is never touched.  The rebuilt subtree is left
+folded unless the user had already opened the previous one."
   (with-current-buffer buffer
     (let ((inhibit-read-only t))
       (save-excursion
         (goto-char (point-min))
-        (cond
-         ((not (re-search-forward "^\\* " nil t)) (goto-char (point-max)))
-         ((progn (beginning-of-line)
-                 (equal (org-get-heading t t t t) "Session info"))
-          (org-end-of-subtree t t)))
-        (delete-region (point-min) (point))
-        (goto-char (point-min))
-        (let ((beg (point)))
-          (insert (agent-org-buffer--render-metadata agent-org-buffer--status))
-          (agent-org-buffer--protect beg (point)))))))
+        (let ((was-folded t))
+          (when (re-search-forward "^\\* Session info" nil t)
+            (forward-line 1)
+            (setq was-folded (invisible-p (point))))
+          (goto-char (point-min))
+          (cond
+           ((not (re-search-forward "^\\* " nil t)) (goto-char (point-max)))
+           ((progn (beginning-of-line)
+                   (equal (org-get-heading t t t t) "Session info"))
+            (org-end-of-subtree t t)))
+          (delete-region (point-min) (point))
+          (goto-char (point-min))
+          (let ((beg (point)))
+            (insert (agent-org-buffer--render-metadata agent-org-buffer--status))
+            (agent-org-buffer--protect beg (point))
+            (when (and was-folded
+                       (progn (goto-char beg)
+                              (re-search-forward "^\\* Session info" nil t)))
+              (beginning-of-line)
+              (outline-hide-subtree))))))))
 
 ;;;; Protection + live prompt
 

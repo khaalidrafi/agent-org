@@ -71,8 +71,10 @@ refreshes itself as the session reports new facts:
 - ~:COMMANDS:~ (available ~/slash-commands~), ~:MODES:~ and
   ~:CONFIG:~ drawers listing everything the agent advertised.
 
-It is deleted and re-inserted on every update, so it never duplicates
-and never disturbs the conversation below it.
+The subtree is folded by default (~:VISIBILITY: folded~) so it stays
+out of the way; press ~TAB~ on the heading to open or close it.  It is
+deleted and re-inserted on every update, so it never duplicates and
+never disturbs the conversation below it.
 
 * Configuration
 
