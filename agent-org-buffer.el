@@ -28,8 +28,10 @@
 ;;
 ;; All status, progress and error feedback is shown in the buffer's
 ;; `header-line' (the top bar), the same way `gptel' and `agent-shell'
-;; surface state.  Nothing but real conversation (User/Agent turns,
-;; tool calls, thoughts) is ever written into the buffer body.
+;; surface state.  The body holds conversation (User/Agent turns, tool
+;; calls, thoughts) plus one auto-managed Org metadata block at the
+;; top (`#+TITLE:` line and a `* Session info :noexport:' heading with
+;; PROPERTIES/COMMANDS/MODES/CONFIG drawers).
 ;;
 ;; Design (agent-shell-style always-typable buffer):
 ;;   - No comint, no terminal, no global read-only — just Org text.
@@ -81,10 +83,12 @@ Either way, status text is never written into the chat buffer body."
 
 (defvar-local agent-org-buffer--status
   (list :provider "agent-org" :state 'idle :message nil :session-id nil)
-  "Status plist backing this buffer's header line.
-Keys: :provider, :state, :message, :session-id.
-STATE is one of `idle', `starting', `streaming', `ready',
-`awaiting' or `error'.")
+  "Status plist backing this buffer's header line and metadata block.
+Keys: :provider :state :message :session-id :model :mode :project
+:title :used :size :tokens :cost-amount :cost-currency :commands
+:modes-list :config.  STATE is one of `idle', `starting',
+`streaming', `ready', `awaiting' or `error'.  The list keys hold
+wire-format alists collected from ACP notifications.")
 
 (defun agent-org-buffer--state-label (state)
   "Human-readable label for STATUS state."
@@ -104,22 +108,94 @@ STATE is one of `idle', `starting', `streaming', `ready',
     ('ready 'agent-org-status-ready)
     (_ 'default)))
 
+(defun agent-org-buffer--status-segment (status)
+  "Return the single (TEXT . FACE) status segment for STATUS.
+Exactly one status string is ever shown in the header line: generic
+placeholder messages never ride along with the state label, and
+diagnostics (errors) are folded into the single segment."
+  (let* ((state (or (plist-get status :state) 'idle))
+         (label (agent-org-buffer--state-label state))
+         (message (plist-get status :message))
+         (face (agent-org-buffer--state-face state)))
+    (cons (pcase state
+            ('error (if message (format "Error: %s" message) "Error"))
+            ('awaiting (if (and message
+                                (not (string-equal message "Permission required")))
+                           message
+                         label))
+            ((or 'starting 'ready) label)
+            ('streaming (or message label))
+            (_ label))
+          face)))
+
+;;;; Usage indicators (ports of agent-shell-usage.el helpers)
+
+(defun agent-org-buffer--format-number-compact (num)
+  "Format NUM with agent-shell-style k/m/b unit suffixes."
+  (cond
+   ((< num 1000) (format "%d" num))
+   ((< num 1000000) (format "%.0fk" (/ num 1000.0)))
+   ((< num 1000000000) (format "%.0fm" (/ num 1000000.0)))
+   (t (format "%.1fb" (/ num 1000000000.0)))))
+
+(defun agent-org-buffer--context-percent (used size)
+  "Percent of context USED of SIZE as a float, or nil when unknown."
+  (when (and used size (> size 0))
+    (/ (* used 100.0) size)))
+
+(defun agent-org-buffer--context-indicator (status)
+  "Context usage string (bar + used/size) for STATUS, or nil.
+Bar height and color scale with the used percentage, like the
+`agent-shell' context indicator."
+  (let ((pct (agent-org-buffer--context-percent (plist-get status :used)
+                                                (plist-get status :size))))
+    (when pct
+      (let* ((bars "▁▂▃▄▅▆▇█")
+             (face (cond ((< pct 60) 'agent-org-status-ready)
+                         ((< pct 85) 'agent-org-status-busy)
+                         (t 'agent-org-status-error)))
+             (bar (propertize (string (aref bars (min 7 (floor (/ (* pct 8) 100)))))
+                              'face face)))
+        (format "%s %s/%s" bar
+                (agent-org-buffer--format-number-compact
+                 (or (plist-get status :used) 0))
+                (agent-org-buffer--format-number-compact
+                 (plist-get status :size)))))))
+
+(defun agent-org-buffer--cost-indicator (status)
+  "Cost string for STATUS (rounded up to the cent), or nil if unknown."
+  (let ((amount (plist-get status :cost-amount)))
+    (when (and amount (> amount 0))
+      (let ((cents (/ (ceiling (* amount 100)) 100.0)))
+        (if (equal (plist-get status :cost-currency) "USD")
+            (format "$%.2f" cents)
+          (format "%.2f %s" cents (or (plist-get status :cost-currency)
+                                      "")))))))
+
 (defun agent-org-buffer--render-header-line ()
   "Render `agent-org-buffer--status' as a header-line string.
-Pure function of the buffer-local status plist; safe to call headless."
+Agent-shell-style fields joined with a single separator; empty fields
+are dropped so no dangling separators appear.  Pure function of the
+buffer-local status plist; safe to call headless."
   (let* ((status agent-org-buffer--status)
-         (provider (or (plist-get status :provider) "agent-org"))
-         (state (or (plist-get status :state) 'idle))
-         (message (plist-get status :message))
-         (sid (plist-get status :session-id))
-         (label (agent-org-buffer--state-label state))
-         (face (agent-org-buffer--state-face state)))
-    (concat
-     (propertize (format " %s" provider) 'face 'bold)
-     "  "
-     (propertize label 'face face)
-     (when message (propertize (format " — %s" message) 'face 'shadow))
-     (when sid (propertize (format "  [%s]" sid) 'face 'shadow)))))
+         (seg (agent-org-buffer--status-segment status))
+         (sid (plist-get status :session-id)))
+    (concat " "
+            (mapconcat
+             #'identity
+             (delq nil (list
+                        (propertize (or (plist-get status :provider)
+                                        "agent-org")
+                                    'face 'bold)
+                        (plist-get status :model)
+                        (plist-get status :mode)
+                        (plist-get status :project)
+                        (when sid
+                          (propertize (format "[%s]" sid) 'face 'shadow))
+                        (agent-org-buffer--context-indicator status)
+                        (agent-org-buffer--cost-indicator status)
+                        (propertize (car seg) 'face (cdr seg))))
+             " ➤ "))))
 
 ;;;; Buffer creation
 
@@ -134,7 +210,13 @@ typeable."
       (org-mode)
       (cursor-intangible-mode 1)
       (setq agent-org-buffer--status
-            (list :provider name :state 'starting :message "Connecting…" :session-id nil))
+            (list :provider name :state 'starting :message "Connecting…"
+                  :session-id nil
+                  :project (file-name-nondirectory
+                            (directory-file-name default-directory))))
+      (let ((inhibit-read-only t))
+        (insert (format "#+TITLE: %s\n\n" name))
+        (agent-org-buffer--protect (point-min) (point-max)))
       (agent-org-mode 1))
     buf))
 
@@ -167,14 +249,16 @@ Font-lock is suppressed while this is set.")
 
 (defun agent-org-buffer-set-status (buffer &rest status)
   "Update BUFFER's header-line status from plist STATUS.
-Recognised keys: :state, :message, :provider, :session-id.
+Recognised keys are those of `agent-org-buffer--status'.
 Only keys present in STATUS are changed, so passing
 `:message nil` clears the message while leaving other fields intact.
 With `agent-org-use-header-line' nil, the rendered status is shown via
 `message' instead.  Status never touches the buffer body."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (dolist (key '(:provider :state :message :session-id))
+      (dolist (key '(:provider :state :message :session-id :model :mode
+                         :project :title :used :size :tokens :cost-amount
+                         :cost-currency :commands :modes-list :config))
         (when (plist-member status key)
           (setq agent-org-buffer--status
                 (plist-put agent-org-buffer--status key (plist-get status key)))))
@@ -216,6 +300,91 @@ Keys:
               '(:eval (agent-org-buffer--render-header-line))))
     (kill-local-variable 'header-line-format)))
 
+;;;; Session metadata block (Org-native, agent-shell bootstrapping)
+
+(defun agent-org-buffer--metadata-drawer (name entries)
+  "Render drawer NAME with ENTRIES (already-formatted strings).
+Nil when no entries; capped at 50 lines with a +N-more tail."
+  (when entries
+    (let ((shown (seq-take entries 50)))
+      (concat (format ":%s:\n" name)
+              (mapconcat #'identity shown "\n")
+              "\n"
+              (when (> (length entries) 50)
+                (format "… (+%d more)\n" (- (length entries) 50)))
+              ":END:\n"))))
+
+(defun agent-org-buffer--render-metadata (status)
+  "Render the buffer-top Org metadata block for STATUS (pure).
+A `#+TITLE:' keyword line plus a `* Session info' heading whose
+PROPERTIES drawer carries scalars and whose COMMANDS/MODES/CONFIG
+drawers list everything the agent reported.  Drawers whose lists are
+still unknown are omitted entirely."
+  (let* ((provider (or (plist-get status :provider) "agent-org"))
+         (used (plist-get status :used))
+         (size (plist-get status :size))
+         (pct (agent-org-buffer--context-percent used size))
+         (context (if pct
+                      (format "%s/%s (%.0f%%)"
+                              (agent-org-buffer--format-number-compact (or used 0))
+                              (agent-org-buffer--format-number-compact size)
+                              pct)
+                    "unknown"))
+         (commands (mapcar (lambda (c)
+                            (format "/%s — %s" (map-elt c 'name)
+                                    (or (map-elt c 'description) "")))
+                          (plist-get status :commands)))
+         (modes (mapcar (lambda (m)
+                         (format "%s (id: %s) — %s" (map-elt m 'name)
+                                 (map-elt m 'id)
+                                 (or (map-elt m 'description) "")))
+                       (plist-get status :modes-list)))
+         (config (mapcar (lambda (o)
+                          (format "%s — %s" (map-elt o 'name)
+                                  (or (map-elt o 'currentValue) "")))
+                        (plist-get status :config))))
+    (concat
+     (format "#+TITLE: %s%s\n\n" provider
+             (if-let* ((title (plist-get status :title)))
+                 (format " — %s" title)
+               ""))
+     "* Session info :noexport:\n"
+     ":PROPERTIES:\n"
+     (format ":Provider: %s\n" provider)
+     (format ":Session: %s\n" (or (plist-get status :session-id) "unknown"))
+     (format ":Mode: %s\n" (or (plist-get status :mode) "unknown"))
+     (format ":Model: %s\n" (or (plist-get status :model) "unknown"))
+     (format ":Context: %s\n" context)
+     (format ":Cost: %s\n" (or (agent-org-buffer--cost-indicator status) "$0.00"))
+     (when-let* ((tokens (plist-get status :tokens)))
+       (format ":Tokens: %d\n" tokens))
+     ":END:\n"
+     (agent-org-buffer--metadata-drawer "COMMANDS" commands)
+     (agent-org-buffer--metadata-drawer "MODES" modes)
+     (agent-org-buffer--metadata-drawer "CONFIG" config)
+     "\n")))
+
+;;;###autoload
+(defun agent-org-buffer-refresh-metadata (buffer)
+  "Replace the Org metadata block at the top of BUFFER from its status.
+Delete-then-insert keeps this idempotent.  The block spans point-min
+up to (but not including) the first non-metadata heading, so
+conversation text is never touched."
+  (with-current-buffer buffer
+    (let ((inhibit-read-only t))
+      (save-excursion
+        (goto-char (point-min))
+        (cond
+         ((not (re-search-forward "^\\* " nil t)) (goto-char (point-max)))
+         ((progn (beginning-of-line)
+                 (equal (org-get-heading t t t t) "Session info"))
+          (org-end-of-subtree t t)))
+        (delete-region (point-min) (point))
+        (goto-char (point-min))
+        (let ((beg (point)))
+          (insert (agent-org-buffer--render-metadata agent-org-buffer--status))
+          (agent-org-buffer--protect beg (point)))))))
+
 ;;;; Protection + live prompt
 
 (defun agent-org-buffer--protect (beg end)
@@ -226,6 +395,15 @@ so the suppression is bound here for the fully programmatic path."
     (add-text-properties beg end
                          '(read-only t cursor-intangible t
                            front-sticky (read-only)))))
+
+(defun agent-org-buffer--separator ()
+  "Ensure point starts a fresh line preceded by a blank one.
+Headings inserted right after text would otherwise abut it, which
+Org tolerates but renders poorly."
+  (unless (bolp) (insert "\n"))
+  (when (and (> (point) (point-min))
+             (not (eq ?\n (char-before (1- (point))))))
+    (insert "\n")))
 
 (defun agent-org-buffer--open-prompt-p ()
   "Non-nil when the current buffer ends in a typeable User prompt."
@@ -252,7 +430,7 @@ into the response."
              (stay (eq orig (point-max))))
         (goto-char (point-max))
         (let ((beg (point)))
-          (unless (bolp) (insert "\n"))
+          (agent-org-buffer--separator)
           (insert "* User\n\n")
           (agent-org-buffer--protect beg (point))
           ;; typed text after the heading must not inherit the freeze
@@ -286,8 +464,8 @@ or when nothing has been typed yet."
       (save-excursion
         (goto-char (point-max))
         (let ((beg (point)))
-          (unless (bolp) (insert "\n"))
-          (insert (format "\n* User\n\n%s\n" text))
+          (agent-org-buffer--separator)
+          (insert (format "* User\n\n%s\n" text))
           (agent-org-buffer--protect beg (point)))))))
 
 ;;;; Streaming (the hot path)
@@ -300,7 +478,7 @@ Disable font-lock for the duration of the turn."
       (unless agent-org-buffer--streaming-p
         (goto-char (point-max))
         (let ((beg (point)))
-          (unless (bolp) (insert "\n"))
+          (agent-org-buffer--separator)
           (insert "* Agent\n\n")
           (agent-org-buffer--protect beg (point))
           (setq agent-org-buffer--streaming-p t
@@ -351,7 +529,9 @@ current heading so each Agent turn keeps its own drawer."
                 (end (save-excursion (search-backward ":end:" limit t)))
                 (beg (point)))
             (cond
-             ((not drawer) (insert "\n:thinking:\n" text "\n:end:"))
+             ((not drawer)
+              (agent-org-buffer--separator)
+              (insert ":thinking:\n" text "\n:end:\n"))
              (end (goto-char end) (setq beg (point)) (insert text "\n"))
              (t (insert text "\n")))
             (agent-org-buffer--protect beg (point))))))))
@@ -369,7 +549,7 @@ CONTENT is the tool-call alist from the ACP notification."
         (save-excursion
           (goto-char (point-max))
           (let ((beg (point)))
-            (unless (bolp) (insert "\n"))
+            (agent-org-buffer--separator)
             (insert (format "** Tool: %s" name))
             (when tool-id
               (insert (format " [%s]" tool-id)))

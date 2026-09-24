@@ -23,7 +23,7 @@ emacs -Q --batch \
 emacs -Q --batch \
   --eval "(add-to-list 'load-path \"/home/khalid/agent-org\")" \
   --eval "(load \"tests/test-agent-org.el\")" \
-  --eval "(ert-run-tests-batch-and-exit 'test-agent-org-send-uses-composed-heading)"
+  --eval "(ert-run-tests-batch-and-exit 'test-agent-org-header-status-not-duplicated)"
 
 # Live smoke test (needs the real acp package and a working `goose acp` binary):
 ./run-loader-test.sh          # or: emacs -Q --batch -l loader-live-test.el
@@ -45,5 +45,8 @@ emacs -Q --batch \
 # - Suppress writes with `inhibit-read-only` only inside `with-current-buffer`; always restore read-only after.
 # - ALL status / progress / error feedback goes to the chat buffer's header
 #   line (top bar) via `agent-org-buffer-set-status'.  NEVER write system
-#   messages, comment blocks, or bullet lines into the Org body — the body
-#   holds only User and Agent conversation content.
+#   messages, comment blocks, or bullet lines into the Org body.  The body
+#   holds User/Agent conversation content plus ONE auto-managed block at
+#   the top: `#+TITLE:` line and `* Session info :noexport:` (PROPERTIES +
+#   COMMANDS/MODES/CONFIG drawers), rewritten by
+#   `agent-org-buffer-refresh-metadata' — never edit it by hand.

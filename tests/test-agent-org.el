@@ -68,12 +68,13 @@
 ;;;; Header-line status (the "top bar")
 
 (ert-deftest test-agent-org-status-never-pollutes-buffer ()
-  "Status updates change the header line, not the buffer body."
+  "Status updates change the header line, not the conversation body."
   (let ((buf (agent-org-buffer-create "status")))
     (agent-org-buffer-set-status buf :state 'ready :message "Ready" :session-id "abc123")
     (with-current-buffer buf
-      ;; body stays empty of any status/system text
-      (should (string-empty-p (buffer-string)))
+      ;; body holds only the #+TITLE metadata line — no headings, no status text
+      (should (string-match-p "\\`#\\+TITLE:" (buffer-string)))
+      (should-not (string-match-p "^\\* " (buffer-string)))
       (should-not (string-match-p "System" (buffer-string)))
       (should-not (string-match-p "begin_comment" (buffer-string)))
       (should-not (string-match-p "abc123" (buffer-string)))
@@ -133,7 +134,8 @@
       ;; no diagnostic text ever lands in the body
       (should-not (string-match-p "ACP error" (buffer-string)))
       (should-not (string-match-p "Session started" (buffer-string))))
-    ;; session_info_update -> ready status + session id captured, body unchanged
+    ;; session_info_update -> ready status + session id captured; the only
+    ;; body addition is the auto-managed Session info metadata block
     (agent-org--on-notification
      session
      `((method . "session/update")
@@ -142,8 +144,9 @@
     (with-current-buffer buf
       (should (equal (plist-get session :session-id) "sess-9"))
       (should (equal (plist-get agent-org-buffer--status :state) 'ready))
-      ;; body still has only the streamed message, no status text
-      (should-not (string-match-p "sess-9" (buffer-string))))
+      (should (string-match-p ":Session: +sess-9" (buffer-string)))
+      ;; no status labels ever land in the body
+      (should-not (string-match-p "Ready\\|Starting\\|Connecting" (buffer-string))))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-on-notification-is-not-recursive ()
@@ -431,6 +434,186 @@ Returns (BUFFER . SESSION)."
                 (goto-char (point-min))
                 (and (search-forward "** Tool" nil t)
                      (get-text-property (match-beginning 0) 'read-only)))))
+    (kill-buffer buf)))
+
+;;;; Header-line model (agent-shell style, single status segment)
+
+(defun ao--count-occurrences (string regexp)
+  "Number of REGEXP matches in STRING."
+  (with-temp-buffer
+    (insert string)
+    (save-excursion
+      (goto-char (point-min))
+      (let ((n 0))
+        (while (re-search-forward regexp nil t)
+          (cl-incf n))
+        n))))
+
+(ert-deftest test-agent-org-header-status-not-duplicated ()
+  "State label and placeholder message never render twice."
+  (let ((buf (agent-org-buffer-create "dup")))
+    (agent-org-buffer-set-status buf :state 'ready :message "Ready" :session-id "s1")
+    (with-current-buffer buf
+      (should (= 1 (ao--count-occurrences
+                    (agent-org-buffer--render-header-line) "Ready"))))
+    (agent-org-buffer-set-status buf :state 'starting :message "Connecting…")
+    (with-current-buffer buf
+      (let ((r (agent-org-buffer--render-header-line)))
+        (should (string-match-p "Starting" r))
+        (should-not (string-match-p "Connecting" r))))
+    (agent-org-buffer-set-status buf :state 'streaming :message "Sending…")
+    (with-current-buffer buf
+      (let ((r (agent-org-buffer--render-header-line)))
+        (should (string-match-p "Sending…" r))
+        (should-not (string-match-p "Streaming" r))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-header-format-number-compact ()
+  "Compact token formatting matches agent-shell (k/m/b suffixes)."
+  (should (equal (agent-org-buffer--format-number-compact 42) "42"))
+  (should (equal (agent-org-buffer--format-number-compact 1000) "1k"))
+  (should (equal (agent-org-buffer--format-number-compact 128000) "128k"))
+  (should (equal (agent-org-buffer--format-number-compact 2000000) "2m")))
+
+(ert-deftest test-agent-org-header-context-and-cost ()
+  "Context and cost segments render from usage fields."
+  (let ((buf (agent-org-buffer-create "usage")))
+    (agent-org-buffer-set-status buf :used 90000 :size 128000
+                                 :cost-amount 0.4237 :cost-currency "USD")
+    (with-current-buffer buf
+      (let ((r (agent-org-buffer--render-header-line)))
+        (should (string-match-p "90k/128k" r))
+        (should (string-match-p "\\$0\\.43" r))))
+    (agent-org-buffer-set-status buf :used nil :size nil
+                                 :cost-amount nil :cost-currency nil)
+    (with-current-buffer buf
+      (let ((r (agent-org-buffer--render-header-line)))
+        (should-not (string-match-p "/" r))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-header-shows-model-mode-project ()
+  "Model, mode and project segments appear in agent-shell order."
+  (let ((buf (agent-org-buffer-create "fields")))
+    (agent-org-buffer-set-status buf :model "gomodel" :mode "auto")
+    (with-current-buffer buf
+      (let ((r (agent-org-buffer--render-header-line)))
+        (should (string-match-p "gomodel" r))
+        (should (string-match-p "auto" r))
+        (should (string-match-p "➤" r))
+        ;; order: provider before model before mode
+        (should (< (string-match-p "fields" r)
+                   (string-match-p "gomodel" r)
+                   (string-match-p "auto" r)))))
+    (kill-buffer buf)))
+
+;;;; Org session-metadata block
+
+(defun ao--fake-session-new-resp ()
+  "Canned goose-shaped session/new response alist."
+  `((sessionId . "sid-x")
+    (modes . ((currentModeId . "auto")
+              (availableModes .
+               [((id . "auto") (name . "auto")
+                 (description . "Automatically approve tool calls"))
+                ((id . "chat") (name . "chat")
+                 (description . "Chat only, no tool calls"))])))
+    (configOptions .
+     [((id . "provider") (name . "Provider") (type . "select")
+       (currentValue . "gomodel"))])))
+
+(ert-deftest test-agent-org-metadata-section-on-ready ()
+  "session-ready with a full response builds the Org metadata block."
+  (let* ((pair (ao--make-test-session "meta"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (setf (plist-get session :session-id) nil)
+    (agent-org--session-ready session "sid-x" (ao--fake-session-new-resp))
+    (with-current-buffer buf
+      (should (string-match-p "\\`#\\+TITLE:" (buffer-string)))
+      (should (string-match-p "^\\* Session info :noexport:" (buffer-string)))
+      (should (string-match-p ":PROPERTIES:" (buffer-string)))
+      (should (string-match-p ":Session: +sid-x" (buffer-string)))
+      (should (string-match-p ":Mode: +auto" (buffer-string)))
+      (should (string-match-p ":Model: +gomodel" (buffer-string)))
+      (should (string-match-p ":MODES:" (buffer-string)))
+      (should (string-match-p "chat (id: chat) — Chat only" (buffer-string)))
+      (should (string-match-p ":CONFIG:" (buffer-string)))
+      (should (string-match-p "Provider — gomodel" (buffer-string)))
+      ;; metadata is frozen and the live prompt still ends the buffer
+      (should (get-text-property (point-min) 'read-only))
+      (should (agent-org-buffer--open-prompt-p))
+      (save-excursion
+        (goto-char (point-max))
+        (org-back-to-heading t)
+        (should (equal (org-get-heading t t t t) "User"))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-metadata-refresh-idempotent ()
+  "Repeated ready/notification updates never duplicate the block."
+  (let* ((pair (ao--make-test-session "meta2"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (setf (plist-get session :session-id) nil)
+    (agent-org--session-ready session "sid-x" (ao--fake-session-new-resp))
+    (agent-org--session-ready session "sid-x" (ao--fake-session-new-resp))
+    (agent-org--on-notification
+     session
+     `((method . "session/update")
+       (params . ((update . ((sessionUpdate . "available_commands_update")
+                             (availableCommands .
+                              [((name . "compact")
+                                (description . "Compact the conversation"))
+                               ((name . "status")
+                                (description . "Show session status"))])))))))
+    (with-current-buffer buf
+      (should (= 1 (ao--count-substrings "* Session info")))
+      (should (= 1 (ao--count-substrings "#+TITLE:")))
+      (should (= 1 (ao--count-substrings "* User")))
+      (should (string-match-p ":COMMANDS:" (buffer-string)))
+      (should (string-match-p "/compact — Compact the conversation"
+                              (buffer-string))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-metadata-usage-update ()
+  "usage_update feeds header and the Context property line."
+  (let* ((pair (ao--make-test-session "usage2"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (agent-org--on-notification
+     session
+     `((method . "session/update")
+       (params . ((update . ((sessionUpdate . "usage_update")
+                             (used . 12000) (size . 128000)))))))
+    (with-current-buffer buf
+      (should (equal 12000 (plist-get agent-org-buffer--status :used)))
+      (should (string-match-p "12k/128k"
+                              (agent-org-buffer--render-header-line)))
+      (should (string-match-p ":Context: +12k/128k" (buffer-string))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-send-records-usage-cost ()
+  "PromptResponse usage/cost land in the status model and header."
+  (let* ((pair (ao--make-test-session "cost"))
+         (buf (car pair))
+         (captured nil))
+    (cl-letf (((symbol-function 'acp-send-request)
+               (lambda (&rest kw) (setq captured kw))))
+      (with-current-buffer buf
+        (agent-org-buffer-insert-prompt buf)
+        (ao--type "Hi")
+        (agent-org-send)
+        (funcall (plist-get captured :on-success)
+                 '((usage (totalTokens . 500))
+                   (cost (amount . 0.4237) (currency . "USD"))))
+        (should (= 500 (plist-get agent-org-buffer--status :tokens)))
+        (should (string-match-p "\\$0\\.43"
+                                (agent-org-buffer--render-header-line)))
+        ;; nil response (as other tests send) stays safe
+        (agent-org-buffer-insert-prompt buf)
+        (ao--type "Hi again")
+        (agent-org-send)
+        (funcall (plist-get captured :on-success) nil)
+        (should (= 500 (plist-get agent-org-buffer--status :tokens)))))
     (kill-buffer buf)))
 
 (provide 'test-agent-org)

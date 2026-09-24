@@ -91,14 +91,45 @@ is killed."
   (seq-find (lambda (s) (eq (plist-get s :buffer) buffer))
             agent-org--sessions))
 
-(defun agent-org--session-ready (session sid)
+(defun agent-org--wire-list (value)
+  "Return wire array VALUE as a list (JSON arrays arrive as vectors)."
+  (cond
+   ((vectorp value) (append value nil))
+   ((listp value) value)
+   (t nil)))
+
+(defun agent-org--model-from-config (config)
+  "Return the model-ish current value from configOptions list CONFIG.
+Prefer an option with id \"model\", else \"provider\" (what goose
+reports), else nil."
+  (when-let* ((option
+               (or (seq-find (lambda (o) (equal (map-elt o 'id) "model"))
+                             config)
+                   (seq-find (lambda (o) (equal (map-elt o 'id) "provider"))
+                             config))))
+    (map-elt option 'currentValue)))
+
+(defun agent-org--session-ready (session sid &optional resp)
   "Mark SESSION live under ACP session id SID and open the input prompt.
-Safe to call repeatedly: prompt insertion is idempotent and skipped
-while any turn is in flight (Goose fires session_info_update mid-turn
-for title updates; the send callbacks re-open the prompt afterwards)."
+RESP is the full session/new response alist when available; its modes
+and config options feed the header line and metadata block.  Safe to
+call repeatedly: prompt insertion is idempotent and skipped while any
+turn is in flight (Goose fires session_info_update mid-turn for title
+updates; the send callbacks re-open the prompt afterwards)."
   (setf (plist-get session :session-id) sid)
-  (let ((buffer (plist-get session :buffer)))
+  (let ((buffer (plist-get session :buffer))
+        (modes (and resp (map-elt resp 'modes)))
+        (config (and resp (agent-org--wire-list (map-elt resp 'configOptions)))))
+    (when modes
+      (agent-org-buffer-set-status buffer
+        :mode (map-elt modes 'currentModeId)
+        :modes-list (agent-org--wire-list (map-elt modes 'availableModes))))
+    (when config
+      (agent-org-buffer-set-status buffer
+        :config config
+        :model (agent-org--model-from-config config)))
     (agent-org-loader-finish buffer :session-id sid)
+    (agent-org-buffer-refresh-metadata buffer)
     (unless (plist-get session :streaming)
       (agent-org-buffer-insert-prompt buffer))))
 
@@ -166,7 +197,8 @@ When called interactively, prompt for the provider."
                     :buffer buffer
                     :on-success (lambda (resp)
                                   (agent-org--session-ready session
-                                    (map-elt resp 'sessionId)))
+                                    (map-elt resp 'sessionId)
+                                    resp))
                     :on-failure (lambda (_err msg)
                                   (agent-org-loader-fail buffer
                                     (format "session/new failed: %s" msg)))))
@@ -223,6 +255,8 @@ kind is handled here and nothing is delegated to another handler."
       (pcase kind
         ("session_info_update"
          (when-let* ((sid (map-elt params 'sessionId)))
+           (when-let* ((title (or (map-elt update 'title) (map-elt params 'title))))
+             (agent-org-buffer-set-status buffer :title title))
            (agent-org--session-ready session sid)))
         ("agent_message_chunk"
          (agent-org-buffer-set-status buffer :state 'streaming :message nil)
@@ -233,6 +267,25 @@ kind is handled here and nothing is delegated to another handler."
            (agent-org-buffer-append-thought buffer text)))
         ((or "tool_call" "tool_call_update")
          (agent-org-buffer-insert-tool buffer update))
+        ("available_commands_update"
+         (agent-org-buffer-set-status
+          buffer :commands
+          (agent-org--wire-list (map-elt update 'availableCommands)))
+         (agent-org-buffer-refresh-metadata buffer))
+        ("usage_update"
+         (agent-org-buffer-set-status buffer
+           :used (map-elt update 'used) :size (map-elt update 'size))
+         (agent-org-buffer-refresh-metadata buffer))
+        ("current_mode_update"
+         (agent-org-buffer-set-status buffer
+           :mode (map-elt update 'currentModeId))
+         (agent-org-buffer-refresh-metadata buffer))
+        ("config_option_update"
+         (let ((config (agent-org--wire-list (map-elt update 'configOptions))))
+           (when config
+             (agent-org-buffer-set-status buffer
+               :config config :model (agent-org--model-from-config config))
+             (agent-org-buffer-refresh-metadata buffer))))
         (_ nil)))))
 
 ;;;; Incoming request handling
@@ -334,6 +387,26 @@ Currently supports plain text blocks only."
   (list `((type . "text")
           (text . ,text))))
 
+;;;; Usage accounting
+
+(defun agent-org--record-usage (buffer resp)
+  "Fold token/cost data from PromptResponse RESP into BUFFER's status.
+RESP may be nil or lack either field (providers are not required to
+report usage); anything missing is simply left untouched."
+  (when-let* ((usage (and resp (map-elt resp 'usage)))
+              (total (or (map-elt usage 'totalTokens)
+                         (and-let* (((map-elt usage 'inputTokens)))
+                           (+ (map-elt usage 'inputTokens)
+                              (or (map-elt usage 'outputTokens) 0))))))
+    (let ((previous (plist-get (buffer-local-value 'agent-org-buffer--status buffer)
+                               :tokens)))
+      (agent-org-buffer-set-status buffer :tokens (+ total (or previous 0)))))
+  (when-let* ((cost (and resp (map-elt resp 'cost)))
+              (amount (map-elt cost 'amount)))
+    (agent-org-buffer-set-status buffer
+      :cost-amount (float amount)
+      :cost-currency (or (map-elt cost 'currency) "USD"))))
+
 ;;;; Sending
 
 ;;;###autoload
@@ -360,11 +433,13 @@ Currently supports plain text blocks only."
                    :session-id sid
                    :prompt (agent-org--make-content-blocks text))
          :buffer buffer
-         :on-success (lambda (_resp)
+         :on-success (lambda (resp)
                        (setf (plist-get session :streaming) nil)
                        (agent-org-buffer-end-agent-turn buffer)
-                       (agent-org-buffer-set-status buffer :state 'ready :message "Ready")
-                       (agent-org-buffer-insert-prompt buffer))
+                       (agent-org--record-usage buffer resp)
+                       (agent-org-buffer-set-status buffer :state 'ready)
+                       (agent-org-buffer-insert-prompt buffer)
+                       (agent-org-buffer-refresh-metadata buffer))
          :on-failure (lambda (_err msg)
                        (setf (plist-get session :streaming) nil)
                        (agent-org-buffer-end-agent-turn buffer)
