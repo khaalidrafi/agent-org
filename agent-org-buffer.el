@@ -30,9 +30,9 @@
 ;; `header-line' (the top bar), the same way `gptel' and `agent-shell'
 ;; surface state.  The body holds conversation (User/Agent turns, tool
 ;; calls, thoughts) plus one auto-managed metadata block at the very
-;; top: `#+TITLE:' and `#+PROPERTY:' lines, then folded COMMANDS,
-;; MODES and CONFIG drawers — no heading, since `* ' lines belong to
-;; the conversation.
+;; top: a PROPERTIES drawer first, then the `#+TITLE:' keyword line,
+;; then COMMANDS/MODES/CONFIG drawers — all folded by default, and no
+;; heading, since `* ' lines belong to the conversation.
 ;;
 ;; Design (agent-shell-style always-typable buffer):
 ;;   - No comint, no terminal, no global read-only — just Org text.
@@ -317,11 +317,11 @@ Nil when no entries; capped at 50 lines with a +N-more tail."
 
 (defun agent-org-buffer--render-metadata (status)
   "Render the buffer-top Org metadata block for STATUS (pure).
-Buffer property lines at the very top (`#+TITLE:' and `#+PROPERTY:'
-per agent-shell-style scalar) plus COMMANDS/MODES/CONFIG drawers
-holding everything the agent reported.  No heading is used: `* '
-lines belong to the conversation.  Drawers whose lists are still
-unknown are omitted entirely."
+The PROPERTIES drawer comes first, carrying the scalars (Provider,
+Session, Mode, Model, Context, Cost, Tokens), then the `#+TITLE:'
+keyword line, then COMMANDS/MODES/CONFIG drawers listing everything
+the agent reported.  No heading: `* ' lines belong to the
+conversation.  Drawers whose lists are still unknown are omitted."
   (let* ((provider (or (plist-get status :provider) "agent-org"))
          (used (plist-get status :used))
          (size (plist-get status :size))
@@ -346,35 +346,37 @@ unknown are omitted entirely."
                                   (or (map-elt o 'currentValue) "")))
                         (plist-get status :config))))
     (concat
-     (format "#+TITLE: %s%s\n" provider
-             (if-let* ((title (plist-get status :title)))
-                 (format " — %s" title)
-               ""))
-     (mapconcat #'identity
-                (delq nil
-                      (list
-                       (format "#+PROPERTY: Provider %s" provider)
-                       (format "#+PROPERTY: Session %s"
-                               (or (plist-get status :session-id) "unknown"))
-                       (format "#+PROPERTY: Mode %s"
-                               (or (plist-get status :mode) "unknown"))
-                       (format "#+PROPERTY: Model %s"
-                               (or (plist-get status :model) "unknown"))
-                       (format "#+PROPERTY: Context %s" context)
-                       (format "#+PROPERTY: Cost %s"
-                               (or (agent-org-buffer--cost-indicator status) "$0.00"))
-                       (when-let* ((tokens (plist-get status :tokens)))
-                         (format "#+PROPERTY: Tokens %d" tokens))))
-                "\n")
-     "\n\n"
-     (agent-org-buffer--metadata-drawer "COMMANDS" commands)
-     (agent-org-buffer--metadata-drawer "MODES" modes)
-     (agent-org-buffer--metadata-drawer "CONFIG" config)
+     (mapconcat
+      #'identity
+      (delq nil
+            (list
+             (concat
+              ":PROPERTIES:\n"
+              (format ":Provider: %s\n" provider)
+              (format ":Session: %s\n"
+                      (or (plist-get status :session-id) "unknown"))
+              (format ":Mode: %s\n" (or (plist-get status :mode) "unknown"))
+              (format ":Model: %s\n" (or (plist-get status :model) "unknown"))
+              (format ":Context: %s\n" context)
+              (format ":Cost: %s\n"
+                      (or (agent-org-buffer--cost-indicator status) "$0.00"))
+              (when-let* ((tokens (plist-get status :tokens)))
+                (format ":Tokens: %d\n" tokens))
+              ":END:\n")
+             (format "#+TITLE: %s%s\n" provider
+                     (if-let* ((title (plist-get status :title)))
+                         (format " — %s" title)
+                       ""))
+             (agent-org-buffer--metadata-drawer "COMMANDS" commands)
+             (agent-org-buffer--metadata-drawer "MODES" modes)
+             (agent-org-buffer--metadata-drawer "CONFIG" config)))
+      "\n")
      ;; blank line separating the block from the first conversation
      ;; heading (refresh deletes up to that heading)
      "\n")))
 
-(defconst agent-org-buffer--metadata-drawers '("COMMANDS" "MODES" "CONFIG")
+(defconst agent-org-buffer--metadata-drawers
+  '("PROPERTIES" "COMMANDS" "MODES" "CONFIG")
   "Names of the folded-by-default drawers in the metadata block.")
 
 ;;;###autoload

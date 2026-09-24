@@ -144,7 +144,7 @@
     (with-current-buffer buf
       (should (equal (plist-get session :session-id) "sess-9"))
       (should (equal (plist-get agent-org-buffer--status :state) 'ready))
-      (should (string-match-p "^#\\+PROPERTY: Session +sess-9" (buffer-string)))
+      (should (string-match-p ":Session: +sess-9" (buffer-string)))
       ;; no status labels ever land in the body
       (should-not (string-match-p "Ready\\|Starting\\|Connecting" (buffer-string))))
     (kill-buffer buf)))
@@ -562,12 +562,13 @@ Returns (BUFFER . SESSION)."
     (setf (plist-get session :session-id) nil)
     (agent-org--session-ready session "sid-x" (ao--fake-session-new-resp))
     (with-current-buffer buf
-      (should (string-match-p "\\`#\\+TITLE:" (buffer-string)))
+      (should (string-match-p "\\`:PROPERTIES:" (buffer-string)))
       ;; no heading is used for metadata; conversation owns `* ' lines
       (should-not (string-match-p "Session info" (buffer-string)))
-      (should (string-match-p "^#\\+PROPERTY: Session +sid-x" (buffer-string)))
-      (should (string-match-p "^#\\+PROPERTY: Mode +auto" (buffer-string)))
-      (should (string-match-p "^#\\+PROPERTY: Model +gomodel" (buffer-string)))
+      (should (string-match-p "^:Session: +sid-x" (buffer-string)))
+      (should (string-match-p "^:Mode: +auto" (buffer-string)))
+      (should (string-match-p "^:Model: +gomodel" (buffer-string)))
+      (should (string-match-p "^#\\+TITLE: " (buffer-string)))
       (should (string-match-p "^:MODES:" (buffer-string)))
       (should (string-match-p "chat (id: chat) — Chat only" (buffer-string)))
       (should (string-match-p "^:CONFIG:" (buffer-string)))
@@ -592,20 +593,21 @@ Returns (BUFFER . SESSION)."
                 (invisible-p (point))))))
 
 (ert-deftest test-agent-org-metadata-folded-by-default ()
-  "Metadata drawers start folded; property lines stay visible."
+  "Every metadata drawer starts folded; the TITLE line stays visible."
   (let* ((pair (ao--make-test-session "fold"))
          (buf (car pair))
          (session (cdr pair)))
     (setf (plist-get session :session-id) nil)
     (agent-org--session-ready session "sid-x" (ao--fake-session-new-resp))
     (with-current-buffer buf
+      (should (ao--drawer-folded-p "PROPERTIES"))
       (should (ao--drawer-folded-p "MODES"))
       (should (ao--drawer-folded-p "CONFIG"))
       (should-not (string-match-p ":VISIBILITY:" (buffer-string)))
-      ;; visible scalars
+      ;; the TITLE keyword line is always visible
       (should (save-excursion
                 (goto-char (point-min))
-                (re-search-forward "^#\\+PROPERTY: Session")
+                (re-search-forward "^#\\+TITLE:")
                 (not (invisible-p (match-beginning 0)))))
       ;; the folded content is still there, and the prompt stays open
       (should (string-match-p ":MODES:" (buffer-string)))
@@ -674,7 +676,7 @@ Returns (BUFFER . SESSION)."
       (should (equal 12000 (plist-get agent-org-buffer--status :used)))
       (should (string-match-p "12k/128k"
                               (agent-org-buffer--render-header-line)))
-      (should (string-match-p "^#\\+PROPERTY: Context +12k/128k" (buffer-string))))
+      (should (string-match-p "^:Context: +12k/128k" (buffer-string))))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-send-records-usage-cost ()

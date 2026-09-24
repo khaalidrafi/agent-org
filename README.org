@@ -64,15 +64,16 @@ At the top of every chat buffer, above the first conversation
 heading, ~agent-org~ keeps a frozen Org-native metadata section that
 refreshes itself as the session reports new facts:
 
+- a ~:PROPERTIES:~ drawer at the very top, before everything else,
+  carrying the scalars (Provider, Session, Mode, Model, Context,
+  Cost, Tokens),
 - a ~#+TITLE:~ keyword line (provider — session title),
-- ~#+PROPERTY:~ buffer property lines carrying the scalars (Provider,
-  Session, Mode, Model, Context, Cost, Tokens),
 - ~:COMMANDS:~ (available ~/slash-commands~), ~:MODES:~ and
   ~:CONFIG:~ drawers listing everything the agent advertised.
 
-No heading is used — ~* ~ lines belong to the conversation.  The
-drawers start folded so the block stays two glances small; ~TAB~ on a
-drawer line opens or closes it.  The block is deleted and re-inserted
+No heading is used — ~* ~ lines belong to the conversation.  Every
+drawer starts folded so the block is just four marker lines; ~TAB~ on
+a drawer line opens or closes it.  The block is deleted and re-inserted
 on every update, so it never duplicates and never disturbs the
 conversation below it.
 
