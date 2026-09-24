@@ -242,6 +242,15 @@ Font-lock is suppressed while this is set.")
 (defvar-local agent-org-buffer--stream-start nil
   "Point at the start of the current streaming body.")
 
+(defvar-local agent-org-buffer--tools nil
+  "Ordered alist ((ID :title TITLE :status STATUS) ...) for the current
+Agent turn; rendered into the per-turn :tool: drawer by
+`agent-org-buffer-insert-tool'.")
+
+(defvar-local agent-org-buffer--thought nil
+  "Thinking text accumulated for the current Agent turn, rendered into
+the per-turn :thinking: drawer by `agent-org-buffer-append-thought'.")
+
 ;;;; Forward declaration
 
 (declare-function agent-org-send "agent-org" ())
@@ -516,10 +525,12 @@ Disable font-lock for the duration of the turn."
         (let ((beg (point)))
           (agent-org-buffer--separator)
           (insert "* Agent\n\n")
-          (agent-org-buffer--protect beg (point))
-          (setq agent-org-buffer--streaming-p t
-                agent-org-buffer--stream-start (point)))
-        (font-lock-mode -1)))))
+          (agent-org-buffer--protect beg (point)))
+        (font-lock-mode -1)
+        (setq agent-org-buffer--streaming-p t
+              agent-org-buffer--stream-start (point)
+              agent-org-buffer--tools nil
+              agent-org-buffer--thought nil)))))
 
 (defun agent-org-buffer-end-agent-turn (buffer)
   "Finish the streaming Agent turn in BUFFER, re-enable font-lock."
@@ -546,51 +557,100 @@ Starts a new Agent heading if not already streaming."
             (insert text)
             (agent-org-buffer--protect beg (point))))))))
 
+;;;; Auto-folded per-turn drawers (thinking, tools)
+
+(defun agent-org-buffer--redraw-drawer (buffer name lines)
+  "Replace BUFFER's current-heading :NAME: drawer with LINES (list of strings).
+Creates the drawer at the end of the heading (folded) when absent;
+when present, swaps the body in place and restores the fold state, so
+a drawer the user opened stays open.  Fold state is driven with
+`org-fold-region' directly: `org-fold-hide-drawer-toggle' validates
+the org-element cache, which is stale while a turn streams with
+font-lock off, and raises \"Not at a drawer\"."
+  (with-current-buffer buffer
+    (let ((inhibit-read-only t)
+          (body (mapconcat #'identity lines "\n")))
+      (save-excursion
+        (goto-char (point-max))
+        (let ((head (condition-case nil
+                        (progn (org-back-to-heading) (point))
+                      (error (point-min)))))
+          (goto-char head)
+          (if (not (re-search-forward (format "^:%s:$" name) nil t))
+              (progn
+                (goto-char (point-max))
+                (agent-org-buffer--separator)
+                (let ((beg (point)))
+                  (insert (format ":%s:\n%s\n:end:\n" name body))
+                  (agent-org-buffer--protect beg (point))
+                  (goto-char beg)
+                  (forward-line 1)
+                  (let ((content (point)))
+                    (re-search-forward "^:end:$")
+                    (org-fold-region content (line-end-position) t 'drawer))))
+            (forward-line 1)
+            (let* ((content (point))
+                   (drawer-end
+                    (save-excursion
+                      (goto-char content)
+                      (re-search-forward "^:end:$")
+                      (line-end-position)))
+                   (body-end (save-excursion
+                               (goto-char drawer-end)
+                               (line-beginning-position)))
+                   (folded (invisible-p content)))
+              (when folded
+                (org-fold-region content drawer-end nil 'drawer))
+              (delete-region content body-end)
+              (goto-char content)
+              (insert body "\n")
+              (agent-org-buffer--protect content (point))
+              (when folded
+                (org-fold-region content (line-end-position) t 'drawer)))))))))
+
 (defun agent-org-buffer-append-thought (buffer text)
-  "Append thinking TEXT to a thinking drawer in BUFFER.
-Opens the drawer with a single :end: on first call; later chunks are
-inserted above the closing marker.  The drawer search is bounded to the
-current heading so each Agent turn keeps its own drawer."
+  "Append thinking TEXT to a folded thinking drawer in BUFFER.
+Chunks accumulate in `agent-org-buffer--thought' and the drawer is
+re-rendered, bounded to the current heading so each Agent turn keeps
+its own drawer."
   (when (and text (not (string-empty-p text)))
     (with-current-buffer buffer
-      (let* ((inhibit-read-only t)
-             (limit (save-excursion
-                      (goto-char (point-max))
-                      (condition-case nil
-                          (progn (org-back-to-heading) (point))
-                        (error (point-min))))))
-        (save-excursion
-          (goto-char (point-max))
-          (let ((drawer (save-excursion (search-backward ":thinking:" limit t)))
-                (end (save-excursion (search-backward ":end:" limit t)))
-                (beg (point)))
-            (cond
-             ((not drawer)
-              (agent-org-buffer--separator)
-              (insert ":thinking:\n" text "\n:end:\n"))
-             (end (goto-char end) (setq beg (point)) (insert text "\n"))
-             (t (insert text "\n")))
-            (agent-org-buffer--protect beg (point))))))))
+      (unless agent-org-buffer--streaming-p
+        (agent-org-buffer-start-agent-turn buffer nil))
+      (setq agent-org-buffer--thought
+            (concat agent-org-buffer--thought text))
+      (agent-org-buffer--redraw-drawer
+       buffer "thinking"
+       (split-string agent-org-buffer--thought "\n")))))
 
 (defun agent-org-buffer-insert-tool (buffer content)
-  "Insert a tool-call heading under the current Agent turn in BUFFER.
-CONTENT is the tool-call alist from the ACP notification."
-  (let ((name (or (map-elt content 'title)
-                  (map-elt content 'toolName)
-                  (map-elt content 'name)
-                  "tool"))
-        (tool-id (map-elt content 'toolCallId)))
-    (with-current-buffer buffer
-      (let ((inhibit-read-only t))
-        (save-excursion
-          (goto-char (point-max))
-          (let ((beg (point)))
-            (agent-org-buffer--separator)
-            (insert (format "** Tool: %s" name))
-            (when tool-id
-              (insert (format " [%s]" tool-id)))
-            (insert "\n")
-            (agent-org-buffer--protect beg (point))))))))
+  "Record the tool call or update CONTENT in BUFFER's per-turn drawer.
+CONTENT is the tool-call alist from the ACP notification.  Each
+toolCallId gets exactly one line (`status — title [id]') inside a
+folded :tool: drawer under the current Agent heading; later updates
+rewrite that line in place instead of duplicating it."
+  (let ((id (map-elt content 'toolCallId))
+        (title (or (map-elt content 'title) (map-elt content 'toolName)))
+        (status (map-elt content 'status)))
+    (when id
+      (with-current-buffer buffer
+        (unless agent-org-buffer--streaming-p
+          (agent-org-buffer-start-agent-turn buffer nil))
+        (let ((entry (cdr (assoc id agent-org-buffer--tools))))
+          (or entry
+              (setq entry (list :title nil :status nil)
+                    agent-org-buffer--tools
+                    (append agent-org-buffer--tools (list (cons id entry)))))
+          (when title (plist-put entry :title title))
+          (when status (plist-put entry :status status)))
+        (agent-org-buffer--redraw-drawer
+         buffer "tool"
+         (mapcar (lambda (e)
+                   (format "%s — %s [%s]"
+                           (or (plist-get (cdr e) :status) "pending")
+                           (or (plist-get (cdr e) :title) "tool")
+                           (car e)))
+                 agent-org-buffer--tools))))))
 
 (provide 'agent-org-buffer)
 ;;; agent-org-buffer.el ends here

@@ -259,14 +259,21 @@ kind is handled here and nothing is delegated to another handler."
              (agent-org-buffer-set-status buffer :title title))
            (agent-org--session-ready session sid)))
         ("agent_message_chunk"
-         (agent-org-buffer-set-status buffer :state 'streaming :message nil)
-         (when-let* ((text (agent-org--chunk-text (map-elt update 'content))))
-           (agent-org-buffer-append-chunk buffer text session)))
+         ;; Conversational updates belong to a turn the client asked
+         ;; for; anything the agent emits outside a live prompt (e.g.
+         ;; stray chunks after a cancel) is dropped, so a fresh
+         ;; session body can never fill up unasked.
+         (when (plist-get session :streaming)
+           (agent-org-buffer-set-status buffer :state 'streaming :message nil)
+           (when-let* ((text (agent-org--chunk-text (map-elt update 'content))))
+             (agent-org-buffer-append-chunk buffer text session))))
         ("agent_thought_chunk"
-         (when-let* ((text (agent-org--chunk-text (map-elt update 'content))))
-           (agent-org-buffer-append-thought buffer text)))
+         (when (plist-get session :streaming)
+           (when-let* ((text (agent-org--chunk-text (map-elt update 'content))))
+             (agent-org-buffer-append-thought buffer text))))
         ((or "tool_call" "tool_call_update")
-         (agent-org-buffer-insert-tool buffer update))
+         (when (plist-get session :streaming)
+           (agent-org-buffer-insert-tool buffer update)))
         ("available_commands_update"
          (agent-org-buffer-set-status
           buffer :commands

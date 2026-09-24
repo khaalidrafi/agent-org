@@ -11,8 +11,9 @@ renders agent output natively as Org headlines.
 All status, progress and error feedback appears in the chat buffer's
 *header line* (the top bar, as used by ~gptel~ and ~agent-shell~) —
 never as system messages in the document body.  The body contains the
-~* User~ / ~* Agent~ conversation (plus ~** Tool:~ headings and
-~:thinking:~ drawers) and one auto-managed metadata block at the very
+~* User~ / ~* Agent~ conversation, with each turn's tool calls and
+extended thinking kept in folded ~:tool:~ / ~:thinking:~ drawers under
+the ~* Agent~ heading, plus one auto-managed metadata block at the very
 top (see [[#session-metadata][Session metadata]]).
 
 * Prerequisites
@@ -49,9 +50,11 @@ top (see [[#session-metadata][Session metadata]]).
    read-only via text properties, so chat history can't be mangled by
    accident.  The cursor still travels freely over history — you can
    browse and copy it; typing into frozen text is refused.
-3. Watch the reply stream under a ~* Agent~ heading; tool calls appear
-   as ~** Tool: name [id]~ and extended thinking in ~:thinking:~
-   drawers, one per turn.  Sending while the agent is still
+3. Watch the reply stream under a ~* Agent~ heading; tool calls and
+   extended thinking accumulate in folded ~:tool:~ and ~:thinking:~
+   drawers under the same heading — one drawer per turn, updated in
+   place as the agent works.
+   Sending while the agent is still
    responding is refused (~Agent is still responding~).
 
 If the agent asks for permission, the header line shows

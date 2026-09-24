@@ -121,7 +121,8 @@
 (ert-deftest test-agent-org-on-notification-routes-status-not-buffer ()
   "Message chunks go to the body; lifecycle goes to the header line."
   (let* ((buf (agent-org-buffer-create "dispatch"))
-         (session (list :name 'test :client nil :buffer buf :session-id nil)))
+         (session (list :name 'test :client nil :buffer buf
+                        :session-id nil :streaming t)))
     ;; agent message chunk -> body + streaming status
     (agent-org--on-notification
      session
@@ -152,7 +153,8 @@
 (ert-deftest test-agent-org-on-notification-is-not-recursive ()
   "The dispatcher handles a notification exactly once (no self-recursion)."
   (let* ((buf (agent-org-buffer-create "recur"))
-         (session (list :name 'test :client nil :buffer buf :session-id nil))
+         (session (list :name 'test :client nil :buffer buf
+                        :session-id nil :streaming t))
          (calls 0))
     (cl-letf (((symbol-function 'agent-org-buffer-append-chunk)
                (lambda (&rest _) (cl-incf calls))))
@@ -162,6 +164,27 @@
          (params . ((update . ((sessionUpdate . "agent_message_chunk")
                                (content . ((text . "x"))))))))))
     (should (= calls 1))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-idle-session-drops-agent-content ()
+  "Without a live prompt (session :streaming nil), chunk/thought/tool
+updates never touch the body: a fresh session cannot fill itself with
+Agent turns, thinking or tool calls nobody asked for."
+  (let* ((buf (agent-org-buffer-create "idle"))
+         (session (list :name 'test :client nil :buffer buf :session-id nil)))
+    (dolist (update (list
+                     '((sessionUpdate . "agent_message_chunk")
+                       (content . ((type . "text") (text . "unasked"))))
+                     '((sessionUpdate . "agent_thought_chunk")
+                       (content . ((type . "text") (text . "Thinking..."))))
+                     '((sessionUpdate . "tool_call")
+                       (toolCallId . "tcX") (title . "shell"))))
+      (agent-org--on-notification
+       session `((method . "session/update")
+                 (params ((update . ,update))))))
+    (with-current-buffer buf
+      (should-not (string-match-p "Agent\\|:thinking:\\|:tool:\\|unasked\\|Thinking\\|shell"
+                                  (buffer-string))))
     (kill-buffer buf)))
 
 ;;;; Thought chunks
@@ -183,15 +206,52 @@
         (should (= n 1))))
     (kill-buffer buf)))
 
-;;;; Tool call insertion
+;;;; Tool call drawer
 
 (ert-deftest test-agent-org-buffer-tool-insert ()
-  "Tool calls are inserted as level-2 Org headings."
+  "Tool calls render as one folded :tool: drawer, not headings."
   (let ((buf (agent-org-buffer-create "tool")))
     (agent-org-buffer-start-agent-turn buf nil)
-    (agent-org-buffer-insert-tool buf '((title . "read_file") (toolCallId . "tc1")))
+    (agent-org-buffer-insert-tool buf '((title . "read_file")
+                                        (toolCallId . "tc1")
+                                        (status . "in_progress")))
     (with-current-buffer buf
-      (should (string-match-p "\\*\\* Tool: read_file \\[tc1\\]" (buffer-string))))
+      (should (string-match-p "^:tool:$" (buffer-string)))
+      (should (string-match-p "in_progress — read_file \\[tc1\\]" (buffer-string)))
+      (should-not (string-match-p "^\\*\\* Tool" (buffer-string)))
+      (should (ao--drawer-folded-p "tool")))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-tool-updates-rewrite-one-line ()
+  "tool_call_update for a known id replaces its line; new ids append."
+  (let ((buf (agent-org-buffer-create "toolup")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool buf '((title . "shell") (toolCallId . "tc1")
+                                        (status . "pending")))
+    ;; update without a title must not downgrade it to "tool"
+    (agent-org-buffer-insert-tool buf '((toolCallId . "tc1") (status . "completed")))
+    (agent-org-buffer-insert-tool buf '((toolCallId . "tc2")))
+    (with-current-buffer buf
+      (should (= 1 (ao--count-occurrences (buffer-string) "^:tool:$")))
+      (should (= 1 (ao--count-occurrences (buffer-string) "\\[tc1\\]")))
+      (should (= 1 (ao--count-occurrences (buffer-string) "\\[tc2\\]")))
+      (should (string-match-p "completed — shell \\[tc1\\]" (buffer-string)))
+      (should (string-match-p "pending — tool \\[tc2\\]" (buffer-string))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-tool-state-resets-per-turn ()
+  "A new Agent turn gets a fresh drawer; last turn's calls are gone."
+  (let ((buf (agent-org-buffer-create "toolturn")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool buf '((title . "shell") (toolCallId . "tcA")))
+    (agent-org-buffer-end-agent-turn buf)
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool buf '((title . "tree") (toolCallId . "tcB")))
+    (with-current-buffer buf
+      (should (= 2 (ao--count-occurrences (buffer-string) "^:tool:$")))
+      ;; each turn's drawer keeps exactly its own call
+      (should (= 1 (ao--count-occurrences (buffer-string) "\\[tcA\\]")))
+      (should (= 1 (ao--count-occurrences (buffer-string) "\\[tcB\\]"))))
     (kill-buffer buf)))
 
 ;;;; Prompt protection helpers
@@ -465,7 +525,7 @@ Returns (BUFFER . SESSION)."
       (agent-org-buffer-insert-tool buf '((title . "read_file") (toolCallId . "tc")))
       (should (save-excursion
                 (goto-char (point-min))
-                (and (search-forward "** Tool" nil t)
+                (and (search-forward ":tool:" nil t)
                      (get-text-property (match-beginning 0) 'read-only)))))
     (kill-buffer buf)))
 
