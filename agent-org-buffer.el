@@ -388,7 +388,6 @@ conversation.  Drawers whose lists are still unknown are omitted."
   '("PROPERTIES" "COMMANDS" "MODES" "CONFIG")
   "Names of the folded-by-default drawers in the metadata block.")
 
-;;;###autoload
 (defun agent-org-buffer-refresh-metadata (buffer)
   "Replace the Org metadata block at the top of BUFFER from its status.
 Delete-then-insert keeps this idempotent.  The block spans point-min
@@ -458,7 +457,6 @@ Org tolerates but renders poorly."
           (not (get-text-property (point) 'read-only))))
     (error nil)))
 
-;;;###autoload
 (defun agent-org-buffer-insert-prompt (buffer)
   "Append a live `* User' prompt to BUFFER unless one is already open.
 Only the heading is frozen; the body stays typeable.  No-op while a

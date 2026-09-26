@@ -24,10 +24,39 @@ top (see [[#session-metadata][Session metadata]]).
 
 * Install
 
+Not on an ELPA archive yet, so use one of the local routes.
+
+** Load-path (simplest)
+
 #+begin_src elisp
 (add-to-list 'load-path "~/agent-org")
 (require 'agent-org)
 #+end_src
+
+The checkout ships ~agent-org-autoloads.el~, so lazy loading via
+~use-package~ works as well:
+
+#+begin_src elisp
+(use-package agent-org
+  :load-path "~/agent-org"
+  :commands (agent-org-start agent-org-send))
+#+end_src
+
+** As a ~package.el~ package (tarball)
+
+#+begin_src sh
+cd ~/agent-org
+rm -rf /tmp/agent-org-0.1.0
+mkdir -p /tmp/agent-org-0.1.0
+cp agent-org.el agent-org-buffer.el agent-org-loader.el \
+   agent-org-providers.el agent-org-pkg.el agent-org-autoloads.el \
+   README.org LICENSE /tmp/agent-org-0.1.0/
+tar cf agent-org-0.1.0.tar -C /tmp agent-org-0.1.0
+#+end_src
+
+Then ~M-x package-install-file RET ~/agent-org-0.1.0.tar RET~.
+~M-x agent-org-start~ is autoloaded; the ~acp~ dependency comes from
+NonGNU ELPA.
 
 * Quickstart
 

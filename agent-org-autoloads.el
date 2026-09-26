@@ -17,7 +17,7 @@ When called interactively, prompt for the provider.
 
 (fn PROVIDER)" t)
 (autoload 'agent-org-send "agent-org" "\
-Send the User prompt under point (or at end) to the active session." t)
+Send the typed prompt at the end of the chat buffer to the agent." t)
 (register-definition-prefixes "agent-org" '("agent-org--"))
 
 
@@ -29,6 +29,21 @@ Send the User prompt under point (or at end) to the active session." t)
 ;;; Generated autoloads from agent-org-providers.el
 
 (register-definition-prefixes "agent-org-providers" '("agent-org-"))
+
+
+;;; Generated autoloads from agent-org-loader.el
+
+(register-definition-prefixes "agent-org-loader" '("agent-org-loader-"))
+
+
+;;; Generated autoloads from loader-live-test.el
+
+(register-definition-prefixes "loader-live-test" '("loader-live--ready-p"))
+
+
+;;; Generated autoloads from loader-test.el
+
+(register-definition-prefixes "loader-test" '("my-loader-test"))
 
 ;;; End of scraped data
 
