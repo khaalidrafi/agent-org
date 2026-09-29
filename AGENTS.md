@@ -51,10 +51,15 @@ emacs -Q --batch \
 #   COMMANDS/MODES/CONFIG drawers — all folded by default, no heading
 #   (headings belong to the conversation).  Rewritten by
 #   `agent-org-buffer-refresh-metadata'; never edit it by hand.
-# - Per-turn tool calls and extended thinking render into ONE folded
-#   `:tool:` / `:thinking:` drawer under the current `* Agent` heading
-#   (gptel-inspired: one foldable unit per turn, updates rewrite the
-#   drawer body in place keyed by toolCallId — never duplicate
-#   headings).  Fold state is driven directly with `org-fold-region',
-#   NOT `org-fold-hide-drawer-toggle', whose org-element cache is stale
-#   while a turn streams with font-lock off ("Not at a drawer").
+# - Per-turn tool calls render as `** KEYWORD title [id]` subheadings under
+#   the current `* Agent` heading, one heading per toolCallId, KEYWORD from
+#   the per-file `#+TODO: TODO DOING | DONE CANCELLED` set (pending→TODO,
+#   in_progress→DOING, completed→DONE, failed→CANCELLED); updates rewrite the
+#   heading line in place via its marker, never duplicating it.  Tool calls
+#   are HEADLINES, not a drawer: the Org drawer spec (info "(org) Drawers")
+#   forbids headlines inside drawers, so a :tool: drawer could never hold
+#   them anyway.  Extended thinking stays in ONE folded `:thinking:` drawer
+#   under the same heading.  Fold state is driven directly with
+#   `org-fold-region', NOT `org-fold-hide-drawer-toggle', whose org-element
+#   cache is stale while a turn streams with font-lock off ("Not at a
+#   drawer").

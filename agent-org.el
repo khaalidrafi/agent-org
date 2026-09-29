@@ -120,6 +120,8 @@ updates; the send callbacks re-open the prompt afterwards)."
   (let ((buffer (plist-get session :buffer))
         (modes (and resp (map-elt resp 'modes)))
         (config (and resp (agent-org--wire-list (map-elt resp 'configOptions)))))
+    (when-let* ((title (and resp (map-elt resp 'title))))
+      (agent-org-buffer-set-status buffer :title title))
     (when modes
       (agent-org-buffer-set-status buffer
         :mode (map-elt modes 'currentModeId)

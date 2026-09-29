@@ -183,7 +183,7 @@ Agent turns, thinking or tool calls nobody asked for."
        session `((method . "session/update")
                  (params ((update . ,update))))))
     (with-current-buffer buf
-      (should-not (string-match-p "Agent\\|:thinking:\\|:tool:\\|unasked\\|Thinking\\|shell"
+      (should-not (string-match-p "Agent\\|:thinking:\\|unasked\\|Thinking\\|shell"
                                   (buffer-string))))
     (kill-buffer buf)))
 
@@ -206,52 +206,65 @@ Agent turns, thinking or tool calls nobody asked for."
         (should (= n 1))))
     (kill-buffer buf)))
 
-;;;; Tool call drawer
+;;;; Tool call headings
 
 (ert-deftest test-agent-org-buffer-tool-insert ()
-  "Tool calls render as one folded :tool: drawer, not headings."
+  "Tool calls render as `** KEYWORD title [id]' subheadings — status
+maps to the per-file TODO keyword set (pending→TODO, in_progress→DOING,
+completed→DONE, failed→CANCELLED) — never as a :tool: drawer."
   (let ((buf (agent-org-buffer-create "tool")))
     (agent-org-buffer-start-agent-turn buf nil)
     (agent-org-buffer-insert-tool buf '((title . "read_file")
                                         (toolCallId . "tc1")
                                         (status . "in_progress")))
     (with-current-buffer buf
-      (should (string-match-p "^:tool:$" (buffer-string)))
-      (should (string-match-p "in_progress — read_file \\[tc1\\]" (buffer-string)))
-      (should-not (string-match-p "^\\*\\* Tool" (buffer-string)))
-      (should (ao--drawer-folded-p "tool")))
+      (should (string-match-p "^\\*\\* DOING read_file \\[tc1\\]$" (buffer-string)))
+      (should-not (string-match-p "^:tool:$" (buffer-string)))
+      ;; the heading belongs under the Agent heading, never before it
+      (should (string-match-p "\\* Agent\n\n\\*\\* DOING read_file \\[tc1\\]"
+                              (buffer-string)))
+      (should (= 1 (ao--count-occurrences (buffer-string) "^\\*\\* "))))
     (kill-buffer buf)))
 
-(ert-deftest test-agent-org-tool-updates-rewrite-one-line ()
-  "tool_call_update for a known id replaces its line; new ids append."
+(ert-deftest test-agent-org-tool-updates-rewrite-heading-in-place ()
+  "tool_call_update for a known id rewrites its heading's keyword/title
+in place; new ids append their own heading."
   (let ((buf (agent-org-buffer-create "toolup")))
     (agent-org-buffer-start-agent-turn buf nil)
     (agent-org-buffer-insert-tool buf '((title . "shell") (toolCallId . "tc1")
                                         (status . "pending")))
+    (should (with-current-buffer buf
+              (string-match-p "^\\*\\* TODO shell \\[tc1\\]$" (buffer-string))))
     ;; update without a title must not downgrade it to "tool"
     (agent-org-buffer-insert-tool buf '((toolCallId . "tc1") (status . "completed")))
     (agent-org-buffer-insert-tool buf '((toolCallId . "tc2")))
     (with-current-buffer buf
-      (should (= 1 (ao--count-occurrences (buffer-string) "^:tool:$")))
+      (should (= 2 (ao--count-occurrences (buffer-string) "^\\*\\* ")))
       (should (= 1 (ao--count-occurrences (buffer-string) "\\[tc1\\]")))
       (should (= 1 (ao--count-occurrences (buffer-string) "\\[tc2\\]")))
-      (should (string-match-p "completed — shell \\[tc1\\]" (buffer-string)))
-      (should (string-match-p "pending — tool \\[tc2\\]" (buffer-string))))
+      (should (string-match-p "^\\*\\* DONE shell \\[tc1\\]$" (buffer-string)))
+      (should-not (string-match-p "TODO shell" (buffer-string)))
+      (should (string-match-p "^\\*\\* TODO tool \\[tc2\\]$" (buffer-string))))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-tool-state-resets-per-turn ()
-  "A new Agent turn gets a fresh drawer; last turn's calls are gone."
+  "A new Agent turn gets its own headings; old ids re-appear fresh."
   (let ((buf (agent-org-buffer-create "toolturn")))
     (agent-org-buffer-start-agent-turn buf nil)
     (agent-org-buffer-insert-tool buf '((title . "shell") (toolCallId . "tcA")))
     (agent-org-buffer-end-agent-turn buf)
     (agent-org-buffer-start-agent-turn buf nil)
     (agent-org-buffer-insert-tool buf '((title . "tree") (toolCallId . "tcB")))
+    ;; a reused id (harness may echo an old call) must not merge into
+    ;; the previous turn's heading
+    (agent-org-buffer-insert-tool buf '((title . "shell") (toolCallId . "tcA")
+                                        (status . "completed")))
     (with-current-buffer buf
-      (should (= 2 (ao--count-occurrences (buffer-string) "^:tool:$")))
-      ;; each turn's drawer keeps exactly its own call
-      (should (= 1 (ao--count-occurrences (buffer-string) "\\[tcA\\]")))
-      (should (= 1 (ao--count-occurrences (buffer-string) "\\[tcB\\]"))))
+      (should (= 1 (ao--count-occurrences (buffer-string) "^\\*\\* TODO shell \\[tcA\\]$")))
+      (should (= 1 (ao--count-occurrences (buffer-string) "^\\*\\* DONE shell \\[tcA\\]$")))
+      (should (= 1 (ao--count-occurrences (buffer-string) "^\\*\\* TODO tree \\[tcB\\]$")))
+      ;; a merged turn would leave only two headings
+      (should (= 3 (ao--count-occurrences (buffer-string) "^\\*\\* "))))
     (kill-buffer buf)))
 
 ;;;; Prompt protection helpers
@@ -525,7 +538,7 @@ Returns (BUFFER . SESSION)."
       (agent-org-buffer-insert-tool buf '((title . "read_file") (toolCallId . "tc")))
       (should (save-excursion
                 (goto-char (point-min))
-                (and (search-forward ":tool:" nil t)
+                (and (re-search-forward "^\\*\\* TODO read_file \\[tc\\]$" nil t)
                      (get-text-property (match-beginning 0) 'read-only)))))
     (kill-buffer buf)))
 
@@ -604,6 +617,7 @@ Returns (BUFFER . SESSION)."
 (defun ao--fake-session-new-resp ()
   "Canned goose-shaped session/new response alist."
   `((sessionId . "sid-x")
+    (title . "Initial Session Title")
     (modes . ((currentModeId . "auto")
               (availableModes .
                [((id . "auto") (name . "auto")
@@ -642,6 +656,70 @@ Returns (BUFFER . SESSION)."
         (goto-char (point-max))
         (org-back-to-heading t)
         (should (equal (org-get-heading t t t t) "User"))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-title-initializes-from-session-new-response ()
+  "A title in the session/new response lands in `#+TITLE:' verbatim —
+the harness's own session title, with no provider prefix."
+  (let* ((pair (ao--make-test-session "title-init"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (setf (plist-get session :session-id) nil)
+    (agent-org--session-ready session "sid-t1" (ao--fake-session-new-resp))
+    (with-current-buffer buf
+      (should (string-match-p "^#\\+TITLE: Initial Session Title$"
+                              (buffer-string)))
+      (should (= 1 (ao--count-occurrences (buffer-string) "#\\+TITLE:")))
+      (should (equal "Initial Session Title"
+                     (plist-get agent-org-buffer--status :title))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-title-falls-back-to-provider-until-set ()
+  "Before the harness reports a title, `#+TITLE:' shows the provider
+name alone; the fallback disappears once a title arrives."
+  (let* ((pair (ao--make-test-session "title-fb"))
+         (buf (car pair)))
+    (with-current-buffer buf
+      (should (string-match-p "^#\\+TITLE: title-fb$" (buffer-string))))
+    (agent-org-buffer-set-status buf :title "Real Harness Title")
+    (agent-org-buffer-refresh-metadata buf)
+    (with-current-buffer buf
+      (should (string-match-p "^#\\+TITLE: Real Harness Title$" (buffer-string)))
+      (should-not (string-match-p "^#\\+TITLE: title-fb$" (buffer-string)))
+      (should (= 1 (ao--count-occurrences (buffer-string) "#\\+TITLE:"))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-title-updates-from-session-info-update ()
+  "Mid-session `session_info_update' notifications rename `#+TITLE:'
+and keep the buffer consistent (one title line, no duplicates)."
+  (let* ((pair (ao--make-test-session "title-upd"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (setf (plist-get session :session-id) nil)
+    (agent-org--session-ready session "sid-t2" (ao--fake-session-new-resp))
+    (with-current-buffer buf
+      (should (string-match-p "^#\\+TITLE: Initial Session Title$"
+                              (buffer-string))))
+    ;; the agent renames the session; title rides inside the update
+    (agent-org--on-notification
+     session
+     `((method . "session/update")
+       (params . ((sessionId . "sid-t2")
+                  (update . ((sessionUpdate . "session_info_update")
+                             (title . "Renamed by agent")))))))
+    (with-current-buffer buf
+      (should (string-match-p "^#\\+TITLE: Renamed by agent$" (buffer-string)))
+      (should (= 1 (ao--count-occurrences (buffer-string) "#\\+TITLE:"))))
+    ;; title may also ride directly on params (other ACP clients)
+    (agent-org--on-notification
+     session
+     `((method . "session/update")
+       (params . ((sessionId . "sid-t2")
+                  (title . "Params title")
+                  (update . ((sessionUpdate . "session_info_update")))))))
+    (with-current-buffer buf
+      (should (string-match-p "^#\\+TITLE: Params title$" (buffer-string)))
+      (should (= 1 (ao--count-occurrences (buffer-string) "#\\+TITLE:"))))
     (kill-buffer buf)))
 
 (defun ao--drawer-folded-p (name)
@@ -762,6 +840,46 @@ Returns (BUFFER . SESSION)."
         (agent-org-send)
         (funcall (plist-get captured :on-success) nil)
         (should (= 500 (plist-get agent-org-buffer--status :tokens)))))
+    (kill-buffer buf)))
+
+;;;; Tool keyword setup & mode-line hygiene
+
+(ert-deftest test-agent-org-metadata-declares-tool-todo-keywords ()
+  "The metadata block carries the per-file `#+TODO:' setup line that
+gives tool headings their DOING/DONE/CANCELLED states, and Org actually
+parses it (C-c C-c on a tool heading offers these keywords)."
+  (let* ((pair (ao--make-test-session "kw"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (setf (plist-get session :session-id) nil)
+    (agent-org--session-ready session "sid-k" (ao--fake-session-new-resp))
+    (with-current-buffer buf
+      (should (string-match-p "^#\\+TODO: TODO DOING | DONE CANCELLED$"
+                              (buffer-string)))
+      (should (= 1 (ao--count-occurrences
+                    (buffer-string) "^#\\+TODO:")))
+      ;; the line is inside the metadata block: before the first heading
+      (save-excursion
+        (goto-char (point-min))
+        (re-search-forward "^#\\+TODO:")
+        (should (< (point) (save-excursion (goto-char (point-min))
+                                           (re-search-forward "^\\* ")))))
+      ;; and `org-set-regexps-and-options' really applied it: the
+      ;; buffer-local keyword set now includes DOING/CANCELLED, which
+      ;; the global default set does not
+      (should (equal '("TODO" "DOING" "DONE" "CANCELLED")
+                     org-todo-keywords-1))
+      (should-not (member "DOING" (default-value 'org-todo-keywords-1))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-leaves-mode-line-alone ()
+  "The chat buffer's mode line carries no agent-org lighter and no
+mode-line construct is mutated: all status lives in the header line."
+  (let ((buf (agent-org-buffer-create "ml")))
+    (with-current-buffer buf
+      (should (null (assq 'agent-org-mode minor-mode-alist)))
+      (agent-org-buffer-set-status buf :state 'ready :message "Ready")
+      (should (equal (default-value 'mode-line-format) mode-line-format)))
     (kill-buffer buf)))
 
 (provide 'test-agent-org)

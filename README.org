@@ -11,10 +11,10 @@ renders agent output natively as Org headlines.
 All status, progress and error feedback appears in the chat buffer's
 *header line* (the top bar, as used by ~gptel~ and ~agent-shell~) —
 never as system messages in the document body.  The body contains the
-~* User~ / ~* Agent~ conversation, with each turn's tool calls and
-extended thinking kept in folded ~:tool:~ / ~:thinking:~ drawers under
-the ~* Agent~ heading, plus one auto-managed metadata block at the very
-top (see [[#session-metadata][Session metadata]]).
+~* User~ / ~* Agent~ conversation, with each turn's tool calls rendered
+as ~** TODO/DONE~ subheadings and its extended thinking kept in a folded
+~:thinking:~ drawer under the ~* Agent~ heading, plus one auto-managed
+metadata block at the very top (see [[#session-metadata][Session metadata]]).
 
 * Prerequisites
 
@@ -79,10 +79,11 @@ NonGNU ELPA.
    read-only via text properties, so chat history can't be mangled by
    accident.  The cursor still travels freely over history — you can
    browse and copy it; typing into frozen text is refused.
-3. Watch the reply stream under a ~* Agent~ heading; tool calls and
-   extended thinking accumulate in folded ~:tool:~ and ~:thinking:~
-   drawers under the same heading — one drawer per turn, updated in
-   place as the agent works.
+3. Watch the reply stream under a ~* Agent~ heading; each tool call is
+   a ~**~ subheading whose TODO keyword tracks its state (~TODO~ pending
+   → ~DOING~ running → ~DONE~ completed / ~CANCELLED~ failed), updated
+   in place, while extended thinking accumulates in one folded
+   ~:thinking:~ drawer under the same heading.
    Sending while the agent is still
    responding is refused (~Agent is still responding~).
 
