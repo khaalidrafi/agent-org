@@ -28,18 +28,62 @@ MiniMax id be a defcustom instead of a literal in the default value of
 ~agent-org-providers~?  A literal is one less variable and ~customize-variable
 agent-org-providers~ reaches it; a defcustom would be easier to document.
 
-** TODO Verify the live session yourself
+** DONE Verify the live session yourself
+
+Closed 2026-10-01 by the agent, with ~emacs -Q --batch~ driving a real
+~opencode acp~ 1.18.29 and sending *no* prompt (so nothing was spent).
+Wire evidence from the ~*acp-(opencode)-1 traffic*~ buffer:
 
 #+begin_example
-M-x agent-org-start RET minimax
+08:54:07.793 → request      initialize
+08:54:25.951 ← response     result        ; 18s
+08:54:25.951 → request      session/new
+08:54:38.602 ← response     result        ; 13s
+Ready at 31-65s depending on how cold the run is
+advertised: 158 model values, currentValue "gomodel/aa-coding"
+pin sent:   one session/set_config_option for "opencode/minimax-m2.7"
+header:     :model = "opencode/minimax-m2.7"
 #+end_example
 
-Expected: Starting for up to 30s, then the header line's model segment moves
-from gomodel/aa-coding to opencode/minimax-m2.7 a moment after Ready (the
-answer to ~session/set_config_option~ arrives after the ready transition).  With
-no credit on the OpenCode Zen account, a prompt answers ~prompt failed: Upstream
-request failed: Insufficient account funds~ — that is the upstream, and the
-point of the check is that the header shows *only* that sentence.
+So ~31s~ was the fastest observed and ~65s~ the slowest — the header
+flips to the pinned model a moment after Ready, exactly as
+~agent-org--apply-pinned-model~ intends.
+
+** TODO Verify the failure wording with a real prompt
+
+Needs credit on the OpenCode Zen account, so it is still unverified.
+~M-x agent-org-start RET minimax~, then one prompt.  With no credit it
+answers ~prompt failed: Upstream request failed: Insufficient account
+funds~ — that sentence is the upstream's, and the point of the check is
+that the header shows *only* that sentence, not the JSON-RPC structure
+(see =agent-org--failure-text= below).
+
+** TODO Read the tail of =agent-org--session-ready= (agent-org.el:213)
+
+~agent-org-loader-finish~ runs at line 234, and ~refresh-metadata~ (235)
+and ~agent-org--apply-pinned-model~ (238) run *after* it.  acp wraps a
+response handler in ~condition-case~, so anything that signals in that
+tail is swallowed: the header says *Ready* while the feature that failed
+is simply absent, with nothing on screen to explain it.  Question: should
+the tail be guarded (or the pin moved before the Ready transition) so a
+failed step is at least reported?
+
+This is not hypothetical — a ~:after~ advice on the ~cl-defun~
+~agent-org-loader-finish~ raised ~wrong-number-of-arguments~ from a probe
+and silently disabled the pin for three runs while the session showed
+Ready.  Record it here because it is how the instrument *lies*: advising
+an ~&key~ function needs ~(lambda (&rest _) ...)~, not a keyword arglist.
+
+** TODO Read =agent-org--apply-pinned-model='s no-model-option path (agent-org.el:202)
+
+~when-let*~ binds ~want~ and ~option~ together, so an agent that
+advertises no model option at all fails the binding and the pin is
+skipped with *no* echo-area note — unlike the sibling case "does not
+offer %s", which does speak.  ~:want-model~ is also left set, which is
+arguably right (if a later ~session_info_update~ brings the option, the
+pin can still go out, and no round trip is wasted in the meantime).
+Question: mute or report?  Live opencode always advertises ~model~, so
+this is the unexercised branch.
 
 * Latent bugs this surfaced
 
