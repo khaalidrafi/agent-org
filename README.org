@@ -46,8 +46,10 @@ The checkout ships ~agent-org-autoloads.el~, so lazy loading via
 #+begin_src elisp
 (use-package agent-org
   :load-path "~/agent-org"
-  :commands (agent-org-start agent-org-resume agent-org-send
-             agent-org-set-model))
+  :commands (agent-org-start agent-org-resume-session agent-org-send
+             agent-org-set-session-model
+             agent-org-goose-start-agent agent-org-qoder-start-agent
+             agent-org-opencode-start-agent agent-org-minimax-start-agent))
 #+end_src
 
 ** As a ~package.el~ package (tarball)
@@ -68,7 +70,10 @@ NonGNU ELPA.
 
 * Quickstart
 
-1. M-x ~agent-org-start~ RET ~goose~ RET
+1. M-x ~agent-org-start~ RET ~goose~ RET — or skip the prompt with the
+   per-provider command M-x ~agent-org-goose-start-agent~ (one per
+   registered provider, the way ~agent-shell-<provider>-start-agent~
+   works).
    Opens =~*agent-org: Goose*= and shows ~Goose ➤ Starting~ in the
    header line.  When the ACP ~initialize~ + ~session/new~ handshake
    completes, the header fills in with everything the agent reported:
@@ -101,7 +106,7 @@ options; quitting the prompt (ESC / C-g) safely declines.
 
 * Resume a session
 
-~M-x agent-org-resume~ reopens a session the agent still remembers for
+~M-x agent-org-resume-session~ reopens a session the agent still remembers for
 the *current directory*, with its whole history replayed into a fresh
 Org buffer:
 
@@ -141,7 +146,7 @@ minimax/MiniMax-M3~ in ~.minimax/config.yaml~), and overriding it would
 only fight the CLI's own configuration.
 
 #+begin_example
-M-x agent-org-start RET minimax
+M-x agent-org-minimax-start-agent
 #+end_example
 
 Sign in once outside Emacs — ~mcode login~ (there is also
@@ -153,20 +158,20 @@ One ACP server can serve many models, so a provider plist /may/ carry
 ~:model~ (see ~agent-org-providers~).  Once the session is Ready,
 agent-org sends ~session/set_config_option~ for that id and the header
 line's model segment shows the model you are actually on — ~M-x
-agent-org-start RET opencode~ then picking a MiniMax id is how you run
+agent-org-opencode-start-agent~ then picking a MiniMax id is how you run
 MiniMax /through/ OpenCode, which is not the same thing as MiniMax Code.
 
 | Keys                      | Effect                                          |
 |---------------------------|-------------------------------------------------|
 | ~C-c C-m~                 | complete over the models this agent advertises   |
-| ~M-x agent-org-set-model~ | same, from lisp or ~M-x~                         |
+| ~M-x agent-org-set-session-model~ | same, from lisp or ~M-x~                         |
 
 Only ids the agent listed are accepted — OpenCode renames its catalog
 between releases, so a stale pin is reported in the echo area instead of
 sent and failed, and the session keeps working on whatever model the
 agent chose.  Live OpenCode 1.18.29 advertised 158 values including
 ~opencode/minimax-m2.5~, ~opencode/minimax-m2.7~ and
-~opencode/minimax-m3~; ~M-x agent-org-set-model~ is how you see the
+~opencode/minimax-m3~; ~M-x agent-org-set-session-model~ is how you see the
 current list.
 
 OpenCode is a Bun binary that boots slowly on a weak machine — expect
@@ -205,7 +210,7 @@ conversation below it.
 
 - ~agent-org-use-header-line~ — when nil, status messages go to the
   echo area via ~message~ instead of the top bar.
-- ~agent-org-default-provider~ — provider ~agent-org-resume~ uses when
+- ~agent-org-default-provider~ — provider ~agent-org-resume-session~ uses when
   you call it with no prefix argument (qoder by default: it answers
   ~session/list~, goose does not).
 - ~agent-org-replay-settle-delay~ / ~agent-org-replay-settle-cap~ — how

@@ -35,12 +35,20 @@
 ;;                   vendor's product (MiniMax Code, Qoder) needs no pin:
 ;;                   its own default model is already the right one.
 ;;
-;; Add a provider by pushing onto `agent-org-providers'.
+;; Add a provider by pushing onto `agent-org-providers', and give it the
+;; matching entry point `agent-org-<id>-start-agent' (the naming follows
+;; agent-shell: `agent-shell-goose-start-agent' etc.), which a test in
+;; tests/test-agent-org.el checks for every registered id.
 
 ;;; Code:
 
 (require 'cl-lib)
 (require 'map)
+
+;; agent-org.el requires this file, so the link is one-way: the
+;; `agent-org-<id>-start-agent' commands below are compiled against a
+;; declaration and resolved when the package is loaded.
+(declare-function agent-org-start "agent-org" (provider))
 
 (defcustom agent-org-providers
   (list
@@ -72,7 +80,7 @@ Each entry is a plist; see `agent-org-providers.el' commentary."
   :group 'agent-org)
 
 (defcustom agent-org-default-provider 'qoder
-  "Provider `agent-org-resume' uses when called without a prefix arg.
+  "Provider `agent-org-resume-session' uses when called without a prefix arg.
 Must be the `:id' of an entry in `agent-org-providers'.  Qoder is the
 default because it answers `session/list' and supports
 `session/load', which is what resume needs; Goose advertises both but
@@ -83,6 +91,35 @@ its `session/list' does not answer in practice."
                  (const :tag "MiniMax" minimax)
                  (symbol :tag "Other provider id"))
   :group 'agent-org)
+
+;;;###autoload
+(defun agent-org-goose-start-agent ()
+  "Start an interactive Goose agent-org chat."
+  (interactive)
+  (agent-org-start 'goose))
+
+;;;###autoload
+(defun agent-org-qoder-start-agent ()
+  "Start an interactive Qoder agent-org chat."
+  (interactive)
+  (agent-org-start 'qoder))
+
+;;;###autoload
+(defun agent-org-opencode-start-agent ()
+  "Start an interactive OpenCode agent-org chat.
+OpenCode is one ACP server fronting many vendors' models, so this opens
+on its shared default; use `agent-org-set-session-model' to move between
+them, MiniMax included."
+  (interactive)
+  (agent-org-start 'opencode))
+
+;;;###autoload
+(defun agent-org-minimax-start-agent ()
+  "Start an interactive MiniMax Code agent-org chat.
+MiniMax Code is `mcode', its own agent — not MiniMax models served
+through OpenCode."
+  (interactive)
+  (agent-org-start 'minimax))
 
 (defun agent-org-goose-environment ()
   "Return environment variables for the Goose ACP client.

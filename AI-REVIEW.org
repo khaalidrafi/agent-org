@@ -52,7 +52,7 @@ flips to the pinned model a moment after Ready, exactly as
 ** TODO Verify the failure wording with a real prompt
 
 Needs credit on the OpenCode Zen account, so it is still unverified.
-~M-x agent-org-start RET opencode~ (the account with no credit), then one
+~M-x agent-org-opencode-start-agent~ (the account with no credit), then one
 prompt.  With no credit it
 answers ~prompt failed: Upstream request failed: Insufficient account
 funds~ — that sentence is the upstream's, and the point of the check is
@@ -131,7 +131,7 @@ optional native dependency (~better-sqlite3~) was never compiled.  This is a
 packaging bug, not an agent-org bug — fix it in the channel that builds
 =mcode= (reinstall with =--include=optional
 --allow-scripts=@minimax-ai/code,better-sqlite3=, per the CLI's own message),
-then =M-x agent-org-start RET minimax= can be checked for real.  Until then
+then =M-x agent-org-minimax-start-agent= can be checked for real.  Until then
 everything MiniMax Code in this package is covered only by ERT.
 
 ** TODO Read what happens when an agent dies mid-handshake
@@ -143,6 +143,35 @@ should =agent-org= watch the client process (=:sentinel= or
 =process-exit-without-children=) and set ~:state 'error~ with the stderr tail,
 so a broken binary says so instead of hanging in the header line?
 
+* Command names, borrowed from agent-shell
+
+** TODO Read the four =agent-org-<id>-start-agent= commands (agent-org-providers.el)
+
+They are deliberately /explicit/ defuns, not one macro mapped over
+~agent-org-providers~: ~loaddefs-generate~ only scrapes forms it recognises, so a
+macro-generated command would not be autoloaded and would be invisible in ~M-x~
+until the package was already loaded.  Question: is that duplication (a provider
+entry *and* a command per provider) worth it, or would you rather the commands
+appear only after ~require~?  The drift risk is covered by
+~test-agent-org-every-provider-has-a-start-agent-command~.
+
+** TODO Check nothing was left behind by the rename
+
+~agent-org-resume~ → ~agent-org-resume-session~ and ~agent-org-set-model~ →
+~agent-org-set-session-model~, with /no aliases/ — one action, one ~M-x~ name.
+Grep the whole tree for the old names before trusting it:
+
+#+begin_src sh
+cd ~/agent-org && grep -rn "agent-org-resume\b\|agent-org-set-model\b" . \
+  | grep -v 'agent-org-resume-session\|agent-org-set-session-model'
+#+end_src
+
+Also check your own dotfiles, because =agent-shell= style names are long enough
+that you will have bound one to a key: any
+=(global-set-key … #'agent-org-set-model)= now points at a void symbol, and
+~use-package :commands~ lists (README.org §"As a ~use-package~") silently load a
+missing command only when you call it.
+
 * How to check the whole thing
 
 #+begin_src sh
@@ -152,11 +181,14 @@ emacs -Q --batch --eval "(add-to-list 'load-path \"$PWD\")" \
   --eval "(ert-run-tests-batch-and-exit)"
 #+end_src
 
-The suite is 71 tests.  The MiniMax/model ones are
+The suite is 74 tests.  The MiniMax/model ones are
 ~test-agent-org-minimax-provider-present~ (spawns ~mcode acp~, no pin),
 ~test-agent-org-minimax-start-pins-nothing~ (the OpenCode-shaped design may
 not creep back), ~test-agent-org-opencode-provider-present~, the four
 ~pinned-model-*~ names (which drive the pin through ~ao--with-pinned-provider~
-because no shipped provider pins anything now) and ~set-model-*~.  The mock
+because no shipped provider pins anything now) and ~set-session-model-*~.  The
+naming ones are ~test-agent-org-session-command-names-match-agent-shell~,
+~test-agent-org-every-provider-has-a-start-agent-command~ and
+~test-agent-org-goose-start-agent-opens-goose~.  The mock
 wire in ~tests/acp-mock.el~ builds ~session/set_config_option~ requests, and
 ~ao--capture-wire~ lets a test pump the handshake without a process.

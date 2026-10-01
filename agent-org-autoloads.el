@@ -16,7 +16,7 @@ Start a new ACP session with PROVIDER and open its Org chat buffer.
 When called interactively, prompt for the provider.
 
 (fn PROVIDER)" t)
-(autoload 'agent-org-resume "agent-org" "\
+(autoload 'agent-org-resume-session "agent-org" "\
 Resume an existing session with PROVIDER, replaying its history.
 With no prefix argument PROVIDER is `agent-org-default-provider'; one
 \\[universal-argument] prompts for it.  The session itself is chosen
@@ -25,7 +25,7 @@ from the agent's `session/list' for the current directory; two
 also how callers from lisp pin one.
 
 (fn PROVIDER SESSION-ID)" t)
-(autoload 'agent-org-set-model "agent-org" "\
+(autoload 'agent-org-set-session-model "agent-org" "\
 Switch the current agent-org session to MODEL.
 Interactively, complete over the models the agent advertises.  From lisp
 MODEL must be one of those ids, so a typo cannot quietly become a failed
@@ -47,6 +47,19 @@ Send the typed prompt at the end of the chat buffer to the agent." t)
 
 ;;; Generated autoloads from agent-org-providers.el
 
+(autoload 'agent-org-goose-start-agent "agent-org-providers" "\
+Start an interactive Goose agent-org chat." t)
+(autoload 'agent-org-qoder-start-agent "agent-org-providers" "\
+Start an interactive Qoder agent-org chat." t)
+(autoload 'agent-org-opencode-start-agent "agent-org-providers" "\
+Start an interactive OpenCode agent-org chat.
+OpenCode is one ACP server fronting many vendors' models, so this opens
+on its shared default; use `agent-org-set-session-model' to move between
+them, MiniMax included." t)
+(autoload 'agent-org-minimax-start-agent "agent-org-providers" "\
+Start an interactive MiniMax Code agent-org chat.
+MiniMax Code is `mcode', its own agent — not MiniMax models served
+through OpenCode." t)
 (register-definition-prefixes "agent-org-providers" '("agent-org-"))
 
 
@@ -63,6 +76,7 @@ Send the typed prompt at the end of the chat buffer to the agent." t)
 ;;; Generated autoloads from loader-test.el
 
 (register-definition-prefixes "loader-test" '("my-loader-test"))
+
 
 ;;; End of scraped data
 

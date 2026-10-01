@@ -277,7 +277,7 @@ the per-turn :thinking: drawer by `agent-org-buffer-append-thought'.")
 ;;;; Forward declaration
 
 (declare-function agent-org-send "agent-org" ())
-(declare-function agent-org-set-model "agent-org" (model))
+(declare-function agent-org-set-session-model "agent-org" (model))
 
 ;;;; Status updates
 
@@ -311,7 +311,7 @@ With `agent-org-use-header-line' nil, the rendered status is shown via
 (defvar agent-org-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") #'agent-org-send)
-    (define-key map (kbd "C-c C-m") #'agent-org-set-model)
+    (define-key map (kbd "C-c C-m") #'agent-org-set-session-model)
     ;; Org structure commands bypass `read-only' text properties and would
     ;; corrupt heading boundaries; block them all.
     (dolist (key (list (kbd "M-RET") (kbd "C-c C-t")

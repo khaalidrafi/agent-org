@@ -33,14 +33,16 @@
 ;;
 ;; Minimal usable flow:
 ;;
-;;   M-x agent-org-start    ;; new session
-;;   M-x agent-org-resume   ;; replay an existing session's history
+;;   M-x agent-org-start             ;; new session
+;;   M-x agent-org-resume-session    ;; replay an existing session's history
 ;;
 ;; `agent-org-start' picks a provider (e.g. Goose), opens an Org chat
 ;; buffer, starts an ACP session, and streams responses straight into
-;; it.  `agent-org-resume' uses `agent-org-default-provider' unless
-;; called with a prefix argument, then asks the agent for its sessions
-;; (`session/list') and replays the chosen one (`session/load').
+;; it.  A provider also has its own command, `agent-org-goose-start-agent'
+;; (see `agent-org-providers.el').  `agent-org-resume-session' uses
+;; `agent-org-default-provider' unless called with a prefix argument,
+;; then asks the agent for its sessions (`session/list') and replays the
+;; chosen one (`session/load').
 ;;
 ;; Status, progress and errors are shown in the chat buffer's
 ;; header line (the top bar), never in the document body.  See
@@ -143,9 +145,9 @@ reports), else nil."
 
 (defun agent-org--model-values (config)
   "Values CONFIG's model option offers, as a list of strings.
-`agent-org-set-model' will only send one of these: an id the agent never
-listed fails the request, and OpenCode renames its catalog between
-releases, so a stale id is a real possibility."
+`agent-org-set-session-model' will only send one of these: an id the
+agent never listed fails the request, and OpenCode renames its catalog
+between releases, so a stale id is a real possibility."
   (seq-map (lambda (o) (map-elt o 'value))
            (agent-org--wire-list
             (map-elt (agent-org--model-option config) 'options))))
@@ -271,7 +273,7 @@ already a sentence and comes back unchanged."
 (defun agent-org--provider-spec (provider)
   "Return the provider plist whose :id is the symbol PROVIDER.
 Signals a user-error for an unknown id, so both entry points
-(`agent-org-start' and `agent-org-resume') validate the same way."
+(`agent-org-start' and `agent-org-resume-session') validate the same way."
   (let ((spec (seq-find (lambda (p) (eq (plist-get p :id) provider))
                         agent-org-providers)))
     (unless spec
@@ -556,7 +558,7 @@ at; Ctrl-G cancels it."
                        (format "session/list failed: %s" (agent-org--failure-text msg)))))))))
 
 ;;;###autoload
-(defun agent-org-resume (provider session-id)
+(defun agent-org-resume-session (provider session-id)
   "Resume an existing session with PROVIDER, replaying its history.
 With no prefix argument PROVIDER is `agent-org-default-provider'; one
 \\[universal-argument] prompts for it.  The session itself is chosen
@@ -605,7 +607,7 @@ with their values instead of being a plain list of strings."
                 candidates))))
 
 ;;;###autoload
-(defun agent-org-set-model (model)
+(defun agent-org-set-session-model (model)
   "Switch the current agent-org session to MODEL.
 Interactively, complete over the models the agent advertises.  From lisp
 MODEL must be one of those ids, so a typo cannot quietly become a failed

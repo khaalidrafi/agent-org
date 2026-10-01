@@ -247,7 +247,7 @@ From `info "(org) Headlines` (§2.1):
 
 ## 9. Resume replay — buffer it, then paint once
 
-`agent-org-resume` replays a session's history into a fresh buffer.  Restored
+`agent-org-resume-session` replays a session's history into a fresh buffer.  Restored
 turns are laid out **exactly** like typed ones (`* User`, `* Agent`, `**` tool
 headings, `:thinking:` drawer), because the replay feeds the same
 `agent-org-buffer-*` primitives through `agent-org--buffer-update`.  Nothing

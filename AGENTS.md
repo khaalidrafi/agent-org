@@ -106,7 +106,17 @@ emacs -Q --batch \
 #   `session/set_config_option' once per session (it clears `:want-model'
 #   first, because ready re-enters on every mid-turn update) and only for an
 #   id the agent actually advertised — a stale pin is reported, never sent.
-#   `agent-org-set-model' (C-c C-m) is the interactive path over the same
+#   `agent-org-set-session-model' (C-c C-m) is the interactive path over the same
 #   advertised list; the model option's id is "model", except goose calls it
 #   "provider".
+# - User-facing command names follow the agent-shell package (`~/agent-shell`,
+#   same author, same ACP ground): session-level verbs name their object
+#   (`agent-org-resume-session', `agent-org-set-session-model', matching
+#   `agent-shell-resume-session' / `agent-shell-set-session-model'), and every
+#   provider id in `agent-org-providers' gets an
+#   `agent-org-<id>-start-agent' command in agent-org-providers.el, defined
+#   explicitly (autoload scraping does not see macro-generated commands) as a
+#   thin `(agent-org-start '<id>)' call.  `test-agent-org-every-provider-has-a-
+#   start-agent-command' fails if the two lists drift.  Never keep an alias for
+#   a renamed command: one action, one name in M-x.
 

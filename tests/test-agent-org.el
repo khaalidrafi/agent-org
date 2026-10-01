@@ -41,7 +41,7 @@
 (ert-deftest test-agent-org-opencode-provider-present ()
   "OpenCode is registered as the ACP host, with no pinned model.
 OpenCode is one server fronting many vendors' models, so a session opens
-on its shared default until the user picks one (`agent-org-set-model') or
+on its shared default until the user picks one (`agent-org-set-session-model') or
 a provider entry pins one."
   (let ((opencode (agent-org--provider-spec 'opencode)))
     (should (equal (plist-get opencode :name) "OpenCode"))
@@ -1223,7 +1223,7 @@ real time."
   "initialize -> session/load -> updates buffered -> batched render ->
 ready + open prompt.  An explicit SESSION-ID skips session/list."
   (ao--capture-wire
-    (let* ((buf (agent-org-resume 'qoder "sid-r"))
+    (let* ((buf (agent-org-resume-session 'qoder "sid-r"))
            (session (agent-org--session-for-buffer buf)))
       (should session)
       (should (eq (plist-get session :name) 'qoder))
@@ -1270,7 +1270,7 @@ ready + open prompt.  An explicit SESSION-ID skips session/list."
   "Without an explicit id, resume lists sessions and loads the chosen
 one (a single listing is auto-selected, no prompt)."
   (ao--capture-wire
-    (let* ((buf (agent-org-resume 'qoder nil))
+    (let* ((buf (agent-org-resume-session 'qoder nil))
            (session (agent-org--session-for-buffer buf)))
       (ao--drive "initialize" ao--fake-init-resp)
       (should (equal (caar ao--sent) "session/list"))
@@ -1299,7 +1299,7 @@ response must therefore NOT be the flush point: late updates stay
 buffered, each one re-arms the quiet-period render, and the whole
 history — before and after the response — lands in one pass."
   (ao--capture-wire
-    (let ((buf (agent-org-resume 'qoder "sid-late")))
+    (let ((buf (agent-org-resume-session 'qoder "sid-late")))
       (let ((session (agent-org--session-for-buffer buf)))
         (ao--drive "initialize" ao--fake-init-resp)
         (agent-org--on-notification
@@ -1341,7 +1341,7 @@ and an update rewrites its own heading instead of adding a second.
 Live qoder replayed 4 tool calls but the buffer showed 1 heading, so
 this pins the whole turn down at once."
   (ao--capture-wire
-    (let ((buf (agent-org-resume 'qoder "sid-tools")))
+    (let ((buf (agent-org-resume-session 'qoder "sid-tools")))
       (let ((session (agent-org--session-for-buffer buf)))
         (ao--drive "initialize" ao--fake-init-resp)
         (ao--drive "session/load" '((sessionId . "sid-tools")))
@@ -1409,7 +1409,7 @@ buffer in Restoring forever: past `agent-org-replay-settle-cap' the
 armed render is left to fire instead of being pushed back again, and
 the updates it buffers are still not dropped."
   (ao--capture-wire
-    (let ((buf (agent-org-resume 'qoder "sid-cap")))
+    (let ((buf (agent-org-resume-session 'qoder "sid-cap")))
       (let ((session (agent-org--session-for-buffer buf)))
         (ao--drive "initialize" ao--fake-init-resp)
         (ao--drive "session/load" '((sessionId . "sid-cap")))
@@ -1528,7 +1528,7 @@ answers with configOptions just like `session/new', and the replay flush
 goes through the same ready path."
   (ao--capture-wire
     (ao--with-pinned-provider
-      (let* ((buf (agent-org-resume 'minimax "sid-min"))
+      (let* ((buf (agent-org-resume-session 'minimax "sid-min"))
              (pinned ao--pin-model))
         (ao--drive "initialize" ao--fake-init-resp)
         (ao--drive "session/load" (ao--config-resp "opencode/minimax-m2.5"
@@ -1620,7 +1620,7 @@ old OpenCode-shaped design — MiniMax as a pinned model inside
                        (plist-get agent-org-buffer--status :model))))
       (kill-buffer buf))))
 
-(ert-deftest test-agent-org-set-model-switches-and-updates-header ()
+(ert-deftest test-agent-org-set-session-model-switches-and-updates-header ()
   "Choosing a model sends the request and re-reads the header from the
 response, so what the top bar shows is what the agent agreed to."
   (ao--capture-wire
@@ -1630,7 +1630,7 @@ response, so what the top bar shows is what the agent agreed to."
                  (ao--config-resp "qmodel"
                   (list (cons "qmodel" "QModel")
                         (cons "qmodel-large" "QModel Large"))))
-      (with-current-buffer buf (agent-org-set-model "qmodel-large"))
+      (with-current-buffer buf (agent-org-set-session-model "qmodel-large"))
       (let ((params (ao--set-model-params)))
         (should (equal (map-elt params 'configId) "model"))
         (should (equal (map-elt params 'value) "qmodel-large")))
@@ -1645,7 +1645,7 @@ response, so what the top bar shows is what the agent agreed to."
                                 (agent-org-buffer--render-header-line))))
       (kill-buffer buf))))
 
-(ert-deftest test-agent-org-set-model-rejects-unadvertised-model ()
+(ert-deftest test-agent-org-set-session-model-rejects-unadvertised-model ()
   "A lisp caller cannot smuggle an id the agent never offered.
 The check that keeps the interactive path honest is the same one that
 matters when lisp calls in."
@@ -1654,15 +1654,54 @@ matters when lisp calls in."
       (ao--drive "initialize" ao--fake-init-resp)
       (ao--drive "session/new" (ao--config-resp "qmodel" (list (cons "qmodel" "QModel"))))
       (should-error (with-current-buffer buf
-                      (agent-org-set-model "gpt-99"))
+                      (agent-org-set-session-model "gpt-99"))
                     :type 'user-error)
       (should (zerop (ao--sent-count "session/set_config_option")))
       (kill-buffer buf))))
 
-(ert-deftest test-agent-org-set-model-rejects-non-chat-buffer ()
+(ert-deftest test-agent-org-set-session-model-rejects-non-chat-buffer ()
   "Outside a chat buffer there is no session to reconfigure."
   (with-temp-buffer
-    (should-error (agent-org-set-model "m") :type 'user-error)))
+    (should-error (agent-org-set-session-model "m") :type 'user-error)))
+
+;;;; Command names, following agent-shell
+
+(ert-deftest test-agent-org-session-command-names-match-agent-shell ()
+  "Session-level commands borrow agent-shell's names.
+agent-shell says `agent-shell-resume-session' and
+`agent-shell-set-session-model' — the object of the verb is the session,
+because one buffer's agent can be reconfigured in several ways (model,
+mode, thought level, any config option).  The old short names are gone
+rather than kept as aliases, so each action has exactly one name to
+find in M-x."
+  (dolist (name '(agent-org-start
+                  agent-org-send
+                  agent-org-resume-session
+                  agent-org-set-session-model))
+    (should (commandp name)))
+  (dolist (gone '(agent-org-resume agent-org-set-model))
+    (should-not (fboundp gone))))
+
+(ert-deftest test-agent-org-every-provider-has-a-start-agent-command ()
+  "Every registered provider has an `agent-org-<id>-start-agent'.
+That is how agent-shell exposes its agents: one named entry point per
+provider (`agent-shell-goose-start-agent'), so M-x completion on the
+package prefix lists the choices instead of hiding them behind one
+command that prompts.  The test, not a macro, is what keeps the two
+lists from drifting: add a provider without its command and this fails."
+  (dolist (spec agent-org-providers)
+    (should (commandp (intern (format "agent-org-%s-start-agent"
+                                      (plist-get spec :id)))))))
+
+(ert-deftest test-agent-org-goose-start-agent-opens-goose ()
+  "The per-provider command is a thin call with the id baked in: right
+session, same buffer, nothing invented.  It must not grow its own
+handshake, or the two entry paths would drift."
+  (ao--capture-wire
+    (let ((buf (agent-org-goose-start-agent)))
+      (should (buffer-live-p buf))
+      (should (eq 'goose (plist-get (agent-org--session-for-buffer buf) :name)))
+      (kill-buffer buf))))
 
 (ert-deftest test-agent-org-failure-text-is-the-agents-own-sentence ()
   "A JSON-RPC error is reported by its message, not dumped whole.
