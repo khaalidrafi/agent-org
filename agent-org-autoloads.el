@@ -25,9 +25,19 @@ from the agent's `session/list' for the current directory; two
 also how callers from lisp pin one.
 
 (fn PROVIDER SESSION-ID)" t)
+(autoload 'agent-org-set-model "agent-org" "\
+Switch the current agent-org session to MODEL.
+Interactively, complete over the models the agent advertises.  From lisp
+MODEL must be one of those ids, so a typo cannot quietly become a failed
+request: agents rename their catalog between releases.
+
+Use this to move a `opencode acp' session between the models it fronts,
+MiniMax included; `agent-org-providers' pins one per provider instead.
+
+(fn MODEL)" t)
 (autoload 'agent-org-send "agent-org" "\
 Send the typed prompt at the end of the chat buffer to the agent." t)
-(register-definition-prefixes "agent-org" '("agent-org--"))
+(register-definition-prefixes "agent-org" '("agent-org-"))
 
 
 ;;; Generated autoloads from agent-org-buffer.el

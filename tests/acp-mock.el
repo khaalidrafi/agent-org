@@ -30,6 +30,12 @@
 (cl-defun acp-make-session-list-request (&key cwd)
   `((:method . "session/list")
     (:params . ((cwd . ,(directory-file-name (expand-file-name cwd)))))))
+(cl-defun acp-make-session-set-config-option-request
+    (&key session-id config-id value)
+  `((:method . "session/set_config_option")
+    (:params . ((sessionId . ,session-id)
+                (configId . ,config-id)
+                (value . ,value)))))
 (defun acp-send-request (&rest _args) nil)
 (defun acp-send-response (&rest _args) nil)
 (defun acp-make-fs-read-text-file-response (&rest _args) nil)

@@ -38,6 +38,26 @@
     (should (equal (plist-get goose :command) '("goose" "acp")))
     (should (fboundp (plist-get goose :environment)))))
 
+(ert-deftest test-agent-org-opencode-provider-present ()
+  "OpenCode is registered as the ACP host, with no pinned model.
+MiniMax has no ACP server of its own, so both MiniMax and plain OpenCode
+sessions ride `opencode acp'; only the minimax entry pins a model."
+  (let ((opencode (agent-org--provider-spec 'opencode)))
+    (should (equal (plist-get opencode :name) "OpenCode"))
+    (should (equal (plist-get opencode :command) '("opencode" "acp")))
+    (should-not (plist-get opencode :model))
+    (should (fboundp (plist-get opencode :environment)))))
+
+(ert-deftest test-agent-org-minimax-provider-present ()
+  "MiniMax is registered over the OpenCode ACP host with a MiniMax model.
+`agent-org-start' would otherwise open an OpenCode session on whatever
+model OpenCode defaults to, which is not MiniMax at all."
+  (let ((minimax (agent-org--provider-spec 'minimax)))
+    (should (equal (plist-get minimax :name) "MiniMax"))
+    (should (equal (plist-get minimax :command) '("opencode" "acp")))
+    (should (string-prefix-p "opencode/minimax-" (plist-get minimax :model)))
+    (should (fboundp (plist-get minimax :environment)))))
+
 ;;;; Buffer creation
 
 (ert-deftest test-agent-org-buffer-create ()
@@ -1424,6 +1444,192 @@ cannot afford.  The parse count is the pin."
           (should (string-match-p ":Context: 1k/2k (50%)"
                                   (buffer-string))))))
     (kill-buffer buf)))
+
+;;;; Model selection (MiniMax over the OpenCode ACP host)
+
+(defun ao--config-resp (current values &optional session-id)
+  "A session response whose configOptions offer a single `model' option.
+CURRENT is its currentValue; VALUES the options offered, as
+\(VALUE . NAME) pairs, and SESSION-ID the session they belong to.  Both
+`session/new' and `session/load' answer this way, and so does
+`session/set_config_option' with the new set.  Vectors because the wire
+decodes JSON arrays as vectors, and `name' because that is what OpenCode
+calls the label field here."
+  `((sessionId . ,(or session-id "sid-new"))
+    (configOptions .
+     [((id . "model") (name . "Model") (type . "select")
+       (currentValue . ,current)
+       (options . ,(vconcat
+                    (seq-map (lambda (pair)
+                               `((value . ,(car pair)) (name . ,(cdr pair))))
+                             values))))])))
+
+(defun ao--sent-count (method)
+  "How many requests for METHOD the capture saw."
+  (seq-count (lambda (entry) (string= (car entry) method)) ao--sent))
+
+(defun ao--set-model-params ()
+  "The params alist of the last session/set_config_option request."
+  (map-elt (plist-get (ao--sent-get "session/set_config_option") ':request)
+           ':params))
+
+(ert-deftest test-agent-org-minimax-start-pins-its-model ()
+  "Starting MiniMax sends session/set_config_option for its pinned model.
+OpenCode answers a fresh session with a shared default (seen live:
+gomodel/aa-coding) so without this the \"MiniMax\" provider would not
+run MiniMax at all."
+  (ao--capture-wire
+    (let* ((buf (agent-org-start 'minimax))
+           (pinned (plist-get (agent-org--provider-spec 'minimax) :model)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (ao--drive "session/new"
+                 (ao--config-resp "gomodel/aa-coding"
+                                  (list (cons "opencode/minimax-m2.5"
+                                              "OpenCode Zen/MiniMax-M2.5")
+                                        (cons pinned "OpenCode Zen/MiniMax"))))
+      (let ((params (ao--set-model-params)))
+        (should params)
+        (should (equal (map-elt params 'configId) "model"))
+        (should (equal (map-elt params 'value) pinned))
+        (should (equal (map-elt params 'sessionId) "sid-new")))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-minimax-resume-pins-its-model ()
+  "A resumed MiniMax session gets the pin too: `session/load' answers with
+configOptions just like `session/new', and the replay flush goes through
+the same ready path."
+  (ao--capture-wire
+    (let* ((buf (agent-org-resume 'minimax "sid-min"))
+           (pinned (plist-get (agent-org--provider-spec 'minimax) :model)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (ao--drive "session/load" (ao--config-resp "opencode/minimax-m2.5"
+                                                (list (cons pinned "MiniMax"))
+                                                "sid-min"))
+      (ao--settle)
+      (let ((params (ao--set-model-params)))
+        (should (equal (map-elt params 'value) pinned))
+        ;; the pin must follow the session that was loaded, not the id
+        ;; the request was made with before the replay flushed
+        (should (equal (map-elt params 'sessionId) "sid-min")))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-pinned-model-already-current-is-not-resent ()
+  "When the agent already reports the wanted model, say nothing on the wire.
+Sending a no-op set_config_option would be one more round trip on a
+process that is slow to answer."
+  (ao--capture-wire
+    (let* ((buf (agent-org-start 'minimax))
+           (pinned (plist-get (agent-org--provider-spec 'minimax) :model)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (ao--drive "session/new" (ao--config-resp pinned (list (cons pinned "MiniMax"))))
+      (should (zerop (ao--sent-count "session/set_config_option")))
+      ;; the session is usable regardless
+      (with-current-buffer buf
+        (should (equal 'ready (plist-get agent-org-buffer--status :state)))
+        (should (equal pinned (plist-get agent-org-buffer--status :model))))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-pinned-model-not-offered-is-reported ()
+  "A model the agent does not list is never sent, only reported.
+OpenCode renames its catalog from release to release, so a pinned id can
+go stale; failing the request would leave the header showing an error for
+a session that works fine on another model.  The report is an echo-area
+message because the Ready segment hides a bare status message."
+  (ao--capture-wire
+    (let ((buf (agent-org-start 'minimax))
+          (seen nil))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args)
+                   (push (apply #'format fmt args) seen))))
+        (ao--drive "initialize" ao--fake-init-resp)
+        (ao--drive "session/new"
+                   (ao--config-resp "gomodel/aa-coding"
+                    (list (cons "opencode/minimax-m2.5" "OpenCode Zen/MiniMax-M2.5")))))
+      (should (zerop (ao--sent-count "session/set_config_option")))
+      (should (seq-some (lambda (m) (string-match-p "minimax" m)) seen))
+      (with-current-buffer buf
+        (should (equal 'ready (plist-get agent-org-buffer--status :state)))
+        ;; the header keeps showing what the agent actually runs
+        (should (equal "gomodel/aa-coding"
+                       (plist-get agent-org-buffer--status :model))))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-pinned-model-applied-exactly-once ()
+  "The pin survives repeated ready calls (mid-turn updates re-enter it).
+Otherwise every `session_info_update' would re-send the same request."
+  (ao--capture-wire
+    (let ((buf (agent-org-start 'minimax)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (dotimes (_ 3)
+        (ao--drive "session/new"
+                   (ao--config-resp "gomodel/aa-coding"
+                    (list (cons (plist-get (agent-org--provider-spec 'minimax)
+                                           :model)
+                                "MiniMax")))))
+      (should (= 1 (ao--sent-count "session/set_config_option")))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-set-model-switches-and-updates-header ()
+  "Choosing a model sends the request and re-reads the header from the
+response, so what the top bar shows is what the agent agreed to."
+  (ao--capture-wire
+    (let ((buf (agent-org-start 'qoder)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (ao--drive "session/new"
+                 (ao--config-resp "qmodel"
+                  (list (cons "qmodel" "QModel")
+                        (cons "qmodel-large" "QModel Large"))))
+      (with-current-buffer buf (agent-org-set-model "qmodel-large"))
+      (let ((params (ao--set-model-params)))
+        (should (equal (map-elt params 'configId) "model"))
+        (should (equal (map-elt params 'value) "qmodel-large")))
+      (ao--drive "session/set_config_option"
+                 (ao--config-resp "qmodel-large"
+                  (list (cons "qmodel" "QModel")
+                        (cons "qmodel-large" "QModel Large"))))
+      (with-current-buffer buf
+        (should (equal "qmodel-large"
+                       (plist-get agent-org-buffer--status :model)))
+        (should (string-match-p "qmodel-large"
+                                (agent-org-buffer--render-header-line))))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-set-model-rejects-unadvertised-model ()
+  "A lisp caller cannot smuggle an id the agent never offered.
+The check that keeps the interactive path honest is the same one that
+matters when lisp calls in."
+  (ao--capture-wire
+    (let ((buf (agent-org-start 'qoder)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (ao--drive "session/new" (ao--config-resp "qmodel" (list (cons "qmodel" "QModel"))))
+      (should-error (with-current-buffer buf
+                      (agent-org-set-model "gpt-99"))
+                    :type 'user-error)
+      (should (zerop (ao--sent-count "session/set_config_option")))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-set-model-rejects-non-chat-buffer ()
+  "Outside a chat buffer there is no session to reconfigure."
+  (with-temp-buffer
+    (should-error (agent-org-set-model "m") :type 'user-error)))
+
+(ert-deftest test-agent-org-failure-text-is-the-agents-own-sentence ()
+  "A JSON-RPC error is reported by its message, not dumped whole.
+Live opencode answered a prompt with -32603 and the header line got the
+entire (:object …) (:json …) pair — hundreds of characters replacing the
+Ready segment.  `agent-org--failure-text' is the one channel every
+:on-failure callback uses now."
+  (should (equal "Upstream request failed: Insufficient account funds"
+                 (agent-org--failure-text
+                  '((:object (jsonrpc . "2.0") (id . 4)
+                             (error (code . -32603)
+                                    (message . "Upstream request failed: Insufficient account funds")
+                                    (data (service . "session")
+                                          (errorName . "APIError"))))
+                    (:json . "{\"jsonrpc\":\"2.0\",\"id\":4}")))))
+  (should (equal "plain sentence" (agent-org--failure-text "plain sentence")))
+  ;; an error carrying no message still reports something
+  (should (string-match-p "404" (agent-org--failure-text '((:json . "404 not found"))))))
 
 (provide 'test-agent-org)
 ;;; test-agent-org.el ends here

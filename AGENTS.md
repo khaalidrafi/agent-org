@@ -90,4 +90,18 @@ emacs -Q --batch \
 #   agent went quiet".
 # - Restored turns use the SAME rendering primitives as typed ones; never
 #   add a second renderer for replay, or the two will drift.
+# - The header line shows exactly ONE status string, and for `starting'/
+#   `ready' it is the STATE LABEL, not `:message'
+#   (`agent-org-buffer--status-segment').  So a bare `:message' is invisible
+#   while Ready.  A real request failure must set `:state 'error' (which
+#   does render its message); a non-failure note that must not steal the
+#   Ready segment goes to the echo area with `message'.  Never the body.
+# - One ACP server can front many models (opencode serves MiniMax this way).
+#   A provider plist may pin `:model'; `agent-org--apply-pinned-model' sends
+#   `session/set_config_option' once per session (it clears `:want-model'
+#   first, because ready re-enters on every mid-turn update) and only for an
+#   id the agent actually advertised — a stale pin is reported, never sent.
+#   `agent-org-set-model' (C-c C-m) is the interactive path over the same
+#   advertised list; the model option's id is "model", except goose calls it
+#   "provider".
 

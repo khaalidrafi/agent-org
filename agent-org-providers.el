@@ -27,6 +27,11 @@
 ;;   :name         - human-readable name
 ;;   :command      - full command line (binary . args), e.g. '("goose" "acp")
 ;;   :environment  - function returning a list of "VAR=val" strings
+;;   :model        - optional model id to pin for every session of this
+;;                   provider (see `agent-org--apply-pinned-model').  Only
+;;                   meaningful when the agent exposes a `model' config
+;;                   option, which is how one ACP server fronts many
+;;                   models — OpenCode does, so MiniMax needs it.
 ;;
 ;; Add a provider by pushing onto `agent-org-providers'.
 
@@ -44,7 +49,19 @@
    (list :id 'qoder
          :name "Qoder"
          :command '("qoder" "--acp")
-         :environment #'agent-org-qoder-environment))
+         :environment #'agent-org-qoder-environment)
+   (list :id 'opencode
+         :name "OpenCode"
+         :command '("opencode" "acp")
+         :environment #'agent-org-opencode-environment)
+   ;; MiniMax ships no ACP server; OpenCode is the host that speaks ACP and
+   ;; serves its catalog, so the MiniMax provider is an OpenCode session with
+   ;; a MiniMax model pinned.
+   (list :id 'minimax
+         :name "MiniMax"
+         :command '("opencode" "acp")
+         :model "opencode/minimax-m2.7"
+         :environment #'agent-org-opencode-environment))
   "List of supported ACP providers.
 Each entry is a plist; see `agent-org-providers.el' commentary."
   :type '(repeat sexp)
@@ -58,6 +75,8 @@ default because it answers `session/list' and supports
 its `session/list' does not answer in practice."
   :type '(choice (const :tag "Qoder" qoder)
                  (const :tag "Goose" goose)
+                 (const :tag "OpenCode" opencode)
+                 (const :tag "MiniMax" minimax)
                  (symbol :tag "Other provider id"))
   :group 'agent-org)
 
@@ -68,6 +87,16 @@ Uses OPENAI_API_KEY from the environment if present."
     (if key
         (list (format "OPENAI_API_KEY=%s" key))
       nil)))
+
+(defun agent-org-opencode-environment ()
+  "Return environment variables for the OpenCode ACP client.
+OpenCode keeps its own credential store (`opencode auth login'), so
+nothing has to be exported and this returns nil by default; a MINIMAX_API
+key in the environment is passed through for configs that read it."
+  (let ((key (or (getenv "MINIMAX_API_KEY")
+                 (getenv "MINIMAX_CODE_KEY"))))
+    (when key
+      (list (format "MINIMAX_API_KEY=%s" key)))))
 
 (defun agent-org-qoder-environment ()
   "Return environment variables for the Qoder ACP client.

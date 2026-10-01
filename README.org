@@ -20,10 +20,13 @@ metadata block at the very top (see [[#session-metadata][Session metadata]]).
 
 - Emacs 29.1+ (Org 9.0+ built in)
 - The ~acp~ package (e.g. from NonGNU ELPA)
-- An ACP agent binary on ~exec-path~: ~qoder --acp~ (1.1.58 tested) or
-  ~goose acp~ (1.50+ tested).  Qoder reads its credential from
+- An ACP agent binary on ~exec-path~: ~qoder --acp~ (1.1.58 tested),
+  ~goose acp~ (1.50+ tested) or ~opencode acp~ (1.18.29 tested — also what
+  serves MiniMax).  Qoder reads its credential from
   ~QODER_PERSONAL_ACCESS_TOKEN~ in the environment Emacs was started
-  with, so export it before launching Emacs or the daemon.
+  with, so export it before launching Emacs or the daemon.  OpenCode
+  keeps its own credential store, so ~opencode auth login~ once is
+  enough; no environment variable is required.
 
 * Install
 
@@ -42,7 +45,8 @@ The checkout ships ~agent-org-autoloads.el~, so lazy loading via
 #+begin_src elisp
 (use-package agent-org
   :load-path "~/agent-org"
-  :commands (agent-org-start agent-org-resume agent-org-send))
+  :commands (agent-org-start agent-org-resume agent-org-send
+             agent-org-set-model))
 #+end_src
 
 ** As a ~package.el~ package (tarball)
@@ -124,7 +128,49 @@ line message rather than hanging: goose advertises the capability but
 never answers it in practice, which is why ~agent-org-default-provider~
 is qoder.
 
+* MiniMax and other models behind one agent
+
+MiniMax has no ACP server of its own — ~opencode acp~ speaks ACP and
+fronts OpenCode's whole catalog, MiniMax included.  So the ~minimax~
+provider is an OpenCode session with a MiniMax model pinned:
+
+#+begin_example
+M-x agent-org-start RET minimax
+#+end_example
+
+Once the session is Ready, agent-org sends ~session/set_config_option~
+for ~opencode/minimax-m2.7~ (the ~:model~ in
+~agent-org-providers~), and the header line's second segment shows the
+model you are actually on.  Pin a different one by customizing the
+provider, or switch mid-session:
+
+| Keys            | Effect                                          |
+|-----------------|-------------------------------------------------|
+| ~C-c C-m~       | complete over the models this agent advertises   |
+| ~M-x~ ~agent-org-set-model~ | same, from lisp or ~M-x~         |
+
+Only ids the agent listed are accepted — OpenCode renames its catalog
+between releases, so a stale pin is reported in the echo area instead of
+sent and failed, and the session keeps working on whatever model the
+agent chose.  The three MiniMax ids seen live are
+~opencode/minimax-m2.5~, ~opencode/minimax-m2.7~ and
+~opencode/minimax-m3~; ~M-x agent-org-set-model~ is how you see the
+current list.
+
+OpenCode is a Bun binary that boots slowly on a weak machine — expect
+"Starting" for a good while before the handshake answers.  It is
+starting, not stuck.
+
+MiniMax through OpenCode Zen is metered, so a prompt can come back as
+~prompt failed: Upstream request failed: Insufficient account funds~ in
+the header line.  That is the upstream account talking, not a broken
+session: the id, the mode and the model are all still there, and topping
+up only needs a fresh ~C-c C-c~.
+
 * Session metadata
+:PROPERTIES:
+:CUSTOM_ID: session-metadata
+:END:
 
 At the top of every chat buffer, above the first conversation
 heading, ~agent-org~ keeps a frozen Org-native metadata section that
@@ -153,9 +199,10 @@ conversation below it.
 - ~agent-org-replay-settle-delay~ / ~agent-org-replay-settle-cap~ — how
   long a resume waits for the agent to stop streaming history before it
   paints it, and the hard upper bound on that wait.
-- ~agent-org-providers~ — alist of provider plists (~:id~, ~:name~,
-  ~:command~ (binary + args), ~:environment~).  Add more agents by
-  customizing it or pushing onto it in your init.
+- ~agent-org-providers~ — list of provider plists (~:id~, ~:name~,
+  ~:command~ (binary + args), ~:environment~, optional ~:model~ to pin
+  for every session of that provider).  Add more agents by customizing
+  it or pushing onto it in your init.
 
 * Development
 

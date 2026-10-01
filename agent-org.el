@@ -128,16 +128,87 @@ its timer is cancelled on the way out."
    ((listp value) value)
    (t nil)))
 
+(defun agent-org--model-option (config)
+  "Return the settable model option from configOptions list CONFIG.
+Agents id it \"model\"; Goose exposes the same choice as \"provider\".
+Nil when neither is offered."
+  (seq-find (lambda (o) (member (map-elt o 'id) '("model" "provider")))
+            config))
+
 (defun agent-org--model-from-config (config)
   "Return the model-ish current value from configOptions list CONFIG.
 Prefer an option with id \"model\", else \"provider\" (what goose
 reports), else nil."
-  (when-let* ((option
-               (or (seq-find (lambda (o) (equal (map-elt o 'id) "model"))
-                             config)
-                   (seq-find (lambda (o) (equal (map-elt o 'id) "provider"))
-                             config))))
-    (map-elt option 'currentValue)))
+  (map-elt (agent-org--model-option config) 'currentValue))
+
+(defun agent-org--model-values (config)
+  "Values CONFIG's model option offers, as a list of strings.
+`agent-org-set-model' will only send one of these: an id the agent never
+listed fails the request, and OpenCode renames its catalog between
+releases, so a stale id is a real possibility."
+  (seq-map (lambda (o) (map-elt o 'value))
+           (agent-org--wire-list
+            (map-elt (agent-org--model-option config) 'options))))
+
+(defun agent-org--session-config (session)
+  "Return SESSION's configOptions as last reported by the agent.
+The buffer status holds them: it is what the header line and the metadata
+block are rendered from, so a second copy in the session could drift."
+  (plist-get (buffer-local-value 'agent-org-buffer--status
+                                 (plist-get session :buffer))
+             :config))
+
+(defun agent-org--ingest-config (buffer config)
+  "Show configOptions CONFIG on BUFFER's header line and metadata.
+Shared by the session/new and session/load responses and by a
+`session/set_config_option' answer, so the model shown is always the one
+the agent just agreed to."
+  (agent-org-buffer-set-status buffer
+    :config config
+    :model (agent-org--model-from-config config)))
+
+(defun agent-org--set-model-request (session model)
+  "Ask SESSION's agent to switch to MODEL, then refresh the header line.
+The config id comes from the advertised option rather than the literal
+\"model\", because that is what makes the same call work on a provider
+that names it \"provider\"."
+  (let* ((buffer (plist-get session :buffer))
+         (option (agent-org--model-option (agent-org--session-config session))))
+    (acp-send-request
+     :client (plist-get session :client)
+     :request (acp-make-session-set-config-option-request
+               :session-id (plist-get session :session-id)
+               :config-id (map-elt option 'id)
+               :value model)
+     :buffer buffer
+     :on-success (lambda (resp)
+                   (let ((config (agent-org--wire-list (map-elt resp 'configOptions))))
+                     (when config (agent-org--ingest-config buffer config))))
+     :on-failure (lambda (_err msg)
+                   ;; same channel `agent-org-send' uses for a failed
+                   ;; request: the Ready segment hides a bare :message
+                   (agent-org-buffer-set-status buffer
+                     :state 'error
+                     :message (format "model set failed: %s" (agent-org--failure-text msg)))))))
+
+(defun agent-org--apply-pinned-model (session)
+  "Switch SESSION to the model its provider pins, once per session.
+Clears `:want-model' before sending, so the repeated ready calls a turn
+makes (title and usage updates re-enter it) cannot re-send the same
+request.  A wanted model the agent does not offer is reported in the echo
+area and left alone: the session works on some other model, and the header
+line already shows which one, so refusing is not a session failure — it
+must not steal the Ready segment either."
+  (when-let* ((want (plist-get session :want-model))
+              (option (agent-org--model-option (agent-org--session-config session))))
+    (setf (plist-get session :want-model) nil)
+    (let ((current (map-elt option 'currentValue)))
+      (cond
+       ((equal want current) nil)
+       ((member want (agent-org--model-values (agent-org--session-config session)))
+        (agent-org--set-model-request session want))
+       (t (message "agent-org: %s does not offer %s; staying on %s"
+                   (plist-get session :name) want current))))))
 
 (defun agent-org--session-ready (session sid &optional resp)
   "Mark SESSION live under ACP session id SID and open the input prompt.
@@ -159,14 +230,33 @@ interactive until the history has been painted."
         :mode (map-elt modes 'currentModeId)
         :modes-list (agent-org--wire-list (map-elt modes 'availableModes))))
     (when config
-      (agent-org-buffer-set-status buffer
-        :config config
-        :model (agent-org--model-from-config config)))
+      (agent-org--ingest-config buffer config))
     (agent-org-loader-finish buffer :session-id sid)
     (agent-org-buffer-refresh-metadata buffer)
+    ;; after `agent-org-loader-finish': it writes the Ready message, and a
+    ;; hint about the pinned model has to outlive it
+    (agent-org--apply-pinned-model session)
     (unless (or (plist-get session :streaming)
                 (plist-get session :loading))
       (agent-org-buffer-insert-prompt buffer))))
+
+;;;; Failure reporting
+
+(defun agent-org--failure-text (msg)
+  "One-line description of a failed request's MSG, as acp reports it.
+`acp-send-request' hands its :on-failure callback the whole response
+message — `((:object . ERROR-ALIST) (:json . RAW))' — and live opencode
+answered a prompt with that entire structure, hundreds of characters
+long, in place of the header line's status segment.  The JSON-RPC error's
+own `message' is the sentence the agent wrote for humans, so that is what
+this returns; anything else about the failure (code, data, raw JSON) is
+already in the *acp* log when the user needs it.  A plain string is
+already a sentence and comes back unchanged."
+  (cond
+   ((stringp msg) msg)
+   ((map-nested-elt msg '(:object error message)))
+   ((map-elt msg ':json))
+   (t (format "%S" msg))))
 
 ;;;; Lifecycle
 
@@ -210,6 +300,11 @@ been sent yet, so the caller picks `session/new' or `session/load'."
                           :client client
                           :buffer buffer
                           :cwd cwd
+                          ;; `:want-model' is cleared once applied, so a
+                          ;; provider pin cannot re-send per ready call;
+                          ;; the header line's `:model' is the agent's
+                          ;; current answer, a different thing
+                          :want-model (plist-get spec :model)
                           :session-id nil
                           :streaming nil
                           :loading nil
@@ -258,7 +353,7 @@ fresh `session/new' is started."
                      (agent-org--session-new session)))
      :on-failure (lambda (_err msg)
                    (agent-org-loader-fail buffer
-                     (format "initialize failed: %s" msg))))))
+                     (format "initialize failed: %s" (agent-org--failure-text msg)))))))
 
 (defun agent-org--session-new (session)
   "Ask SESSION's agent for a brand-new session and open the prompt."
@@ -275,7 +370,7 @@ fresh `session/new' is started."
                      resp))
      :on-failure (lambda (_err msg)
                    (agent-org-loader-fail buffer
-                     (format "session/new failed: %s" msg))))))
+                     (format "session/new failed: %s" (agent-org--failure-text msg)))))))
 
 ;;;; Resume
 
@@ -424,7 +519,7 @@ notifications, so the request's SESSION-ID is the fallback."
      :on-failure (lambda (_err msg)
                    (agent-org--cancel-replay session)
                    (agent-org-loader-fail buffer
-                     (format "session/load failed: %s" msg))))))
+                     (format "session/load failed: %s" (agent-org--failure-text msg)))))))
 
 (defun agent-org--resume-locate (session initialize-resp session-id)
   "Work out which session of SESSION to load, then load it.
@@ -458,7 +553,7 @@ at; Ctrl-G cancels it."
                          "No sessions to resume in this directory")))
        :on-failure (lambda (_err msg)
                      (agent-org-loader-fail buffer
-                       (format "session/list failed: %s" msg))))))))
+                       (format "session/list failed: %s" (agent-org--failure-text msg)))))))))
 
 ;;;###autoload
 (defun agent-org-resume (provider session-id)
@@ -485,6 +580,48 @@ also how callers from lisp pin one."
            (format "%s does not support session/load"
                    (plist-get spec :name))))))
     (plist-get session :buffer)))
+
+;;;; Model selection
+
+(defun agent-org--read-model ()
+  "Complete a model id out of the current chat buffer's advertised options.
+Returns the wire value; the candidate shown is the agent's own label
+(e.g. \"OpenCode Zen/MiniMax-M2.7\"), which is why candidates are paired
+with their values instead of being a plain list of strings."
+  (let* ((session (agent-org--session-for-buffer (current-buffer)))
+         (option (and session
+                      (agent-org--model-option (agent-org--session-config session))))
+         (candidates
+          (seq-map (lambda (o)
+                     (cons (agent-org-buffer--label
+                            (or (map-elt o 'name) (map-elt o 'value)))
+                           (map-elt o 'value)))
+                   (agent-org--wire-list (map-elt option 'options)))))
+    (unless candidates
+      (user-error "This agent offers no model options"))
+    ;; same label-keyed lookup as `agent-org--read-session-id': the display
+    ;; is for the human, the cdr is what goes on the wire
+    (cdr (assoc (completing-read "Model: " (seq-map #'car candidates) nil t)
+                candidates))))
+
+;;;###autoload
+(defun agent-org-set-model (model)
+  "Switch the current agent-org session to MODEL.
+Interactively, complete over the models the agent advertises.  From lisp
+MODEL must be one of those ids, so a typo cannot quietly become a failed
+request: agents rename their catalog between releases.
+
+Use this to move a `opencode acp' session between the models it fronts,
+MiniMax included; `agent-org-providers' pins one per provider instead."
+  (interactive (list (agent-org--read-model)))
+  (let ((session (agent-org--session-for-buffer (current-buffer))))
+    (unless session
+      (user-error "Not an agent-org chat buffer"))
+    (unless (plist-get session :session-id)
+      (user-error "Session not ready"))
+    (unless (member model (agent-org--model-values (agent-org--session-config session)))
+      (user-error "Agent does not offer model: %s" model))
+    (agent-org--set-model-request session model)))
 
 ;;;; Event subscription
 
@@ -817,7 +954,9 @@ report usage); anything missing is simply left untouched."
                        (setf (plist-get session :streaming) nil)
                        (agent-org-buffer-end-agent-turn buffer)
                        (agent-org-buffer-set-status
-                        buffer :state 'error :message (format "prompt failed: %s" msg))
+                        buffer :state 'error
+                        :message (format "prompt failed: %s"
+                                         (agent-org--failure-text msg)))
                        (agent-org-buffer-insert-prompt buffer)))))))
 
 (provide 'agent-org)

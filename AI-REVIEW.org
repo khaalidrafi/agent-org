@@ -1,0 +1,73 @@
+#+title: agent-org — what to review
+#+author: Khalid
+#+startup: overview
+
+* How to use this file
+
+Every unit of AI-written code that is hard to review or easy to get wrong gets a
+TODO here, with the file, the function and the one question to answer.  Done
+means you read the code and agree it is right, not that the tests passed.
+
+* MiniMax through OpenCode
+
+** TODO Read =agent-org--apply-pinned-model= (agent-org.el)
+
+Question: is clearing ~:want-model~ *before* the request goes out the right
+way to make the pin exactly-once?
+
+It has to be: ~agent-org--session-ready~ runs again on every mid-turn
+~session_info_update~, and a pin that re-sends each time is a wasted round trip
+to a process that takes seconds to answer.  The cost is that a failed
+~session/set_config_option~ is never retried in the same session — the follow-up
+is ~C-c C-m~.
+
+** TODO Read the ~:model~ key contract (agent-org-providers.el)
+
+Provider plists now carry an optional ~:model~.  Question: should the pinned
+MiniMax id be a defcustom instead of a literal in the default value of
+~agent-org-providers~?  A literal is one less variable and ~customize-variable
+agent-org-providers~ reaches it; a defcustom would be easier to document.
+
+** TODO Verify the live session yourself
+
+#+begin_example
+M-x agent-org-start RET minimax
+#+end_example
+
+Expected: Starting for up to 30s, then the header line's model segment moves
+from gomodel/aa-coding to opencode/minimax-m2.7 a moment after Ready (the
+answer to ~session/set_config_option~ arrives after the ready transition).  With
+no credit on the OpenCode Zen account, a prompt answers ~prompt failed: Upstream
+request failed: Insufficient account funds~ — that is the upstream, and the
+point of the check is that the header shows *only* that sentence.
+
+* Latent bugs this surfaced
+
+** TODO Read =agent-org--failure-text= (agent-org.el) and its six call sites
+
+~acp-send-request~ gives an ~:on-failure~ callback the whole response message
+(~(:object …) (:json …)~).  Every failure path used to interpolate that into
+the status, so a live opencode billing error replaced the header line's status
+segment with hundreds of characters.  Question: any ~msg~ left un-routed?  grep
+for =(format "… failed: %s" msg)=.
+
+** TODO Read =agent-org-buffer--status-segment= (agent-org-buffer.el)
+
+~starting~ and ~ready~ render the *state label*, never the ~:message~.  So
+~:message~ alone is invisible while Ready — which is why a refused model pin goes
+to the echo area and a real failure sets ~:state 'error~.  Recorded in
+CONVENTIONS.md §6; check the wording there matches the code.
+
+* How to check the whole thing
+
+#+begin_src sh
+cd ~/agent-org
+emacs -Q --batch --eval "(add-to-list 'load-path \"$PWD\")" \
+  --eval "(load \"tests/test-agent-org.el\")" \
+  --eval "(ert-run-tests-batch-and-exit)"
+#+end_src
+
+The eleven new tests are the ~minimax~, ~opencode~, ~pinned-model~, ~set-model~
+and ~failure-text~ names; the mock wire in ~tests/acp-mock.el~ now builds
+~session/set_config_option~ requests, and ~ao--capture-wire~ lets a test pump
+the handshake without a process.

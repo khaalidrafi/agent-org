@@ -205,6 +205,15 @@ there is noise and a blanking risk.  The header line at the top is our
 designated status surface and is what the user's eye is on while a session
 streams.
 
+One trap inside that rule: `agent-org-buffer--status-segment` renders exactly
+**one** status string, and for `starting` and `ready` it renders the *state
+label*, not the `:message`.  So `:message "something went mildly wrong"` is
+silently invisible while the session is Ready.  A real failure must therefore
+set `:state 'error` (which does show the message, as `Error: …`), and a
+non-failure note that must not steal the Ready segment — e.g. a provider's
+pinned model not being offered by the agent — goes to the echo area with
+`message` instead.  Never invent a third channel, and never write to the body.
+
 ---
 
 ## 7. Read-only protection
