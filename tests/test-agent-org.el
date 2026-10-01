@@ -40,8 +40,9 @@
 
 (ert-deftest test-agent-org-opencode-provider-present ()
   "OpenCode is registered as the ACP host, with no pinned model.
-MiniMax has no ACP server of its own, so both MiniMax and plain OpenCode
-sessions ride `opencode acp'; only the minimax entry pins a model."
+OpenCode is one server fronting many vendors' models, so a session opens
+on its shared default until the user picks one (`agent-org-set-model') or
+a provider entry pins one."
   (let ((opencode (agent-org--provider-spec 'opencode)))
     (should (equal (plist-get opencode :name) "OpenCode"))
     (should (equal (plist-get opencode :command) '("opencode" "acp")))
@@ -49,14 +50,20 @@ sessions ride `opencode acp'; only the minimax entry pins a model."
     (should (fboundp (plist-get opencode :environment)))))
 
 (ert-deftest test-agent-org-minimax-provider-present ()
-  "MiniMax is registered over the OpenCode ACP host with a MiniMax model.
-`agent-org-start' would otherwise open an OpenCode session on whatever
-model OpenCode defaults to, which is not MiniMax at all."
+  "MiniMax Code is its OWN agent: `mcode acp', not OpenCode in disguise.
+MiniMax Code and OpenCode are different products; only OpenCode needs a
+pinned model because it serves many vendors.  `mcode' is MiniMax's own
+CLI, so a MiniMax session must spawn it and pin nothing — its default
+model is already a MiniMax model."
   (let ((minimax (agent-org--provider-spec 'minimax)))
     (should (equal (plist-get minimax :name) "MiniMax"))
-    (should (equal (plist-get minimax :command) '("opencode" "acp")))
-    (should (string-prefix-p "opencode/minimax-" (plist-get minimax :model)))
-    (should (fboundp (plist-get minimax :environment)))))
+    (should (equal (plist-get minimax :command) '("mcode" "acp")))
+    (should-not (equal (plist-get minimax :command)
+                       (plist-get (agent-org--provider-spec 'opencode)
+                                  :command)))
+    (should-not (plist-get minimax :model))
+    (should (equal (plist-get minimax :environment)
+                   #'agent-org-mcode-environment))))
 
 ;;;; Buffer creation
 
@@ -1473,61 +1480,84 @@ calls the label field here."
   (map-elt (plist-get (ao--sent-get "session/set_config_option") ':request)
            ':params))
 
-(ert-deftest test-agent-org-minimax-start-pins-its-model ()
-  "Starting MiniMax sends session/set_config_option for its pinned model.
-OpenCode answers a fresh session with a shared default (seen live:
-gomodel/aa-coding) so without this the \"MiniMax\" provider would not
-run MiniMax at all."
-  (ao--capture-wire
-    (let* ((buf (agent-org-start 'minimax))
-           (pinned (plist-get (agent-org--provider-spec 'minimax) :model)))
-      (ao--drive "initialize" ao--fake-init-resp)
-      (ao--drive "session/new"
-                 (ao--config-resp "gomodel/aa-coding"
-                                  (list (cons "opencode/minimax-m2.5"
-                                              "OpenCode Zen/MiniMax-M2.5")
-                                        (cons pinned "OpenCode Zen/MiniMax"))))
-      (let ((params (ao--set-model-params)))
-        (should params)
-        (should (equal (map-elt params 'configId) "model"))
-        (should (equal (map-elt params 'value) pinned))
-        (should (equal (map-elt params 'sessionId) "sid-new")))
-      (kill-buffer buf))))
+(defconst ao--pin-model "minimax/MiniMax-M3"
+  "Model id the pinning tests make a provider want.  It is what MiniMax
+Code's own config (`defaultModel' in ~/.minimax/config.yaml) calls a
+MiniMax model, so the fake agents in these tests advertise it as if they
+were a host that fronts many models.")
 
-(ert-deftest test-agent-org-minimax-resume-pins-its-model ()
-  "A resumed MiniMax session gets the pin too: `session/load' answers with
-configOptions just like `session/new', and the replay flush goes through
-the same ready path."
+(defmacro ao--with-pinned-provider (&rest body)
+  "Run BODY with the MiniMax provider entry given a `:model' pin.
+No shipped provider pins anything now that MiniMax Code runs its own
+`mcode acp' (`agent-org-providers.el'), but a many-model host such as
+OpenCode still needs the pin path, so it stays covered against an entry
+that in real use would not carry `:model'."
+  `(let ((agent-org-providers
+          (cons (plist-put (copy-sequence (agent-org--provider-spec 'minimax))
+                           :model ao--pin-model)
+                ;; the let's own initializer still sees the plain entry
+                (seq-remove (lambda (p) (eq (plist-get p :id) 'minimax))
+                            agent-org-providers))))
+     ,@body))
+
+(ert-deftest test-agent-org-pinned-model-start-sends-the-request ()
+  "A provider that pins a model sends session/set_config_option for it.
+This is the many-model-host case: OpenCode answers a fresh session with a
+shared default (seen live: gomodel/aa-coding), so a pin is what makes the
+provider mean the model it names."
   (ao--capture-wire
-    (let* ((buf (agent-org-resume 'minimax "sid-min"))
-           (pinned (plist-get (agent-org--provider-spec 'minimax) :model)))
-      (ao--drive "initialize" ao--fake-init-resp)
-      (ao--drive "session/load" (ao--config-resp "opencode/minimax-m2.5"
-                                                (list (cons pinned "MiniMax"))
-                                                "sid-min"))
-      (ao--settle)
-      (let ((params (ao--set-model-params)))
-        (should (equal (map-elt params 'value) pinned))
-        ;; the pin must follow the session that was loaded, not the id
-        ;; the request was made with before the replay flushed
-        (should (equal (map-elt params 'sessionId) "sid-min")))
-      (kill-buffer buf))))
+    (ao--with-pinned-provider
+      (let* ((buf (agent-org-start 'minimax))
+             (pinned ao--pin-model))
+        (ao--drive "initialize" ao--fake-init-resp)
+        (ao--drive "session/new"
+                   (ao--config-resp "gomodel/aa-coding"
+                    (list (cons "opencode/minimax-m2.5"
+                                "OpenCode Zen/MiniMax-M2.5")
+                          (cons pinned "OpenCode Zen/MiniMax"))))
+        (let ((params (ao--set-model-params)))
+          (should params)
+          (should (equal (map-elt params 'configId) "model"))
+          (should (equal (map-elt params 'value) pinned))
+          (should (equal (map-elt params 'sessionId) "sid-new")))
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-pinned-model-resume-sends-the-request ()
+  "A resumed session of a pinning provider gets the pin too: `session/load'
+answers with configOptions just like `session/new', and the replay flush
+goes through the same ready path."
+  (ao--capture-wire
+    (ao--with-pinned-provider
+      (let* ((buf (agent-org-resume 'minimax "sid-min"))
+             (pinned ao--pin-model))
+        (ao--drive "initialize" ao--fake-init-resp)
+        (ao--drive "session/load" (ao--config-resp "opencode/minimax-m2.5"
+                                                  (list (cons pinned "MiniMax"))
+                                                  "sid-min"))
+        (ao--settle)
+        (let ((params (ao--set-model-params)))
+          (should (equal (map-elt params 'value) pinned))
+          ;; the pin must follow the session that was loaded, not the id
+          ;; the request was made with before the replay flushed
+          (should (equal (map-elt params 'sessionId) "sid-min")))
+        (kill-buffer buf)))))
 
 (ert-deftest test-agent-org-pinned-model-already-current-is-not-resent ()
   "When the agent already reports the wanted model, say nothing on the wire.
 Sending a no-op set_config_option would be one more round trip on a
 process that is slow to answer."
   (ao--capture-wire
-    (let* ((buf (agent-org-start 'minimax))
-           (pinned (plist-get (agent-org--provider-spec 'minimax) :model)))
-      (ao--drive "initialize" ao--fake-init-resp)
-      (ao--drive "session/new" (ao--config-resp pinned (list (cons pinned "MiniMax"))))
-      (should (zerop (ao--sent-count "session/set_config_option")))
-      ;; the session is usable regardless
-      (with-current-buffer buf
-        (should (equal 'ready (plist-get agent-org-buffer--status :state)))
-        (should (equal pinned (plist-get agent-org-buffer--status :model))))
-      (kill-buffer buf))))
+    (ao--with-pinned-provider
+      (let ((buf (agent-org-start 'minimax))
+            (pinned ao--pin-model))
+        (ao--drive "initialize" ao--fake-init-resp)
+        (ao--drive "session/new" (ao--config-resp pinned (list (cons pinned "MiniMax"))))
+        (should (zerop (ao--sent-count "session/set_config_option")))
+        ;; the session is usable regardless
+        (with-current-buffer buf
+          (should (equal 'ready (plist-get agent-org-buffer--status :state)))
+          (should (equal pinned (plist-get agent-org-buffer--status :model))))
+        (kill-buffer buf)))))
 
 (ert-deftest test-agent-org-pinned-model-not-offered-is-reported ()
   "A model the agent does not list is never sent, only reported.
@@ -1536,37 +1566,58 @@ go stale; failing the request would leave the header showing an error for
 a session that works fine on another model.  The report is an echo-area
 message because the Ready segment hides a bare status message."
   (ao--capture-wire
-    (let ((buf (agent-org-start 'minimax))
-          (seen nil))
-      (cl-letf (((symbol-function 'message)
-                 (lambda (fmt &rest args)
-                   (push (apply #'format fmt args) seen))))
-        (ao--drive "initialize" ao--fake-init-resp)
-        (ao--drive "session/new"
-                   (ao--config-resp "gomodel/aa-coding"
-                    (list (cons "opencode/minimax-m2.5" "OpenCode Zen/MiniMax-M2.5")))))
-      (should (zerop (ao--sent-count "session/set_config_option")))
-      (should (seq-some (lambda (m) (string-match-p "minimax" m)) seen))
-      (with-current-buffer buf
-        (should (equal 'ready (plist-get agent-org-buffer--status :state)))
-        ;; the header keeps showing what the agent actually runs
-        (should (equal "gomodel/aa-coding"
-                       (plist-get agent-org-buffer--status :model))))
-      (kill-buffer buf))))
+    (ao--with-pinned-provider
+      (let ((buf (agent-org-start 'minimax))
+            (seen nil))
+        (cl-letf (((symbol-function 'message)
+                   (lambda (fmt &rest args)
+                     (push (apply #'format fmt args) seen))))
+          (ao--drive "initialize" ao--fake-init-resp)
+          (ao--drive "session/new"
+                     (ao--config-resp "gomodel/aa-coding"
+                      (list (cons "opencode/minimax-m2.5"
+                                  "OpenCode Zen/MiniMax-M2.5")))))
+        (should (zerop (ao--sent-count "session/set_config_option")))
+        (should (seq-some (lambda (m) (string-match-p "minimax" m)) seen))
+        (with-current-buffer buf
+          (should (equal 'ready (plist-get agent-org-buffer--status :state)))
+          ;; the header keeps showing what the agent actually runs
+          (should (equal "gomodel/aa-coding"
+                         (plist-get agent-org-buffer--status :model))))
+        (kill-buffer buf)))))
 
 (ert-deftest test-agent-org-pinned-model-applied-exactly-once ()
   "The pin survives repeated ready calls (mid-turn updates re-enter it).
 Otherwise every `session_info_update' would re-send the same request."
   (ao--capture-wire
+    (ao--with-pinned-provider
+      (let ((buf (agent-org-start 'minimax)))
+        (ao--drive "initialize" ao--fake-init-resp)
+        (dotimes (_ 3)
+          (ao--drive "session/new"
+                     (ao--config-resp "gomodel/aa-coding"
+                      (list (cons ao--pin-model "MiniMax")))))
+        (should (= 1 (ao--sent-count "session/set_config_option")))
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-minimax-start-pins-nothing ()
+  "A MiniMax Code session asks the agent for no model at all.
+`mcode' is MiniMax's own agent, so its own default model is the right
+one; pinning would fight `defaultModel' in its config.  This guards the
+old OpenCode-shaped design — MiniMax as a pinned model inside
+`opencode acp' — from creeping back."
+  (ao--capture-wire
     (let ((buf (agent-org-start 'minimax)))
       (ao--drive "initialize" ao--fake-init-resp)
-      (dotimes (_ 3)
-        (ao--drive "session/new"
-                   (ao--config-resp "gomodel/aa-coding"
-                    (list (cons (plist-get (agent-org--provider-spec 'minimax)
-                                           :model)
-                                "MiniMax")))))
-      (should (= 1 (ao--sent-count "session/set_config_option")))
+      (ao--drive "session/new"
+                 (ao--config-resp "minimax/MiniMax-M3"
+                  (list (cons "minimax/MiniMax-M3" "MiniMax M3")
+                        (cons "minimax/MiniMax-M2.7" "MiniMax M2.7"))))
+      (should (zerop (ao--sent-count "session/set_config_option")))
+      (with-current-buffer buf
+        (should (equal 'ready (plist-get agent-org-buffer--status :state)))
+        (should (equal "minimax/MiniMax-M3"
+                       (plist-get agent-org-buffer--status :model))))
       (kill-buffer buf))))
 
 (ert-deftest test-agent-org-set-model-switches-and-updates-header ()

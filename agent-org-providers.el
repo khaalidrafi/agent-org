@@ -30,8 +30,10 @@
 ;;   :model        - optional model id to pin for every session of this
 ;;                   provider (see `agent-org--apply-pinned-model').  Only
 ;;                   meaningful when the agent exposes a `model' config
-;;                   option, which is how one ACP server fronts many
-;;                   models — OpenCode does, so MiniMax needs it.
+;;                   option, which is how ONE ACP server fronts MANY models
+;;                   — OpenCode does.  An agent that is itself a single
+;;                   vendor's product (MiniMax Code, Qoder) needs no pin:
+;;                   its own default model is already the right one.
 ;;
 ;; Add a provider by pushing onto `agent-org-providers'.
 
@@ -54,14 +56,16 @@
          :name "OpenCode"
          :command '("opencode" "acp")
          :environment #'agent-org-opencode-environment)
-   ;; MiniMax ships no ACP server; OpenCode is the host that speaks ACP and
-   ;; serves its catalog, so the MiniMax provider is an OpenCode session with
-   ;; a MiniMax model pinned.
+   ;; MiniMax Code (`mcode') is its own terminal coding agent with its own
+   ;; stdio ACP server — a different product from OpenCode, which merely
+   ;; *hosts* MiniMax models among many others.  So `minimax' spawns
+   ;; `mcode acp' and pins nothing: the CLI's own default model
+   ;; (`defaultModel' in ~/.minimax/config.yaml) is a MiniMax model
+   ;; already.
    (list :id 'minimax
          :name "MiniMax"
-         :command '("opencode" "acp")
-         :model "opencode/minimax-m2.7"
-         :environment #'agent-org-opencode-environment))
+         :command '("mcode" "acp")
+         :environment #'agent-org-mcode-environment))
   "List of supported ACP providers.
 Each entry is a plist; see `agent-org-providers.el' commentary."
   :type '(repeat sexp)
@@ -95,6 +99,16 @@ nothing has to be exported and this returns nil by default; a MINIMAX_API
 key in the environment is passed through for configs that read it."
   (let ((key (or (getenv "MINIMAX_API_KEY")
                  (getenv "MINIMAX_CODE_KEY"))))
+    (when key
+      (list (format "MINIMAX_API_KEY=%s" key)))))
+
+(defun agent-org-mcode-environment ()
+  "Return environment variables for the MiniMax Code (`mcode') ACP client.
+MiniMax Code keeps its own login (`mcode login', or `mcode acp login') in
+`~/.minimax/auth', so nothing has to be exported and this returns nil by
+default; a MINIMAX_API_KEY in the environment is passed through for
+configs that read it."
+  (let ((key (getenv "MINIMAX_API_KEY")))
     (when key
       (list (format "MINIMAX_API_KEY=%s" key)))))
 

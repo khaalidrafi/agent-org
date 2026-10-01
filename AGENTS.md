@@ -96,6 +96,11 @@ emacs -Q --batch \
 #   while Ready.  A real request failure must set `:state 'error' (which
 #   does render its message); a non-failure note that must not steal the
 #   Ready segment goes to the echo area with `message'.  Never the body.
+# - Two different things named MiniMax: MiniMax CODE (`mcode', its own ACP
+#   server via `mcode acp', provider id `minimax', pins nothing — its default
+#   model is MiniMax already) and MiniMax MODELS served by another agent
+#   (opencode fronts them, so `:model' is what makes that mean MiniMax).
+#   Never let a provider entry borrow someone else's server.
 # - One ACP server can front many models (opencode serves MiniMax this way).
 #   A provider plist may pin `:model'; `agent-org--apply-pinned-model' sends
 #   `session/set_config_option' once per session (it clears `:want-model'

@@ -8,7 +8,7 @@ Every unit of AI-written code that is hard to review or easy to get wrong gets a
 TODO here, with the file, the function and the one question to answer.  Done
 means you read the code and agree it is right, not that the tests passed.
 
-* MiniMax through OpenCode
+* MiniMax models through OpenCode (the pinned-model path)
 
 ** TODO Read =agent-org--apply-pinned-model= (agent-org.el)
 
@@ -52,7 +52,8 @@ flips to the pinned model a moment after Ready, exactly as
 ** TODO Verify the failure wording with a real prompt
 
 Needs credit on the OpenCode Zen account, so it is still unverified.
-~M-x agent-org-start RET minimax~, then one prompt.  With no credit it
+~M-x agent-org-start RET opencode~ (the account with no credit), then one
+prompt.  With no credit it
 answers ~prompt failed: Upstream request failed: Insufficient account
 funds~ — that sentence is the upstream's, and the point of the check is
 that the header shows *only* that sentence, not the JSON-RPC structure
@@ -102,6 +103,46 @@ for =(format "… failed: %s" msg)=.
 to the echo area and a real failure sets ~:state 'error~.  Recorded in
 CONVENTIONS.md §6; check the wording there matches the code.
 
+* MiniMax Code (=mcode=) — the real MiniMax provider
+
+** TODO Read =agent-org-providers.el='s =minimax= entry
+
+It now spawns ~(mcode acp)~ and carries no ~:model~.  This *replaces a wrong
+design*: MiniMax was previously implemented as an OpenCode session with
+~opencode/minimax-m2.7~ pinned, on the assumption that "MiniMax has no ACP
+server of its own".  ~mcode --help~ says otherwise — MiniMax Code is its own
+terminal coding agent with its own stdio ACP server, and OpenCode merely
+*hosts* MiniMax models.  Question for review: is pinning nothing right?  The
+argument for it is that MiniMax Code's own =defaultModel= is already
+=minimax/MiniMax-M3= (=~/.minimax/config.yaml=), so a pin would only fight the
+user's CLI config.
+
+** TODO Live verification is BLOCKED — =mcode= does not run here
+
+#+begin_example
+$ mcode acp
+MCode could not load its native SQLite dependency.
+Original error: Cannot find package 'better-sqlite3' imported from
+  /gnu/store/y8fl…-mcode-0.4.5/lib/node_modules/@minimax-ai/code/chunks/chunk-WOISMRTU.js
+#+end_example
+
+The Guix package installed the CLI with npm's build scripts blocked, so the
+optional native dependency (~better-sqlite3~) was never compiled.  This is a
+packaging bug, not an agent-org bug — fix it in the channel that builds
+=mcode= (reinstall with =--include=optional
+--allow-scripts=@minimax-ai/code,better-sqlite3=, per the CLI's own message),
+then =M-x agent-org-start RET minimax= can be checked for real.  Until then
+everything MiniMax Code in this package is covered only by ERT.
+
+** TODO Read what happens when an agent dies mid-handshake
+
+A dead-on-arrival =mcode= is the case that exposes this: =agent-org-start=
+shows =Starting= and then *nothing*, because =initialize= never gets a
+response and no =:on-failure= runs for a process that simply exits.  Question:
+should =agent-org= watch the client process (=:sentinel= or
+=process-exit-without-children=) and set ~:state 'error~ with the stderr tail,
+so a broken binary says so instead of hanging in the header line?
+
 * How to check the whole thing
 
 #+begin_src sh
@@ -111,7 +152,11 @@ emacs -Q --batch --eval "(add-to-list 'load-path \"$PWD\")" \
   --eval "(ert-run-tests-batch-and-exit)"
 #+end_src
 
-The eleven new tests are the ~minimax~, ~opencode~, ~pinned-model~, ~set-model~
-and ~failure-text~ names; the mock wire in ~tests/acp-mock.el~ now builds
-~session/set_config_option~ requests, and ~ao--capture-wire~ lets a test pump
-the handshake without a process.
+The suite is 71 tests.  The MiniMax/model ones are
+~test-agent-org-minimax-provider-present~ (spawns ~mcode acp~, no pin),
+~test-agent-org-minimax-start-pins-nothing~ (the OpenCode-shaped design may
+not creep back), ~test-agent-org-opencode-provider-present~, the four
+~pinned-model-*~ names (which drive the pin through ~ao--with-pinned-provider~
+because no shipped provider pins anything now) and ~set-model-*~.  The mock
+wire in ~tests/acp-mock.el~ builds ~session/set_config_option~ requests, and
+~ao--capture-wire~ lets a test pump the handshake without a process.

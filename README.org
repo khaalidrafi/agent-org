@@ -21,12 +21,13 @@ metadata block at the very top (see [[#session-metadata][Session metadata]]).
 - Emacs 29.1+ (Org 9.0+ built in)
 - The ~acp~ package (e.g. from NonGNU ELPA)
 - An ACP agent binary on ~exec-path~: ~qoder --acp~ (1.1.58 tested),
-  ~goose acp~ (1.50+ tested) or ~opencode acp~ (1.18.29 tested — also what
-  serves MiniMax).  Qoder reads its credential from
+  ~goose acp~ (1.50+ tested), ~opencode acp~ (1.18.29 tested) or
+  ~mcode acp~ (MiniMax Code 0.4.5).  Qoder reads its credential from
   ~QODER_PERSONAL_ACCESS_TOKEN~ in the environment Emacs was started
-  with, so export it before launching Emacs or the daemon.  OpenCode
-  keeps its own credential store, so ~opencode auth login~ once is
-  enough; no environment variable is required.
+  with, so export it before launching Emacs or the daemon.  OpenCode and
+  MiniMax Code keep their own credential stores, so ~opencode auth
+  login~ / ~mcode login~ once is enough; no environment variable is
+  required.
 
 * Install
 
@@ -128,38 +129,49 @@ line message rather than hanging: goose advertises the capability but
 never answers it in practice, which is why ~agent-org-default-provider~
 is qoder.
 
-* MiniMax and other models behind one agent
+* MiniMax Code
 
-MiniMax has no ACP server of its own — ~opencode acp~ speaks ACP and
-fronts OpenCode's whole catalog, MiniMax included.  So the ~minimax~
-provider is an OpenCode session with a MiniMax model pinned:
+MiniMax Code is its own terminal coding agent: ~mcode~, whose ~mcode acp~
+subcommand "runs MiniMax Code as an Agent Client Protocol server over
+stdio".  It is a /different product/ from OpenCode, which is a host that
+fronts many vendors' catalogues, MiniMax's models among them.  So the
+~minimax~ provider spawns ~mcode acp~ and pins nothing: MiniMax Code's
+default model is already a MiniMax model (here ~defaultModel:
+minimax/MiniMax-M3~ in ~.minimax/config.yaml~), and overriding it would
+only fight the CLI's own configuration.
 
 #+begin_example
 M-x agent-org-start RET minimax
 #+end_example
 
-Once the session is Ready, agent-org sends ~session/set_config_option~
-for ~opencode/minimax-m2.7~ (the ~:model~ in
-~agent-org-providers~), and the header line's second segment shows the
-model you are actually on.  Pin a different one by customizing the
-provider, or switch mid-session:
+Sign in once outside Emacs — ~mcode login~ (there is also
+~mcode acp login~) — and the session needs no environment variable.
 
-| Keys            | Effect                                          |
-|-----------------|-------------------------------------------------|
-| ~C-c C-m~       | complete over the models this agent advertises   |
-| ~M-x~ ~agent-org-set-model~ | same, from lisp or ~M-x~         |
+* Switching models on an agent that fronts many
+
+One ACP server can serve many models, so a provider plist /may/ carry
+~:model~ (see ~agent-org-providers~).  Once the session is Ready,
+agent-org sends ~session/set_config_option~ for that id and the header
+line's model segment shows the model you are actually on — ~M-x
+agent-org-start RET opencode~ then picking a MiniMax id is how you run
+MiniMax /through/ OpenCode, which is not the same thing as MiniMax Code.
+
+| Keys                      | Effect                                          |
+|---------------------------|-------------------------------------------------|
+| ~C-c C-m~                 | complete over the models this agent advertises   |
+| ~M-x agent-org-set-model~ | same, from lisp or ~M-x~                         |
 
 Only ids the agent listed are accepted — OpenCode renames its catalog
 between releases, so a stale pin is reported in the echo area instead of
 sent and failed, and the session keeps working on whatever model the
-agent chose.  The three MiniMax ids seen live are
+agent chose.  Live OpenCode 1.18.29 advertised 158 values including
 ~opencode/minimax-m2.5~, ~opencode/minimax-m2.7~ and
 ~opencode/minimax-m3~; ~M-x agent-org-set-model~ is how you see the
 current list.
 
 OpenCode is a Bun binary that boots slowly on a weak machine — expect
-"Starting" for a good while before the handshake answers.  It is
-starting, not stuck.
+"Starting" for a good while before the handshake answers (measured here:
+Ready at 31–65s).  It is starting, not stuck.
 
 MiniMax through OpenCode Zen is metered, so a prompt can come back as
 ~prompt failed: Upstream request failed: Insufficient account funds~ in
