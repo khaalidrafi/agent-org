@@ -247,6 +247,73 @@ in place; new ids append their own heading."
       (should (string-match-p "^\\*\\* TODO tool \\[tc2\\]$" (buffer-string))))
     (kill-buffer buf)))
 
+(ert-deftest test-agent-org-tool-heading-flattens-multiline-title ()
+  "A tool title is agent text, never a heading.  Live qoder replays
+shell calls whose title is the whole command: several lines, hundreds of
+characters.  Inserted verbatim into `** KEYWORD title [id]' everything
+after the first newline would fall into the body as loose text, and the
+in-place rewrite (which deletes one line) would then shred the turn.  So
+the label is flattened and truncated; the id still tells calls apart."
+  (let ((buf (agent-org-buffer-create "toollong"))
+        (long (concat "ls -la\n" (make-string 300 ?x) "\nsecond line")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool buf `((title . ,long)
+                                        (toolCallId . "tc1")
+                                        (status . "pending")))
+    (agent-org-buffer-insert-tool buf '((title . "probe")
+                                        (toolCallId . "tc2")
+                                        (status . "pending")))
+    (with-current-buffer buf
+      ;; exactly one Agent heading plus the two tool headings: no line
+      ;; spilled out of the heading it belongs to
+      (should (= 3 (ao--count-occurrences (buffer-string) "^\\*+ ")))
+      (should (string-match-p "^\\*\\* TODO ls -la .*\\[tc1\\]$" (buffer-string)))
+      (should-not (string-match-p "^second line$" (buffer-string)))
+      ;; cut, not merely re-wrapped
+      (should-not (string-match-p (make-string 300 ?x) (buffer-string))))
+    ;; and the pending→done rewrite still finds one clean line to replace
+    (agent-org-buffer-insert-tool buf '((toolCallId . "tc1")
+                                        (status . "completed")))
+    (with-current-buffer buf
+      (should (= 3 (ao--count-occurrences (buffer-string) "^\\*+ ")))
+      (should (string-match-p "^\\*\\* DONE ls -la .*\\[tc1\\]$" (buffer-string)))
+      (should-not (string-match-p "TODO ls" (buffer-string))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-tool-heading-survives-later-thought-chunk ()
+  "A thought arriving AFTER a tool call re-renders the whole
+:thinking: drawer, and must not delete the heading beside it.  Live
+qoder thinks between tool calls, so this is the normal streaming shape
+of a turn — it used to leave only the turn's last tool call in the
+buffer."
+  (let ((buf (agent-org-buffer-create "toolthought")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool buf '((toolCallId . "tc1") (title . "one")
+                                        (status . "pending")))
+    (agent-org-buffer-append-thought buf "thinking\n")
+    (agent-org-buffer-insert-tool buf '((toolCallId . "tc2") (title . "two")
+                                        (status . "in_progress")))
+    (agent-org-buffer-append-thought buf "more thinking\n")
+    (agent-org-buffer-insert-tool buf '((toolCallId . "tc2") (title . "two")
+                                        (status . "completed")))
+    (agent-org-buffer-append-thought buf "end of it\n")
+    (let* ((text (with-current-buffer buf (buffer-string)))
+           (above-fold
+            (with-current-buffer buf
+              (buffer-substring-no-properties
+               (point-min)
+               (save-excursion
+                 (goto-char (point-min))
+                 (re-search-forward "^:thinking:$")
+                 (match-beginning 0))))))
+      (should (= 2 (ao--count-occurrences text "^\\*\\* ")))
+      (should (= 2 (ao--count-occurrences above-fold "^\\*\\* ")))
+      (should (= 1 (ao--count-occurrences text "^:thinking:$")))
+      ;; the drawer still holds every thought chunk, in order
+      (should (apply #'ao--ordered text
+                     (list "thinking" "more thinking" "end of it"))))
+    (kill-buffer buf)))
+
 (ert-deftest test-agent-org-tool-state-resets-per-turn ()
   "A new Agent turn gets its own headings; old ids re-appear fresh."
   (let ((buf (agent-org-buffer-create "toolturn")))
@@ -432,10 +499,16 @@ in place; new ids append their own heading."
 
 (defun ao--make-test-session (name)
   "Create a chat buffer named for NAME with a registered ready session.
-Returns (BUFFER . SESSION)."
+Returns (BUFFER . SESSION).  The plist carries every key
+`agent-org--open-session' installs: `setf' on `plist-get' mutates in
+place only when the key already exists, so a session missing
+`:loading'/`:replay' would silently ignore the resume tests' setup."
   (let* ((buf (agent-org-buffer-create name))
          (session (list :name 'test :client nil :buffer buf
-                        :session-id "sid-test" :streaming nil)))
+                        :session-id "sid-test" :streaming nil
+                        :loading nil :replay nil :replay-timer nil
+                        :replay-session-id nil :replay-response nil
+                        :replay-deadline nil)))
     (agent-org--register-session session)
     (agent-org-buffer-set-session buf session)
     (cons buf session)))
@@ -880,6 +953,476 @@ mode-line construct is mutated: all status lives in the header line."
       (should (null (assq 'agent-org-mode minor-mode-alist)))
       (agent-org-buffer-set-status buf :state 'ready :message "Ready")
       (should (equal (default-value 'mode-line-format) mode-line-format)))
+    (kill-buffer buf)))
+
+;;;; Resume (qoder provider, session/list -> session/load replay)
+
+(defun ao--update-notif (update)
+  "Wrap an update alist UPDATE as a session/update notification."
+  `((method . "session/update")
+    (params . ((update . ,update)))))
+
+(defun ao--ordered (string &rest patterns)
+  "Non-nil when PATTERNS all match STRING in the given order."
+  (let ((from 0) (ok t))
+    (dolist (p patterns ok)
+      (if (string-match p string from)
+          (setq from (match-end 0))
+        (setq ok nil)))))
+
+(ert-deftest test-agent-org-qoder-provider-registered ()
+  "Qoder ships as a provider: `qoder --acp', env token passthrough."
+  (let ((qoder (seq-find (lambda (p) (eq (plist-get p :id) 'qoder))
+                         agent-org-providers)))
+    (should qoder)
+    (should (equal (plist-get qoder :name) "Qoder"))
+    (should (equal (plist-get qoder :command) '("qoder" "--acp")))
+    (should (fboundp (plist-get qoder :environment)))
+    ;; the personal access token rides through when set...
+    (should (equal (let ((process-environment
+                          (cons "QODER_PERSONAL_ACCESS_TOKEN=tok"
+                                process-environment)))
+                     (funcall (plist-get qoder :environment)))
+                   '("QODER_PERSONAL_ACCESS_TOKEN=tok")))
+    ;; ...and is simply absent when not
+    (should (equal (let ((process-environment
+                          (seq-remove (lambda (e)
+                                        (string-prefix-p
+                                         "QODER_PERSONAL_ACCESS_TOKEN=" e))
+                                      process-environment)))
+                     (funcall (plist-get qoder :environment)))
+                   nil))))
+
+(ert-deftest test-agent-org-default-provider-resolves-spec ()
+  "`agent-org-default-provider' names the provider resume uses without
+a prefix argument; `agent-org--provider-spec' validates ids."
+  (should (boundp 'agent-org-default-provider))
+  (should (member agent-org-default-provider '(goose qoder)))
+  (should (equal (plist-get (agent-org--provider-spec 'qoder) :name) "Qoder"))
+  (should (equal (plist-get (agent-org--provider-spec 'goose) :command)
+                 '("goose" "acp")))
+  (should-error (agent-org--provider-spec 'nope) :type 'user-error))
+
+(ert-deftest test-agent-org-session-candidates-from-list-resp ()
+  "session/list responses map to (DISPLAY . ID) pairs, newest first;
+untitled sessions still get an entry."
+  (let* ((resp `((sessions . [((sessionId . "s1") (title . "Alpha")
+                               (updatedAt . "2026-09-01"))
+                              ((sessionId . "s2") (updatedAt . "2026-09-02"))])))
+         (cands (agent-org--session-candidates resp)))
+    (should (= 2 (length cands)))
+    (should (equal (cdr (car cands)) "s2"))
+    (should (equal (cdr (nth 1 cands)) "s1"))
+    (should (string-match-p "Alpha" (car (nth 1 cands))))
+    (should (equal (agent-org--session-candidates '((sessions . []))) nil))))
+
+(ert-deftest test-agent-org-session-candidates-title-is-one-short-line ()
+  "Live qoder puts the whole first prompt — thousands of characters
+over many lines — in a session's `title', so the raw value would flood
+the completion list and break the candidate lines.  DISPLAY must be one
+short line that still carries the id, and an ordinary title must
+survive untouched."
+  (let* ((blob (concat "Resume all sessions paused with errors!\n"
+                       (make-string 3000 ?x) "\nlast line"))
+         (resp `((sessions . [((sessionId . "big") (title . ,blob)
+                               (updatedAt . "2026-09-02"))
+                              ((sessionId . "small") (title . "Short one")
+                               (updatedAt . "2026-09-01"))])))
+         (cands (agent-org--session-candidates resp))
+         (display (lambda (id)
+                    (car (seq-find (lambda (c) (equal (cdr c) id)) cands)))))
+    (let ((big (funcall display "big")))
+      (should-not (string-match-p "\n" big))
+      (should (<= (length big) 80))
+      (should (string-match-p "\\[big\\]\\'" big))
+      (should (string-match-p "Resume all sessions" big))
+      (should (string-match-p "…" big)))
+    (should (equal (funcall display "small") "Short one  [small]"))))
+
+(ert-deftest test-agent-org-read-session-id-single-or-error ()
+  "One listed session needs no prompt; an empty list errors out."
+  (should (equal (agent-org--read-session-id
+                  `((sessions . [((sessionId . "solo") (title . "Only"))])))
+                 "solo"))
+  (should-error (agent-org--read-session-id '((sessions . [])))
+                :type 'user-error))
+
+(ert-deftest test-agent-org-loading-buffers-replay-without-rendering ()
+  "While a session/load is in flight, conversational updates are
+buffered onto :replay and NEVER painted: the history renders in one
+batched pass when the load response arrives."
+  (let* ((pair (ao--make-test-session "loadbuf"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (setf (plist-get session :loading) t)
+    (dolist (update (list
+                     '((sessionUpdate . "user_message_chunk")
+                       (content . ((type . "text") (text . "Q1"))))
+                     '((sessionUpdate . "agent_message_chunk")
+                       (content . ((type . "text") (text . "A1"))))
+                     '((sessionUpdate . "tool_call")
+                       (toolCallId . "t1") (title . "shell") (status . "pending"))
+                     '((sessionUpdate . "agent_thought_chunk")
+                       (content . ((type . "text") (text . "hmm"))))))
+      (agent-org--on-notification session (ao--update-notif update)))
+    (with-current-buffer buf
+      (should (= 4 (length (plist-get session :replay))))
+      (should-not (string-match-p "^\\* User\\|^\\* Agent\\|Q1\\|A1\\|shell"
+                                  (buffer-string))))
+    ;; a session_info_update mid-load sets the id but must NOT open a
+    ;; prompt: the buffer isn't interactive until the load lands
+    (agent-org--on-notification
+     session `((method . "session/update")
+               (params . ((sessionId . "sid-l")
+                          (update . ((sessionUpdate . "session_info_update")))))))
+    (should (equal (plist-get session :session-id) "sid-l"))
+    (with-current-buffer buf
+      (should-not (string-match-p "^\\* User$" (buffer-string))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-render-replay-builds-history ()
+  "The batched replay paints User/Agent turns, tool headings and the
+thinking drawer in history order, closes all turns, and restores
+font-lock exactly once."
+  (let* ((pair (ao--make-test-session "replay"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (setf (plist-get session :loading) t)
+    (dolist (update (list
+                     '((sessionUpdate . "user_message_chunk")
+                       (content . ((type . "text") (text . "Hello "))))
+                     '((sessionUpdate . "user_message_chunk")
+                       (content . ((type . "text") (text . "world"))))
+                     '((sessionUpdate . "agent_message_chunk")
+                       (content . ((type . "text") (text . "Answer"))))
+                     '((sessionUpdate . "tool_call")
+                       (toolCallId . "t1") (title . "shell") (status . "completed"))
+                     '((sessionUpdate . "agent_thought_chunk")
+                       (content . ((type . "text") (text . "thinking hard"))))
+                     '((sessionUpdate . "user_message_chunk")
+                       (content . ((type . "text") (text . "Next question"))))))
+      (agent-org--on-notification session (ao--update-notif update)))
+    (let ((font-lock-was (with-current-buffer buf font-lock-mode)))
+      (agent-org--render-replay session)
+      (with-current-buffer buf
+        (let ((s (buffer-string)))
+          ;; the two user chunks collapse into ONE heading with joined text
+          (should (= 2 (ao--count-occurrences s "^\\* User$")))
+          (should (= 1 (ao--count-occurrences s "^\\* Agent$")))
+          (should (string-match-p "Hello world" s))
+          (should (apply #'ao--ordered s
+                         (list "Hello world" "Answer"
+                               "^\\*\\* DONE shell \\[t1\\]$"
+                               "thinking hard" "Next question")))
+          (should (string-match-p "^:thinking:$" s))
+          (should-not (string-match-p "^:tool:$" s)))
+        (should-not agent-org-buffer--streaming-p)
+        ;; A replay suppresses font-lock while painting and restores it
+        ;; afterwards.  Batch sessions can never enable font-lock at all,
+        ;; so the honest pin is that the value came back to what it was.
+        (should (eq font-lock-mode font-lock-was))
+        (should (null (plist-get session :replay)))))
+    (kill-buffer buf)))
+
+;;;; Resume end-to-end (drives the async chain with a capturing mock)
+
+(defvar ao--sent nil
+  "Requests captured by the resume wire mock, newest first.
+Each entry is (METHOD :REQUEST REQUEST :on-success CALLBACK).")
+
+(defun ao--sent-get (method)
+  "The most recent captured entry for METHOD, or nil."
+  (cdr (assoc method ao--sent)))
+
+(defun ao--drive (method resp)
+  "Fail unless METHOD was sent, then run its on-success with RESP."
+  (let ((entry (ao--sent-get method)))
+    (should entry)
+    (funcall (plist-get entry :on-success) resp)))
+
+(defvar ao--timer nil
+  "Armed (FUNCTION . ARGS) of the pending timer inside `ao--capture-wire'.")
+
+(defvar ao--armings 0
+  "How many times `run-at-time' was called inside `ao--capture-wire'.
+Tests assert on this to see a deferred render re-armed by late input.")
+
+(defun ao--settle ()
+  "Fire the pending timer, the way the event loop would after a delay.
+Resume defers its batched render until the replayed updates stop
+arriving; tests must not sleep on a real timer, so `ao--capture-wire'
+captures `run-at-time' here and the test decides when quiet has come."
+  (when ao--timer
+    (apply #'funcall ao--timer)
+    (setq ao--timer nil)))
+
+(defmacro ao--capture-wire (&rest body)
+  "Run BODY with `acp-send-request' capturing requests to `ao--sent'.
+Lets a test pump the resume handshake synchronously, driving each
+response callback the way the process filter would.  Timers are
+captured too (see `ao--settle'), because nothing here may block on
+real time."
+  `(let ((ao--sent nil) (ao--timer nil) (ao--armings 0))
+     (cl-letf (((symbol-function 'acp-send-request)
+                ;; `&rest' then plist reads: an interpreted `&key' lambda
+                ;; does not parse keywords at all, so the cl-letf'd
+                ;; function would be called with the raw plist as
+                ;; positional args.
+                (lambda (&rest kw)
+                  (let ((request (plist-get kw :request)))
+                    (push (cons (map-elt request ':method)
+                                (list :request request
+                                      :on-success (plist-get kw :on-success)))
+                          ao--sent))))
+               ((symbol-function 'executable-find) (lambda (&rest _) t))
+               ;; (run-at-time SECONDS REPEAT FUNCTION &rest ARGS).  Org
+               ;; arms its own timers when a chat buffer is created, so
+               ;; only the replay render is captured and counted.
+               ((symbol-function 'run-at-time)
+                (lambda (&rest args)
+                  (when (eq (nth 2 args) 'agent-org--finish-replay)
+                    (cl-incf ao--armings)
+                    (setq ao--timer (cons (nth 2 args) (nthcdr 3 args))))
+                  (list :captured-timer)))
+               ((symbol-function 'cancel-timer) (lambda (&rest _) nil)))
+       ,@body)))
+
+(defconst ao--fake-init-resp
+  '((agentCapabilities . ((loadSession . t)
+                          (sessionCapabilities . ((list) (close) (delete))))))
+  "Initialize response advertising load + list.")
+
+(ert-deftest test-agent-org-resume-end-to-end-with-explicit-id ()
+  "initialize -> session/load -> updates buffered -> batched render ->
+ready + open prompt.  An explicit SESSION-ID skips session/list."
+  (ao--capture-wire
+    (let* ((buf (agent-org-resume 'qoder "sid-r"))
+           (session (agent-org--session-for-buffer buf)))
+      (should session)
+      (should (eq (plist-get session :name) 'qoder))
+      (should (equal (caar ao--sent) "initialize"))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (should (equal (caar ao--sent) "session/load"))
+      (should-not (ao--sent-get "session/list"))
+      (let ((request (plist-get (ao--sent-get "session/load") :request)))
+        (should (equal (map-elt (map-elt request ':params) 'sessionId)
+                       "sid-r")))
+      ;; while the load is in flight the header says Restoring and
+      ;; replay updates never touch the body
+      (with-current-buffer buf
+        (should (equal (plist-get agent-org-buffer--status :state)
+                       'loading))
+        (should (string-match-p "Restoring"
+                                (agent-org-buffer--render-header-line))))
+      (dolist (update (list
+                       '((sessionUpdate . "user_message_chunk")
+                         (content . ((type . "text") (text . "Old question"))))
+                       '((sessionUpdate . "agent_message_chunk")
+                         (content . ((type . "text") (text . "Old answer"))))))
+        (agent-org--on-notification session (ao--update-notif update)))
+      (with-current-buffer buf
+        (should-not (string-match-p "Old question" (buffer-string))))
+      ;; the load response alone must not render: the agent is still
+      ;; talking.  Quiet is what paints the history once and flips live.
+      (ao--drive "session/load" '((sessionId . "sid-r")))
+      (should (plist-get session :loading))
+      (ao--settle)
+      (with-current-buffer buf
+        (should (string-match-p "Old question" (buffer-string)))
+        (should (string-match-p "Old answer" (buffer-string)))
+        (should (apply #'ao--ordered (buffer-string)
+                       (list "Old question" "Old answer")))
+        (should (equal (plist-get agent-org-buffer--status :state)
+                       'ready))
+        (should (agent-org-buffer--open-prompt-p)))
+      (should (null (plist-get session :loading)))
+      (should-not (plist-get session :streaming))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-resume-queries-list-when-no-id ()
+  "Without an explicit id, resume lists sessions and loads the chosen
+one (a single listing is auto-selected, no prompt)."
+  (ao--capture-wire
+    (let* ((buf (agent-org-resume 'qoder nil))
+           (session (agent-org--session-for-buffer buf)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (should (equal (caar ao--sent) "session/list"))
+      (ao--drive "session/list"
+                 `((sessions . [((sessionId . "solo-1")
+                                 (title . "Solo chat")
+                                 (updatedAt . "2026-09-29T04:00:00Z"))])))
+      (let ((request (plist-get (ao--sent-get "session/load") :request)))
+        (should request)
+        ;; ACP requests are alists of (:key . value) pairs, not plists:
+        ;; read them with `map-elt', never `plist-get'.
+        (should (equal (map-elt (map-elt request ':params) 'sessionId)
+                       "solo-1")))
+      (ao--drive "session/load" '((sessionId . "solo-1")))
+      (ao--settle)
+      (with-current-buffer buf
+        (should (equal (plist-get agent-org-buffer--status :state)
+                       'ready))
+        (should (equal (plist-get session :session-id) "solo-1")))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-replay-renders-updates-arriving-after-response ()
+  "The ACP spec says history arrives before the session/load response,
+but live qoder answers first and streams the replay right after.  The
+response must therefore NOT be the flush point: late updates stay
+buffered, each one re-arms the quiet-period render, and the whole
+history — before and after the response — lands in one pass."
+  (ao--capture-wire
+    (let ((buf (agent-org-resume 'qoder "sid-late")))
+      (let ((session (agent-org--session-for-buffer buf)))
+        (ao--drive "initialize" ao--fake-init-resp)
+        (agent-org--on-notification
+         session (ao--update-notif
+                  '((sessionUpdate . "user_message_chunk")
+                    (content . ((type . "text") (text . "Old question"))))))
+        (ao--drive "session/load" '((sessionId . "sid-late")))
+        (should (= 1 ao--armings))
+        (with-current-buffer buf
+          (should (equal 'loading (plist-get agent-org-buffer--status :state)))
+          (should-not (string-match-p "Old question" (buffer-string))))
+        ;; history that lands after the response is still buffered, and
+        ;; pushes the render back rather than being dropped
+        (agent-org--on-notification
+         session (ao--update-notif
+                  '((sessionUpdate . "agent_message_chunk")
+                    (content . ((type . "text") (text . "Old answer"))))))
+        (should (= 2 ao--armings))
+        (should (= 2 (length (plist-get session :replay))))
+        (with-current-buffer buf
+          (should-not (string-match-p "Old answer" (buffer-string))))
+        ;; quiet: one batched render, then live
+        (ao--settle)
+        (with-current-buffer buf
+          (should (apply #'ao--ordered (buffer-string)
+                         (list "Old question" "Old answer")))
+          (should (equal 'ready (plist-get agent-org-buffer--status :state)))
+          (should (agent-org-buffer--open-prompt-p)))
+        (should (null (plist-get session :loading)))
+        (should (null (plist-get session :replay)))
+        (should (null (plist-get session :replay-timer)))
+        (should (equal "sid-late" (plist-get session :session-id)))
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-replay-paints-every-tool-call-of-a-turn ()
+  "A replayed turn keeps the same shape as a typed one: one `* Agent'
+heading, one `**' TODO heading per distinct toolCallId, thoughts folded,
+and an update rewrites its own heading instead of adding a second.
+Live qoder replayed 4 tool calls but the buffer showed 1 heading, so
+this pins the whole turn down at once."
+  (ao--capture-wire
+    (let ((buf (agent-org-resume 'qoder "sid-tools")))
+      (let ((session (agent-org--session-for-buffer buf)))
+        (ao--drive "initialize" ao--fake-init-resp)
+        (ao--drive "session/load" '((sessionId . "sid-tools")))
+        (dolist (update
+                 (list '((sessionUpdate . "user_message_chunk")
+                         (content . ((type . "text") (text . "Do things"))))
+                       '((sessionUpdate . "agent_thought_chunk")
+                         (content . ((type . "text") (text . "plan"))))
+                       '((sessionUpdate . "agent_message_chunk")
+                         (content . ((type . "text") (text . "working"))))
+                       '((sessionUpdate . "tool_call")
+                         (toolCallId . "t1") (title . "read a") (status . "pending"))
+                       '((sessionUpdate . "agent_thought_chunk")
+                         (content . ((type . "text") (text . "more"))))
+                       '((sessionUpdate . "tool_call")
+                         (toolCallId . "t2") (title . "read b") (status . "pending"))
+                       '((sessionUpdate . "agent_thought_chunk")
+                         (content . ((type . "text") (text . "even more"))))
+                       '((sessionUpdate . "tool_call")
+                         (toolCallId . "t3") (title . "read c") (status . "pending"))
+                       '((sessionUpdate . "agent_thought_chunk")
+                         (content . ((type . "text") (text . "last"))))
+                       '((sessionUpdate . "tool_call")
+                         (toolCallId . "t4") (title . "read d") (status . "pending"))
+                       ;; t1 finishes: rewrites its heading, never a fifth one
+                       '((sessionUpdate . "tool_call_update")
+                         (toolCallId . "t1") (status . "completed"))))
+          (agent-org--on-notification session (ao--update-notif update)))
+        (should (= 11 (length (plist-get session :replay))))
+        ;; armed once by the load response, then pushed back as long as
+        ;; updates keep coming
+        (should (> ao--armings 1))
+        (ao--settle)
+        (let ((text (with-current-buffer buf (buffer-string))))
+          (should (string-match-p "Do things" text))
+          (should (equal 1 (ao--count-occurrences text "^\\* Agent$")))
+          (should (equal 4 (ao--count-occurrences text "^\\*\\* ")))
+          ;; the completed call was rewritten in place, the others stayed
+          ;; pending
+          (should (equal 1 (ao--count-occurrences text
+                                                  "^\\*\\* DONE read a \\[t1\\]$")))
+          (should (equal 3 (ao--count-occurrences text "^\\*\\* TODO ")))
+          (should (equal 1 (ao--count-occurrences text "^:thinking:$")))
+          (should (equal 'ready
+                         (with-current-buffer buf
+                           (plist-get agent-org-buffer--status :state)))))
+        ;; Org forbids headlines inside a drawer, and the drawer body is
+        ;; rewritten wholesale by the next thought: every heading must be
+        ;; above the fold, none within it.  So the text before the
+        ;; `:thinking:' line already holds all four.
+        (let ((above-fold
+               (with-current-buffer buf
+                 (buffer-substring-no-properties
+                  (point-min)
+                  (save-excursion
+                    (goto-char (point-min))
+                    (re-search-forward "^:thinking:$")
+                    (match-beginning 0))))))
+          (should (= 4 (ao--count-occurrences above-fold "^\\*\\* "))))
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-replay-settle-cap-stops-pushback ()
+  "An agent that never pauses between replayed turns must not hold a
+buffer in Restoring forever: past `agent-org-replay-settle-cap' the
+armed render is left to fire instead of being pushed back again, and
+the updates it buffers are still not dropped."
+  (ao--capture-wire
+    (let ((buf (agent-org-resume 'qoder "sid-cap")))
+      (let ((session (agent-org--session-for-buffer buf)))
+        (ao--drive "initialize" ao--fake-init-resp)
+        (ao--drive "session/load" '((sessionId . "sid-cap")))
+        (should (= 1 ao--armings))
+        ;; a clock past `agent-org-replay-settle-cap', whatever the epoch
+        (cl-letf (((symbol-function 'float-time) (lambda () 1e15)))
+          (agent-org--on-notification
+           session (ao--update-notif
+                    '((sessionUpdate . "agent_message_chunk")
+                      (content . ((type . "text") (text . "late"))))))
+          (should (= 1 ao--armings)))
+        (should (= 1 (length (plist-get session :replay))))
+        (ao--settle)
+        (with-current-buffer buf
+          (should (string-match-p "late" (buffer-string)))
+          (should (equal 'ready (plist-get agent-org-buffer--status :state))))
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-metadata-refresh-skips-unchanged ()
+  "A refresh whose rendered block is byte-identical is a no-op.
+`usage_update' arrives many times per turn; rebuilding the block each
+time would re-parse every heading in the buffer
+(`org-set-regexps-and-options'), which is exactly what a slow machine
+cannot afford.  The parse count is the pin."
+  (let ((buf (agent-org-buffer-create "skip"))
+        (parses 0))
+    (cl-letf (((symbol-function 'org-set-regexps-and-options)
+               (lambda (&rest _args) (cl-incf parses))))
+      (agent-org-buffer-refresh-metadata buf)
+      (should (= 1 parses))
+      (let ((text (with-current-buffer buf (buffer-string))))
+        (agent-org-buffer-refresh-metadata buf)
+        (should (= 1 parses))
+        (with-current-buffer buf (should (equal text (buffer-string))))
+        (agent-org-buffer-set-status buf :used 1000 :size 2000)
+        (agent-org-buffer-refresh-metadata buf)
+        (should (= 2 parses))
+        (with-current-buffer buf
+          (should (string-match-p ":Context: 1k/2k (50%)"
+                                  (buffer-string))))))
     (kill-buffer buf)))
 
 (provide 'test-agent-org)

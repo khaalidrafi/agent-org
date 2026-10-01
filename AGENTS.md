@@ -63,3 +63,17 @@ emacs -Q --batch \
 #   `org-fold-region', NOT `org-fold-hide-drawer-toggle', whose org-element
 #   cache is stale while a turn streams with font-lock off ("Not at a
 #   drawer").
+# - Resume replay: updates in `agent-org--replay-kinds' arriving while a
+#   session is `:loading' are BUFFERED, never painted one chunk at a time;
+#   the `session/load' response is NOT the flush point (qoder answers first
+#   and streams history after it — flushing there silently dropped every
+#   agent turn).  `agent-org--arm-replay-render' re-arms a quiet-period
+#   timer per late update and `agent-org--finish-replay' paints the whole
+#   history once, with `buffer-undo-list t'.  Past
+#   `agent-org-replay-settle-cap' the pending render is left to fire.
+#   Tests drive this synchronously: `ao--capture-wire' captures
+#   `run-at-time'/'cancel-timer', so `ao--settle' is how a test says "the
+#   agent went quiet".
+# - Restored turns use the SAME rendering primitives as typed ones; never
+#   add a second renderer for replay, or the two will drift.
+

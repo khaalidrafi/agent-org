@@ -98,14 +98,16 @@ Either way, status text is never written into the chat buffer body."
   "Status plist backing this buffer's header line and metadata block.
 Keys: :provider :state :message :session-id :model :mode :project
 :title :used :size :tokens :cost-amount :cost-currency :commands
-:modes-list :config.  STATE is one of `idle', `starting',
-`streaming', `ready', `awaiting' or `error'.  The list keys hold
-wire-format alists collected from ACP notifications.")
+:modes-list :config.  STATE is one of `idle', `starting', `loading'
+(session/load replay in flight), `streaming', `ready', `awaiting' or
+`error'.  The list keys hold wire-format alists collected from ACP
+notifications.")
 
 (defun agent-org-buffer--state-label (state)
   "Human-readable label for STATUS state."
   (pcase state
     ('starting "Starting")
+    ('loading "Restoring")
     ('streaming "Streaming")
     ('ready "Ready")
     ('awaiting "Awaiting permission")
@@ -116,7 +118,7 @@ wire-format alists collected from ACP notifications.")
   "Face for STATUS state."
   (pcase state
     ('error 'agent-org-status-error)
-    ((or 'starting 'streaming 'awaiting) 'agent-org-status-busy)
+    ((or 'starting 'loading 'streaming 'awaiting) 'agent-org-status-busy)
     ('ready 'agent-org-status-ready)
     (_ 'default)))
 
@@ -136,6 +138,7 @@ diagnostics (errors) are folded into the single segment."
                            message
                          label))
             ((or 'starting 'ready) label)
+            ('loading (or message label))
             ('streaming (or message label))
             (_ label))
           face)))
@@ -423,45 +426,61 @@ conversation.  Drawers whose lists are still unknown are omitted."
   '("PROPERTIES" "COMMANDS" "MODES" "CONFIG")
   "Names of the folded-by-default drawers in the metadata block.")
 
+(defvar-local agent-org-buffer--metadata-cache nil
+  "Last metadata block written at the top of this buffer, or nil.
+`agent-org-buffer-refresh-metadata' compares the freshly rendered
+block against it and skips the rebuild when they match.  That matters
+because usage/commands updates arrive constantly while a turn streams,
+and each rebuild would re-parse the whole buffer
+(`org-set-regexps-and-options') — measurable on a slow machine.")
+
 (defun agent-org-buffer-refresh-metadata (buffer)
   "Replace the Org metadata block at the top of BUFFER from its status.
 Delete-then-insert keeps this idempotent.  The block spans point-min
 up to (but not including) the first conversation heading, so chat
 text is never touched.  Drawers the user had left folded are re-folded
-after the rebuild; ones they opened stay open."
+after the rebuild; ones they opened stay open.
+
+Skips entirely when the rendered block is byte-identical to
+`agent-org-buffer--metadata-cache': no deletion, no insertion, and no
+`org-set-regexps-and-options' reparse of the whole buffer."
   (with-current-buffer buffer
-    (let ((inhibit-read-only t))
-      (save-excursion
-        (let ((folded
-               (mapcar
-                (lambda (name)
-                  (cons name
-                        (save-excursion
-                          (goto-char (point-min))
-                          (if (re-search-forward (format "^:%s:" name) nil t)
-                              (progn (forward-line 1)
-                                     (invisible-p (point)))
-                            ;; drawer not present yet: fold it when created
-                            t))))
-                agent-org-buffer--metadata-drawers)))
-          (goto-char (point-min))
-          (if (re-search-forward "^\\* " nil t)
-              (beginning-of-line)
-            (goto-char (point-max)))
-          (delete-region (point-min) (point))
-          (goto-char (point-min))
-          (let ((beg (point)))
-            (insert (agent-org-buffer--render-metadata agent-org-buffer--status))
-            (agent-org-buffer--protect beg (point))
-            ;; parse the freshly inserted `#+TODO:' setup line so tool
-            ;; headings get their buffer-local keyword set
-            (org-set-regexps-and-options)
-            (dolist (state folded)
-              (when (cdr state)
-                (save-excursion
-                  (goto-char beg)
-                  (when (re-search-forward (format "^:%s:" (car state)) nil t)
-                    (org-fold-hide-drawer-toggle)))))))))))
+    (let ((rendered (agent-org-buffer--render-metadata agent-org-buffer--status)))
+      (unless (equal rendered agent-org-buffer--metadata-cache)
+        (let ((inhibit-read-only t))
+          (save-excursion
+            (let ((folded
+                   (mapcar
+                    (lambda (name)
+                      (cons name
+                            (save-excursion
+                              (goto-char (point-min))
+                              (if (re-search-forward (format "^:%s:" name) nil t)
+                                  (progn (forward-line 1)
+                                         (invisible-p (point)))
+                                ;; drawer not present yet: fold it when created
+                                t))))
+                    agent-org-buffer--metadata-drawers)))
+              (goto-char (point-min))
+              (if (re-search-forward "^\\* " nil t)
+                  (beginning-of-line)
+                (goto-char (point-max)))
+              (delete-region (point-min) (point))
+              (goto-char (point-min))
+              (let ((beg (point)))
+                (insert rendered)
+                (setq agent-org-buffer--metadata-cache rendered)
+                (agent-org-buffer--protect beg (point))
+                ;; parse the freshly inserted `#+TODO:' setup line so tool
+                ;; headings get their buffer-local keyword set; only
+                ;; needed because the block text actually changed
+                (org-set-regexps-and-options)
+                (dolist (state folded)
+                  (when (cdr state)
+                    (save-excursion
+                      (goto-char beg)
+                      (when (re-search-forward (format "^:%s:" (car state)) nil t)
+                        (org-fold-hide-drawer-toggle)))))))))))))
 
 ;;;; Protection + live prompt
 
@@ -565,7 +584,11 @@ Disable font-lock for the duration of the turn."
           (move-marker (setq-local agent-org-buffer--turn-anchor
                                    (make-marker))
                        beg))
-        (font-lock-mode -1)
+        ;; Turning font-lock off for a turn is the single biggest win on
+        ;; a slow machine: without it every chunk re-fontifies the
+        ;; buffer.  Guarded so a replay of many turns pays one
+        ;; mode switch, not one per turn.
+        (when font-lock-mode (font-lock-mode -1))
         ;; turn-local tool state: drop the previous turn's markers so a
         ;; reused toolCallId (e.g. after `resume') cannot rewrite its
         ;; old heading
@@ -586,8 +609,11 @@ Disable font-lock for the duration of the turn."
         (unless (bolp) (insert "\n"))
         (setq agent-org-buffer--streaming-p nil
               agent-org-buffer--stream-start nil)
-        (font-lock-mode 1)
-        (font-lock-flush)))))
+        ;; re-enable only when `start-agent-turn' actually turned it
+        ;; off; a redundant call would re-fontify the whole buffer
+        (unless font-lock-mode
+          (font-lock-mode 1)
+          (font-lock-flush))))))
 
 (defun agent-org-buffer-append-chunk (buffer text session)
   "Append TEXT chunk from agent into BUFFER.
@@ -690,6 +716,26 @@ own drawer."
        buffer "thinking"
        (split-string agent-org-buffer--thought "\n")))))
 
+(defconst agent-org-buffer--label-width 60
+  "Characters of agent-supplied text shown on a single line.")
+
+(defun agent-org-buffer--label (text)
+  "Collapse whitespace runs in TEXT and cut it to one short line.
+Anything the agent names — a tool call's title, a session title — is
+free text about a thing, not an Org heading.  A live qoder session titles
+its tool calls with the whole shell command, which is hundreds of
+characters over a dozen lines: verbatim, everything after the first
+newline falls out of the heading into the body, and the in-place rewrite
+of a heading (which replaces one line) shreds the turn around it.
+Multi-line text is never lost this way, it just does not get a line of
+its own — the full detail is the agent's to keep."
+  (let ((flat (mapconcat #'identity
+                         (split-string (or text "") "[ \t\n\r]+" t)
+                         " ")))
+    (if (< (length flat) agent-org-buffer--label-width)
+        flat
+      (concat (substring flat 0 (1- agent-org-buffer--label-width)) "…"))))
+
 (defun agent-org-buffer--goto-tool-heading-position ()
   "Point where the next tool heading of the current turn belongs.
 After everything already in the turn, but before the :thinking: drawer
@@ -697,14 +743,24 @@ so tool headings stay grouped above the thought fold.  The turn runs
 from `agent-org-buffer--turn-anchor' to the end of the buffer (while
 streaming it is always the last thing there).  The drawer search runs
 in `save-excursion': a failed `re-search-forward' leaves point
-somewhere in the scanned region, not back at the start."
+somewhere in the scanned region, not back at the start.
+
+Take the match's BEGINNING: `re-search-forward' returns its end, which
+for `^:thinking:$' is the newline that ends the marker line — the
+beginning of the drawer's body.  Inserting a heading there puts it
+INSIDE the drawer, and `agent-org-buffer--redraw-drawer' replaces the
+whole body on the next thought chunk, deleting it.  A live qoder turn
+that way lost three of its four tool calls.  (`line-beginning-position'
+cannot rescue this: it only returns a position, it does not move
+point.)"
   (goto-char (or (agent-org-buffer--live-mark
                   agent-org-buffer--turn-anchor)
                  (point-max)))
   (let ((drawer (save-excursion
-                  (re-search-forward "^:thinking:$" nil t))))
+                  (when (re-search-forward "^:thinking:$" nil t)
+                    (match-beginning 0)))))
     (if drawer
-        (progn (goto-char drawer) (line-beginning-position))
+        (goto-char drawer)
       (goto-char (point-max)))))
 
 (defun agent-org-buffer-insert-tool (buffer content)
@@ -727,8 +783,10 @@ inside drawers) and instead fold with TAB like any heading."
                (keyword (agent-org-buffer--tool-keyword
                          (or status (and entry (plist-get entry :status)))))
                ;; render-time fallbacks, never stored, so a title-less
-               ;; update cannot downgrade the title
-               (name (or title (and entry (plist-get entry :title)) "tool"))
+               ;; update cannot downgrade the title; the label is
+               ;; flattened because a heading is exactly one line
+               (name (agent-org-buffer--label
+                      (or title (and entry (plist-get entry :title)) "tool")))
                ;; no trailing newline: the in-place rewrite keeps the
                ;; line's own, and the fresh insert adds one explicitly
                (htext (format "** %s %s [%s]" keyword name id)))

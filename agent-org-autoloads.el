@@ -16,6 +16,15 @@ Start a new ACP session with PROVIDER and open its Org chat buffer.
 When called interactively, prompt for the provider.
 
 (fn PROVIDER)" t)
+(autoload 'agent-org-resume "agent-org" "\
+Resume an existing session with PROVIDER, replaying its history.
+With no prefix argument PROVIDER is `agent-org-default-provider'; one
+\\[universal-argument] prompts for it.  The session itself is chosen
+from the agent's `session/list' for the current directory; two
+\\[universal-argument] prefixes read a SESSION-ID directly, which is
+also how callers from lisp pin one.
+
+(fn PROVIDER SESSION-ID)" t)
 (autoload 'agent-org-send "agent-org" "\
 Send the typed prompt at the end of the chat buffer to the agent." t)
 (register-definition-prefixes "agent-org" '("agent-org--"))

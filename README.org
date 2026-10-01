@@ -20,7 +20,10 @@ metadata block at the very top (see [[#session-metadata][Session metadata]]).
 
 - Emacs 29.1+ (Org 9.0+ built in)
 - The ~acp~ package (e.g. from NonGNU ELPA)
-- An ACP agent binary on ~exec-path~, e.g. ~goose~ (1.50+ tested)
+- An ACP agent binary on ~exec-path~: ~qoder --acp~ (1.1.58 tested) or
+  ~goose acp~ (1.50+ tested).  Qoder reads its credential from
+  ~QODER_PERSONAL_ACCESS_TOKEN~ in the environment Emacs was started
+  with, so export it before launching Emacs or the daemon.
 
 * Install
 
@@ -39,7 +42,7 @@ The checkout ships ~agent-org-autoloads.el~, so lazy loading via
 #+begin_src elisp
 (use-package agent-org
   :load-path "~/agent-org"
-  :commands (agent-org-start agent-org-send))
+  :commands (agent-org-start agent-org-resume agent-org-send))
 #+end_src
 
 ** As a ~package.el~ package (tarball)
@@ -91,6 +94,36 @@ If the agent asks for permission, the header line shows
 ~… ➤ Awaiting permission~ and the minibuffer offers the agent's
 options; quitting the prompt (ESC / C-g) safely declines.
 
+* Resume a session
+
+~M-x agent-org-resume~ reopens a session the agent still remembers for
+the *current directory*, with its whole history replayed into a fresh
+Org buffer:
+
+| Keys              | Effect                                                     |
+|-------------------|------------------------------------------------------------|
+| ~M-x~ (no prefix)   | provider = ~agent-org-default-provider~, pick from the list |
+| ~C-u M-x~           | prompts for the provider first                              |
+| ~C-u C-u M-x~       | prompts for a session id directly, skipping the listing     |
+
+The listing comes from the agent's own ~session/list~, so it is scoped
+to ~default-directory~ of the buffer you call it from — open the
+project you want to resume in, first.  One candidate is used without
+prompting; the header line shows ~Restoring~ while the history is
+replayed, then ~Ready~ with a live ~* User~ prompt at the end, and you
+continue exactly where you left off.
+
+Resume is cheap on purpose (this is a 4 GB machine): the replayed
+~session/update~ notifications are buffered while the load is in
+flight and painted in one pass with undo recording off, so a long
+history costs one insertion run instead of a re-fontification per
+chunk.
+
+Providers that don't answer ~session/list~ fail with a clear header
+line message rather than hanging: goose advertises the capability but
+never answers it in practice, which is why ~agent-org-default-provider~
+is qoder.
+
 * Session metadata
 
 At the top of every chat buffer, above the first conversation
@@ -114,6 +147,12 @@ conversation below it.
 
 - ~agent-org-use-header-line~ — when nil, status messages go to the
   echo area via ~message~ instead of the top bar.
+- ~agent-org-default-provider~ — provider ~agent-org-resume~ uses when
+  you call it with no prefix argument (qoder by default: it answers
+  ~session/list~, goose does not).
+- ~agent-org-replay-settle-delay~ / ~agent-org-replay-settle-cap~ — how
+  long a resume waits for the agent to stop streaming history before it
+  paints it, and the hard upper bound on that wait.
 - ~agent-org-providers~ — alist of provider plists (~:id~, ~:name~,
   ~:command~ (binary + args), ~:environment~).  Add more agents by
   customizing it or pushing onto it in your init.

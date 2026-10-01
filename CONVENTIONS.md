@@ -73,6 +73,11 @@ The block is folded by default.  Per `info "(org) Initial visibility`
 buffers are created programmatically and never "visited", so we fold the
 drawers directly (see §5) rather than relying on a startup line.
 
+Rebuilds are cheap-checked: `refresh-metadata` renders the block first and
+compares it against `agent-org-buffer--metadata-cache`, doing nothing when it
+is byte-identical.  That matters because `usage_update` arrives many times per
+turn, and a rebuild costs a full `org-set-regexps-and-options` reparse.
+
 ### `#+TITLE:` is the harness session title, verbatim
 
 `agent-org` never decorates the title.  The `#+TITLE:` line carries **exactly**
@@ -228,6 +233,61 @@ From `info "(org) Headlines` (§2.1):
   `agent-org-buffer--separator` inserts exactly the one blank line that keeps
   a freshly appended heading from abutting prior text — matching this rule so
   the collapsed view stays structured.
+
+---
+
+## 9. Resume replay — buffer it, then paint once
+
+`agent-org-resume` replays a session's history into a fresh buffer.  Restored
+turns are laid out **exactly** like typed ones (`* User`, `* Agent`, `**` tool
+headings, `:thinking:` drawer), because the replay feeds the same
+`agent-org-buffer-*` primitives through `agent-org--buffer-update`.  Nothing
+about resume gets a private renderer.
+
+The contract that keeps it cheap on a slow machine:
+
+* Conversational updates (`agent-org--replay-kinds`) arriving while
+  `:loading` is set are **buffered**, never painted.  Painting per chunk would
+  re-fontify the whole buffer for every chunk of a 200-turn session.
+* The `session/load` **response is not the flush point**.  The protocol puts
+  history before it, but live qoder answers first and streams the replay
+  right after — flushing on the response silently dropped every agent turn,
+  tool call and thought.  Instead each late update re-arms a quiet-period
+  timer (`agent-org-replay-settle-delay`) and `agent-org--finish-replay`
+  renders once the agent stops talking.
+* `agent-org-replay-settle-cap` bounds that: past it the armed render is left
+  to fire rather than being pushed back, so a chatty agent cannot hold a
+  buffer in `Restoring` forever.  Partial history beats a stuck buffer.
+* The render runs as one insertion pass with `buffer-undo-list t`, then the
+  load response's modes/config still reach the header line (kept in
+  `:replay-response`).
+* `:loading` means *not yet typable*: `agent-org-send` refuses while it is
+  set, and `agent-org--session-ready` will not insert a prompt on top of
+  history still arriving.
+* Killing the buffer cancels the pending render, so no timer ever fires
+  against a dead buffer.
+
+Anything the agent *names* is free text, and it arrives as such.  A live qoder
+session titled its tool calls with the whole shell command (one title was
+`which agent-shell-list ... ; echo "---"; emacsclient ...` across a dozen
+lines), and a resume `session/list` returned the entire first prompt as a
+session's `title`.  Verbatim, that is fatal to a heading: only the first line
+becomes the `**` heading, the rest falls into the body, and the in-place
+rewrite of a heading replaces a single line — so three of four replayed tool
+calls vanished from the buffer entirely.  `agent-org-buffer--label` therefore
+collapses whitespace runs and truncates to `agent-org-buffer--label-width`
+before any agent text reaches a one-line context: tool headings (`** KEYWORD
+title [id]`) and resume candidates alike, always with the id kept visible
+because the id is what identifies the thing.
+
+This applies to live turns exactly as to replayed ones — the same tool_call
+updates stream during a normal prompt.  Multi-line content is never *lost*,
+it just does not get a line of its own; drawers (`:thinking:`,
+`#+RESULTS:`-style blocks) are where multi-line text belongs.
+
+Header line state for this phase is `loading`, labelled **"Restoring"** — a
+transient (busy-colored) state like `starting`/`streaming`.  It is body-free
+like every other state (§6).
 
 ---
 

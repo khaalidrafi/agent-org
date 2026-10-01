@@ -40,10 +40,25 @@
    (list :id 'goose
          :name "Goose"
          :command '("goose" "acp")
-         :environment #'agent-org-goose-environment))
+         :environment #'agent-org-goose-environment)
+   (list :id 'qoder
+         :name "Qoder"
+         :command '("qoder" "--acp")
+         :environment #'agent-org-qoder-environment))
   "List of supported ACP providers.
 Each entry is a plist; see `agent-org-providers.el' commentary."
   :type '(repeat sexp)
+  :group 'agent-org)
+
+(defcustom agent-org-default-provider 'qoder
+  "Provider `agent-org-resume' uses when called without a prefix arg.
+Must be the `:id' of an entry in `agent-org-providers'.  Qoder is the
+default because it answers `session/list' and supports
+`session/load', which is what resume needs; Goose advertises both but
+its `session/list' does not answer in practice."
+  :type '(choice (const :tag "Qoder" qoder)
+                 (const :tag "Goose" goose)
+                 (symbol :tag "Other provider id"))
   :group 'agent-org)
 
 (defun agent-org-goose-environment ()
@@ -52,6 +67,15 @@ Uses OPENAI_API_KEY from the environment if present."
   (let ((key (getenv "OPENAI_API_KEY")))
     (if key
         (list (format "OPENAI_API_KEY=%s" key))
+      nil)))
+
+(defun agent-org-qoder-environment ()
+  "Return environment variables for the Qoder ACP client.
+Passes QODER_PERSONAL_ACCESS_TOKEN through when the environment has
+it; otherwise the CLI's own stored login (`qoder login') is used."
+  (let ((token (getenv "QODER_PERSONAL_ACCESS_TOKEN")))
+    (if token
+        (list (format "QODER_PERSONAL_ACCESS_TOKEN=%s" token))
       nil)))
 
 (provide 'agent-org-providers)

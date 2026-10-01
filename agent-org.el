@@ -33,15 +33,25 @@
 ;;
 ;; Minimal usable flow:
 ;;
-;;   M-x agent-org-start
+;;   M-x agent-org-start    ;; new session
+;;   M-x agent-org-resume   ;; replay an existing session's history
 ;;
-;; picks a provider (e.g. Goose), opens an Org chat buffer, starts an
-;; ACP session, and streams responses straight into it.
+;; `agent-org-start' picks a provider (e.g. Goose), opens an Org chat
+;; buffer, starts an ACP session, and streams responses straight into
+;; it.  `agent-org-resume' uses `agent-org-default-provider' unless
+;; called with a prefix argument, then asks the agent for its sessions
+;; (`session/list') and replays the chosen one (`session/load').
 ;;
 ;; Status, progress and errors are shown in the chat buffer's
 ;; header line (the top bar), never in the document body.  See
 ;; `agent-org-buffer.el' for the status model and
 ;; `agent-org-providers.el' for adding new agents.
+;;
+;; Everything here is written for a low-spec machine: streaming turns
+;; run with font-lock off, restored history is buffered and painted in
+;; ONE pass (see `agent-org--render-replay'), and the metadata block
+;; above the conversation is only rebuilt when its rendered text
+;; actually changed.
 
 ;;; Code:
 
@@ -67,8 +77,23 @@ Each entry is a plist:
   :name        - provider id (symbol)
   :client      - acp client alist
   :buffer      - Org chat buffer
+  :cwd         - working directory the agent was spawned in (string)
   :session-id  - ACP session-id (string, once known)
-  :streaming   - non-nil while a turn is streaming")
+  :streaming   - non-nil while a turn is streaming
+  :loading     - non-nil while a `session/load' replay is in flight
+  :replay      - `session/update' alists buffered while :loading,
+                 newest first, painted by `agent-org--render-replay'
+  :replay-timer        - pending quiet-period timer that renders
+                 :replay, nil once it has fired or been cancelled; its
+                 being non-nil also means the load response landed
+  :replay-session-id   - session id to bind when the replay renders
+  :replay-response     - the session/load response, kept for the render
+                 so its modes/config options still reach the header
+  :replay-deadline     - absolute float time after which the render is
+                 no longer pushed back (see `agent-org--arm-replay-render')
+
+Every key is installed by `agent-org--open-session', because `setf' on
+`plist-get' can only mutate a property that already exists.")
 
 (defun agent-org--register-session (entry)
   "Add ENTRY to `agent-org--sessions'.
@@ -80,8 +105,13 @@ is killed."
       (add-hook 'kill-buffer-hook #'agent-org--forget-session nil t))))
 
 (defun agent-org--forget-session ()
-  "Remove the current buffer's session from `agent-org--sessions'."
-  (let ((buf (current-buffer)))
+  "Remove the current buffer's session from `agent-org--sessions'.
+A replay render still pending would fire against the dead buffer, so
+its timer is cancelled on the way out."
+  (let* ((buf (current-buffer))
+         (session (agent-org--session-for-buffer buf))
+         (timer (and session (plist-get session :replay-timer))))
+    (when timer (cancel-timer timer))
     (setq agent-org--sessions
           (seq-remove (lambda (s) (eq (plist-get s :buffer) buf))
                       agent-org--sessions))))
@@ -115,7 +145,9 @@ RESP is the full session/new response alist when available; its modes
 and config options feed the header line and metadata block.  Safe to
 call repeatedly: prompt insertion is idempotent and skipped while any
 turn is in flight (Goose fires session_info_update mid-turn for title
-updates; the send callbacks re-open the prompt afterwards)."
+updates; the send callbacks re-open the prompt afterwards).  Also
+skipped while a `session/load' replay is in flight: the buffer is not
+interactive until the history has been painted."
   (setf (plist-get session :session-id) sid)
   (let ((buffer (plist-get session :buffer))
         (modes (and resp (map-elt resp 'modes)))
@@ -132,56 +164,84 @@ updates; the send callbacks re-open the prompt afterwards)."
         :model (agent-org--model-from-config config)))
     (agent-org-loader-finish buffer :session-id sid)
     (agent-org-buffer-refresh-metadata buffer)
-    (unless (plist-get session :streaming)
+    (unless (or (plist-get session :streaming)
+                (plist-get session :loading))
       (agent-org-buffer-insert-prompt buffer))))
 
 ;;;; Lifecycle
+
+(defun agent-org--read-provider ()
+  "Complete a provider id among `agent-org-providers'."
+  (intern (completing-read
+           "Provider: "
+           (seq-map (lambda (p) (symbol-name (plist-get p :id)))
+                    agent-org-providers)
+           nil t)))
+
+(defun agent-org--provider-spec (provider)
+  "Return the provider plist whose :id is the symbol PROVIDER.
+Signals a user-error for an unknown id, so both entry points
+(`agent-org-start' and `agent-org-resume') validate the same way."
+  (let ((spec (seq-find (lambda (p) (eq (plist-get p :id) provider))
+                        agent-org-providers)))
+    (unless spec
+      (user-error "Unknown provider: %S" provider))
+    spec))
+
+(defun agent-org--open-session (spec)
+  "Spawn the agent described by provider SPEC and its chat buffer.
+Spawns the CLI, registers the session, binds it to the buffer and
+selects that buffer.  Returns the session plist; no ACP request has
+been sent yet, so the caller picks `session/new' or `session/load'."
+  (let ((command (plist-get spec :command)))
+    (unless (executable-find (car command))
+      (user-error "Command not found: %s" (car command)))
+    ;; capture the directory now: the resumed session must be loaded
+    ;; against the same cwd it was created in
+    (let* ((cwd default-directory)
+           (buffer (agent-org-buffer-create (plist-get spec :name)))
+           (client (acp-make-client
+                    :context-buffer buffer
+                    :command (car command)
+                    :command-params (cdr command)
+                    :environment-variables
+                    (funcall (plist-get spec :environment))))
+           (session (list :name (plist-get spec :id)
+                          :client client
+                          :buffer buffer
+                          :cwd cwd
+                          :session-id nil
+                          :streaming nil
+                          :loading nil
+                          :replay nil
+                          :replay-timer nil
+                          :replay-session-id nil
+                          :replay-response nil
+                          :replay-deadline nil)))
+      (agent-org--register-session session)
+      (agent-org--subscribe client session)
+      (agent-org-buffer-set-session buffer session)
+      (switch-to-buffer buffer)
+      session)))
 
 ;;;###autoload
 (defun agent-org-start (provider)
   "Start a new ACP session with PROVIDER and open its Org chat buffer.
 When called interactively, prompt for the provider."
-  (interactive
-   (list (intern
-          (completing-read
-           "Provider: "
-           (seq-map (lambda (p) (symbol-name (plist-get p :id)))
-                    agent-org-providers)
-           nil t))))
-  (let* ((provider (if (symbolp provider) provider (intern provider)))
-         (spec (seq-find (lambda (p) (eq (plist-get p :id) provider))
-                         agent-org-providers))
-         (command (and spec (plist-get spec :command)))
-         (params (and command (cdr command)))
-         (env (and spec (funcall (plist-get spec :environment)))))
-    (unless spec
-      (user-error "Unknown provider: %S" provider))
-    (unless (executable-find (car command))
-      (user-error "Command not found: %s" (car command)))
-    (let* ((buffer (agent-org-buffer-create (plist-get spec :name)))
-           (client (acp-make-client
-                    :context-buffer buffer
-                    :command (car command)
-                    :command-params params
-                    :environment-variables env))
-           (session (list :name provider
-                          :client client
-                          :buffer buffer
-                          :session-id nil
-                          :streaming nil)))
-      (agent-org--register-session session)
-      (agent-org--subscribe client session)
-      (agent-org-buffer-set-session buffer session)
-      (switch-to-buffer buffer)
-      (agent-org-loader-begin buffer)
-      (agent-org--initialize session)
-      buffer)))
+  (interactive (list (agent-org--read-provider)))
+  (let* ((session (agent-org--open-session (agent-org--provider-spec provider)))
+         (buffer (plist-get session :buffer)))
+    (agent-org-loader-begin buffer)
+    (agent-org--initialize session)
+    buffer))
 
-(defun agent-org--initialize (session)
-  "Run ACP initialize handshake then start a session/new for SESSION."
+(defun agent-org--initialize (session &optional next)
+  "Run the ACP initialize handshake for SESSION, then continue with NEXT.
+NEXT receives the initialize response and owns the follow-up request;
+resume uses it to read the agent's session capabilities.  Without it a
+fresh `session/new' is started."
   (let* ((client (plist-get session :client))
-         (buffer (plist-get session :buffer))
-         (cwd (or (plist-get session :cwd) default-directory)))
+         (buffer (plist-get session :buffer)))
     (acp-send-request
      :client client
      :request (acp-make-initialize-request
@@ -192,21 +252,239 @@ When called interactively, prompt for the provider."
                :read-text-file-capability t
                :write-text-file-capability t)
      :buffer buffer
-     :on-success (lambda (_resp)
-                   (acp-send-request
-                    :client client
-                    :request (acp-make-session-new-request :cwd cwd)
-                    :buffer buffer
-                    :on-success (lambda (resp)
-                                  (agent-org--session-ready session
-                                    (map-elt resp 'sessionId)
-                                    resp))
-                    :on-failure (lambda (_err msg)
-                                  (agent-org-loader-fail buffer
-                                    (format "session/new failed: %s" msg)))))
+     :on-success (lambda (resp)
+                   (if next
+                       (funcall next resp)
+                     (agent-org--session-new session)))
      :on-failure (lambda (_err msg)
                    (agent-org-loader-fail buffer
                      (format "initialize failed: %s" msg))))))
+
+(defun agent-org--session-new (session)
+  "Ask SESSION's agent for a brand-new session and open the prompt."
+  (let* ((client (plist-get session :client))
+         (buffer (plist-get session :buffer))
+         (cwd (or (plist-get session :cwd) default-directory)))
+    (acp-send-request
+     :client client
+     :request (acp-make-session-new-request :cwd cwd)
+     :buffer buffer
+     :on-success (lambda (resp)
+                   (agent-org--session-ready session
+                     (map-elt resp 'sessionId)
+                     resp))
+     :on-failure (lambda (_err msg)
+                   (agent-org-loader-fail buffer
+                     (format "session/new failed: %s" msg))))))
+
+;;;; Resume
+
+(defun agent-org--supports-load-p (initialize-resp)
+  "Non-nil when the agent described by INITIALIZE-RESP answers session/load."
+  (map-nested-elt initialize-resp '(agentCapabilities loadSession)))
+
+(defun agent-org--lists-sessions-p (initialize-resp)
+  "Non-nil when INITIALIZE-RESP advertises the `list' session capability.
+Capability entries are present-or-absent keys (`sessionCapabilities'
+maps a name to an empty object), so test with `assq', never with the
+value's truthiness."
+  (let ((caps (map-nested-elt initialize-resp
+                              '(agentCapabilities sessionCapabilities))))
+    (and (assq 'list caps) t)))
+
+(defun agent-org--session-display (title id)
+  "One-line completion label for session TITLE and id ID.
+Providers put the session's first prompt in its title, and a live
+qoder listing was seen returning several thousand characters of it
+across dozens of lines — that would flood the completion list and wrap
+every candidate.  So
+`agent-org-buffer--label' collapses and shortens it; the id always stays
+visible because it is what actually selects the session."
+  (let ((short (agent-org-buffer--label title)))
+    (format "%s  [%s]"
+            (if (string-empty-p short) "(untitled)" short)
+            id)))
+
+(defun agent-org--session-candidates (list-resp)
+  "Convert a `session/list' response LIST-RESP into resume candidates.
+Returns ((DISPLAY . SESSION-ID) ...) newest first; DISPLAY comes from
+the agent's own session title, sanitized by
+`agent-org--session-display'.  Ordering is ours: the wire says agents
+may return entries in any order, and `updatedAt' is an ISO-8601 stamp,
+which sorts correctly as a string."
+  (let ((sessions (agent-org--wire-list (map-elt list-resp 'sessions))))
+    (seq-map (lambda (s)
+              (let ((id (map-elt s 'sessionId)))
+                (cons (agent-org--session-display (map-elt s 'title) id)
+                      id)))
+            (seq-sort (lambda (a b)
+                        (string> (or (map-elt a 'updatedAt) "")
+                                 (or (map-elt b 'updatedAt) "")))
+                      sessions))))
+
+(defun agent-org--read-session-id (list-resp)
+  "Pick the session to resume out of a `session/list' response LIST-RESP.
+A single candidate is used without prompting; none is a user-error."
+  (let ((cands (agent-org--session-candidates list-resp)))
+    (cond
+     ((null cands) (user-error "No sessions to resume in this directory"))
+     ((null (cdr cands)) (cdar cands))
+     (t (cdr (assoc (completing-read "Resume session: "
+                                     (seq-map #'car cands) nil t)
+                    cands))))))
+
+(defcustom agent-org-replay-settle-delay 0.4
+  "Seconds of silence that end a `session/load' replay.
+The buffered history is rendered once no conversational update has
+arrived for this long.  Agents are not uniform about when they send it:
+the protocol says before the load response, live qoder answers first
+and streams the replay right after, so the response alone cannot be the
+flush point.  Keep this short — the buffer stays on \"Restoring\"
+meanwhile."
+  :type 'number
+  :group 'agent-org)
+
+(defcustom agent-org-replay-settle-cap 20
+  "Seconds after which a replay renders even if updates keep arriving.
+An upper bound on how long a resume can hold a buffer in Restoring:
+without it, an agent that never pauses between replayed turns would
+delay `agent-org-replay-settle-delay' forever."
+  :type 'number
+  :group 'agent-org)
+
+(defun agent-org--arm-replay-render (session)
+  "Push back SESSION's buffered replay render by one settle delay.
+Called when the load response lands, and again on every conversational
+update that arrives after it, so the render happens once the agent
+stops talking.  Past `agent-org-replay-settle-cap' the already armed
+timer is left alone: rendering a partial history beats a buffer stuck
+in Restoring."
+  (let ((timer (plist-get session :replay-timer)))
+    (when (or (null timer)
+              (< (float-time) (or (plist-get session :replay-deadline) 0)))
+      (when timer (cancel-timer timer))
+      (setf (plist-get session :replay-timer)
+            (run-at-time agent-org-replay-settle-delay nil
+                         #'agent-org--finish-replay session)))))
+
+(defun agent-org--unschedule-replay (session)
+  "Cancel SESSION's armed replay render, keeping the buffered updates."
+  (when-let* ((timer (plist-get session :replay-timer)))
+    (cancel-timer timer))
+  (setf (plist-get session :replay-timer) nil))
+
+(defun agent-org--cancel-replay (session)
+  "Drop SESSION's replay entirely: pending render, buffer, loading flag.
+A failed load leaves nothing worth painting."
+  (agent-org--unschedule-replay session)
+  (setf (plist-get session :replay) nil)
+  (setf (plist-get session :loading) nil))
+
+(defun agent-org--finish-replay (session)
+  "Render SESSION's buffered replay and open the session for prompts.
+This is the flush point `agent-org--arm-replay-render' schedules: by now
+the agent has sent everything it is going to send about history, so
+`:loading' can drop and the buffered updates paint in one pass."
+  (agent-org--unschedule-replay session)
+  (setf (plist-get session :loading) nil)
+  (agent-org--render-replay session)
+  (agent-org--session-ready session
+    (plist-get session :replay-session-id)
+    (plist-get session :replay-response)))
+
+(defun agent-org--load-session (session session-id)
+  "Replay SESSION-ID into SESSION's buffer with a `session/load' request.
+`:loading' is set for the whole replay, so `agent-org--on-notification'
+buffers conversational updates instead of painting them chunk by chunk;
+the batched render fires once they stop arriving (see
+`agent-org--arm-replay-render'), which is what keeps resume usable on a
+low-spec machine — a 200-turn session would otherwise re-fontify the
+buffer once per chunk.
+
+Responses from the wire carry the session id only inside the replay
+notifications, so the request's SESSION-ID is the fallback."
+  (let ((buffer (plist-get session :buffer))
+        (cwd (or (plist-get session :cwd) default-directory)))
+    (setf (plist-get session :loading) t)
+    (agent-org-buffer-set-status buffer :state 'loading :message "Restoring…")
+    (acp-send-request
+     :client (plist-get session :client)
+     :request (acp-make-session-load-request :session-id session-id :cwd cwd)
+     :buffer buffer
+     :on-success (lambda (resp)
+                   ;; The response is not the end of the replay: hold the
+                   ;; buffered updates until the agent goes quiet, then
+                   ;; render (see `agent-org--arm-replay-render').
+                   (setf (plist-get session :replay-session-id)
+                         (or (map-elt resp 'sessionId) session-id))
+                   (setf (plist-get session :replay-response) resp)
+                   (setf (plist-get session :replay-deadline)
+                         (+ (float-time) agent-org-replay-settle-cap))
+                   (agent-org--arm-replay-render session))
+     :on-failure (lambda (_err msg)
+                   (agent-org--cancel-replay session)
+                   (agent-org-loader-fail buffer
+                     (format "session/load failed: %s" msg))))))
+
+(defun agent-org--resume-locate (session initialize-resp session-id)
+  "Work out which session of SESSION to load, then load it.
+SESSION-ID given (the \\[universal-argument] \\[universal-argument] path)
+skips the listing entirely.  Otherwise ask the agent to list the
+sessions of this directory — possible only when it advertises the
+`list' capability — and let `agent-org--read-session-id' pick.
+
+Goose is known to advertise list and then never answer it, so the
+request is left in flight with a Restoring header rather than guessed
+at; Ctrl-G cancels it."
+  (let ((buffer (plist-get session :buffer)))
+    (cond
+     (session-id (agent-org--load-session session session-id))
+     ((not (agent-org--lists-sessions-p initialize-resp))
+      (agent-org-loader-fail buffer
+        (format "%s does not list sessions"
+                (plist-get (agent-org--provider-spec (plist-get session :name))
+                           :name))))
+     (t
+      (acp-send-request
+       :client (plist-get session :client)
+       :request (acp-make-session-list-request
+                 :cwd (or (plist-get session :cwd) default-directory))
+       :buffer buffer
+       :on-success (lambda (list-resp)
+                     (if (agent-org--session-candidates list-resp)
+                         (agent-org--load-session
+                          session (agent-org--read-session-id list-resp))
+                       (agent-org-loader-fail buffer
+                         "No sessions to resume in this directory")))
+       :on-failure (lambda (_err msg)
+                     (agent-org-loader-fail buffer
+                       (format "session/list failed: %s" msg))))))))
+
+;;;###autoload
+(defun agent-org-resume (provider session-id)
+  "Resume an existing session with PROVIDER, replaying its history.
+With no prefix argument PROVIDER is `agent-org-default-provider'; one
+\\[universal-argument] prompts for it.  The session itself is chosen
+from the agent's `session/list' for the current directory; two
+\\[universal-argument] prefixes read a SESSION-ID directly, which is
+also how callers from lisp pin one."
+  (interactive
+   (list (if current-prefix-arg
+             (agent-org--read-provider)
+           agent-org-default-provider)
+         (and (>= (prefix-numeric-value current-prefix-arg) 16)
+              (read-string "Session id: "))))
+  (let* ((spec (agent-org--provider-spec provider))
+         (session (agent-org--open-session spec)))
+    (agent-org--initialize
+     session
+     (lambda (resp)
+       (if (agent-org--supports-load-p resp)
+           (agent-org--resume-locate session resp session-id)
+         (agent-org-loader-fail (plist-get session :buffer)
+           (format "%s does not support session/load"
+                   (plist-get spec :name))))))
+    (plist-get session :buffer)))
 
 ;;;; Event subscription
 
@@ -236,6 +514,19 @@ When called interactively, prompt for the provider."
 
 ;;;; Notification dispatch
 
+(defconst agent-org--replay-kinds
+  '("user_message_chunk" "agent_message_chunk" "agent_thought_chunk"
+    "tool_call" "tool_call_update")
+  "Update kinds that carry conversation content.
+
+While a `session/load' is in flight these are buffered rather than
+rendered, because the agent replays the whole history of the session —
+the protocol says before the load response, live qoder answers first
+and streams it right after — and painting each chunk as it lands would
+re-fontify the buffer once per chunk.  Anything outside this list
+(usage, commands, mode, title) is metadata about the live session and is
+dispatched immediately even during a replay.")
+
 (defun agent-org--chunk-text (content)
   "Extract plain text from an ACP message/thought CONTENT value.
 CONTENT may be a text ContentBlock alist or a bare string."
@@ -243,6 +534,60 @@ CONTENT may be a text ContentBlock alist or a bare string."
    ((stringp content) content)
    ((and (listp content) (map-elt content 'text))
     (map-elt content 'text))))
+
+(defun agent-org--buffer-update (buffer update)
+  "Render one replayed content UPDATE into BUFFER.
+The live streaming primitives do the work, so restored history is laid
+out exactly like history that was typed: consecutive agent chunks flow
+into one `* Agent' turn, tools become `**' TODO headings, thoughts
+fold into the per-turn :thinking: drawer.  Status writes are omitted on
+purpose — a restored turn finished long ago and must not touch the
+header line."
+  (let ((kind (map-elt update 'sessionUpdate)))
+    (pcase kind
+      ("agent_message_chunk"
+       (when-let* ((text (agent-org--chunk-text (map-elt update 'content))))
+         (agent-org-buffer-append-chunk buffer text nil)))
+      ("agent_thought_chunk"
+       (when-let* ((text (agent-org--chunk-text (map-elt update 'content))))
+         (agent-org-buffer-append-thought buffer text)))
+      ((or "tool_call" "tool_call_update")
+       (agent-org-buffer-insert-tool buffer update))
+      (_ nil))))
+
+(defun agent-org--flush-user (buffer text)
+  "Freeze replayed user prompt TEXT under its own `* User' heading.
+No-op when TEXT is empty.  The Agent turn before it closes first, or
+the heading would land inside that response.
+
+A replay splits one prompt across several chunks, so this is where
+they become a single turn again."
+  (when (and text (not (string-empty-p (string-trim text))))
+    (agent-org-buffer-end-agent-turn buffer)
+    (agent-org-buffer-insert-user buffer (string-trim text))))
+
+(defun agent-org--render-replay (session)
+  "Paint SESSION's buffered `session/load' replay into its buffer.
+One pass over the buffered updates with undo recording off, so restoring
+a long session is a single insertion run rather than thousands of
+undo-worthy edits.  Clears `:replay' and leaves every turn closed, so
+the caller can open the live prompt."
+  (let ((buffer (plist-get session :buffer))
+        (updates (nreverse (plist-get session :replay)))
+        (pending nil))
+    (setf (plist-get session :replay) nil)
+    (with-current-buffer buffer
+      (let ((buffer-undo-list t))
+        (dolist (update updates)
+          (if (equal (map-elt update 'sessionUpdate) "user_message_chunk")
+              (setq pending (concat pending
+                                    (agent-org--chunk-text
+                                     (map-elt update 'content))))
+            (agent-org--flush-user buffer pending)
+            (setq pending nil)
+            (agent-org--buffer-update buffer update)))
+        (agent-org--flush-user buffer pending)
+        (agent-org-buffer-end-agent-turn buffer)))))
 
 (defun agent-org--on-notification (session notification)
   "Dispatch one ACP NOTIFICATION for SESSION into the Org buffer.
@@ -254,48 +599,63 @@ kind is handled here and nothing is delegated to another handler."
          (update (map-elt params 'update))
          (kind (map-elt update 'sessionUpdate)))
     (when (equal method "session/update")
-      (pcase kind
-        ("session_info_update"
-         (when-let* ((sid (map-elt params 'sessionId)))
-           (when-let* ((title (or (map-elt update 'title) (map-elt params 'title))))
-             (agent-org-buffer-set-status buffer :title title))
-           (agent-org--session-ready session sid)))
-        ("agent_message_chunk"
-         ;; Conversational updates belong to a turn the client asked
-         ;; for; anything the agent emits outside a live prompt (e.g.
-         ;; stray chunks after a cancel) is dropped, so a fresh
-         ;; session body can never fill up unasked.
-         (when (plist-get session :streaming)
-           (agent-org-buffer-set-status buffer :state 'streaming :message nil)
-           (when-let* ((text (agent-org--chunk-text (map-elt update 'content))))
-             (agent-org-buffer-append-chunk buffer text session))))
-        ("agent_thought_chunk"
-         (when (plist-get session :streaming)
-           (when-let* ((text (agent-org--chunk-text (map-elt update 'content))))
-             (agent-org-buffer-append-thought buffer text))))
-        ((or "tool_call" "tool_call_update")
-         (when (plist-get session :streaming)
-           (agent-org-buffer-insert-tool buffer update)))
-        ("available_commands_update"
-         (agent-org-buffer-set-status
-          buffer :commands
-          (agent-org--wire-list (map-elt update 'availableCommands)))
-         (agent-org-buffer-refresh-metadata buffer))
-        ("usage_update"
-         (agent-org-buffer-set-status buffer
-           :used (map-elt update 'used) :size (map-elt update 'size))
-         (agent-org-buffer-refresh-metadata buffer))
-        ("current_mode_update"
-         (agent-org-buffer-set-status buffer
-           :mode (map-elt update 'currentModeId))
-         (agent-org-buffer-refresh-metadata buffer))
-        ("config_option_update"
-         (let ((config (agent-org--wire-list (map-elt update 'configOptions))))
-           (when config
-             (agent-org-buffer-set-status buffer
-               :config config :model (agent-org--model-from-config config))
-             (agent-org-buffer-refresh-metadata buffer))))
-        (_ nil)))))
+      (if (and (plist-get session :loading)
+               (member kind agent-org--replay-kinds))
+          (progn
+            (push update (plist-get session :replay))
+            ;; A render is armed only after the load response lands, so
+            ;; re-arming here is exactly what keeps history that arrives
+            ;; *after* that response out of the bit-bucket.
+            (when (plist-get session :replay-timer)
+              (agent-org--arm-replay-render session)))
+        (pcase kind
+          ("session_info_update"
+           (when-let* ((sid (map-elt params 'sessionId)))
+             (when-let* ((title (or (map-elt update 'title)
+                                    (map-elt params 'title))))
+               (agent-org-buffer-set-status buffer :title title))
+             ;; mid-replay only the identity/title is worth recording:
+             ;; marking the session ready would flip the header to Ready
+             ;; and open a prompt on top of history still arriving
+             (if (plist-get session :loading)
+                 (setf (plist-get session :session-id) sid)
+               (agent-org--session-ready session sid))))
+          ("agent_message_chunk"
+           ;; Conversational updates belong to a turn the client asked
+           ;; for; anything the agent emits outside a live prompt (e.g.
+           ;; stray chunks after a cancel) is dropped, so a fresh
+           ;; session body can never fill up unasked.
+           (when (plist-get session :streaming)
+             (agent-org-buffer-set-status buffer :state 'streaming :message nil)
+             (when-let* ((text (agent-org--chunk-text (map-elt update 'content))))
+               (agent-org-buffer-append-chunk buffer text session))))
+          ("agent_thought_chunk"
+           (when (plist-get session :streaming)
+             (when-let* ((text (agent-org--chunk-text (map-elt update 'content))))
+               (agent-org-buffer-append-thought buffer text))))
+          ((or "tool_call" "tool_call_update")
+           (when (plist-get session :streaming)
+             (agent-org-buffer-insert-tool buffer update)))
+          ("available_commands_update"
+           (agent-org-buffer-set-status
+            buffer :commands
+            (agent-org--wire-list (map-elt update 'availableCommands)))
+           (agent-org-buffer-refresh-metadata buffer))
+          ("usage_update"
+           (agent-org-buffer-set-status buffer
+             :used (map-elt update 'used) :size (map-elt update 'size))
+           (agent-org-buffer-refresh-metadata buffer))
+          ("current_mode_update"
+           (agent-org-buffer-set-status buffer
+             :mode (map-elt update 'currentModeId))
+           (agent-org-buffer-refresh-metadata buffer))
+          ("config_option_update"
+           (let ((config (agent-org--wire-list (map-elt update 'configOptions))))
+             (when config
+               (agent-org-buffer-set-status buffer
+                 :config config :model (agent-org--model-from-config config))
+               (agent-org-buffer-refresh-metadata buffer))))
+          (_ nil))))))
 
 ;;;; Incoming request handling
 
@@ -428,6 +788,10 @@ report usage); anything missing is simply left untouched."
       (user-error "Not an agent-org chat buffer"))
     (when (plist-get session :streaming)
       (user-error "Agent is still responding"))
+    ;; a replayed session_info_update already fills :session-id, so the
+    ;; check below cannot cover an in-flight load
+    (when (plist-get session :loading)
+      (user-error "Session history is still loading"))
     (unless (plist-get session :session-id)
       (user-error "Session not ready"))
     (let ((text (agent-org-buffer-read-prompt buffer)))
