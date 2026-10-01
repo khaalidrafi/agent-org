@@ -73,7 +73,9 @@ NonGNU ELPA.
 1. M-x ~agent-org-start~ RET ~goose~ RET — or skip the prompt with the
    per-provider command M-x ~agent-org-goose-start-agent~ (one per
    registered provider, the way ~agent-shell-<provider>-start-agent~
-   works).
+   works).  What happens next is
+   [[*Starting: which session you get][~agent-org-session-strategy~]]: by
+   default the agent is asked what this directory already holds.
    Opens =~*agent-org: Goose*= and shows ~Goose ➤ Starting~ in the
    header line.  When the ACP ~initialize~ + ~session/new~ handshake
    completes, the header fills in with everything the agent reported:
@@ -104,6 +106,44 @@ If the agent asks for permission, the header line shows
 ~… ➤ Awaiting permission~ and the minibuffer offers the agent's
 options; quitting the prompt (ESC / C-g) safely declines.
 
+* Starting: which session you get
+
+~agent-org-session-strategy~ decides what happens between the handshake
+and the session opening — the same three choices ~agent-shell~ offers:
+
+| Strategy     | What ~M-x agent-org-start~ does                        |
+|--------------+--------------------------------------------------------|
+| ~prompt~       | asks the agent what this directory already holds, offers it |
+| ~latest~       | loads the most recently updated session, without asking |
+| ~new~          | opens a blank session, no listing round trip            |
+
+~prompt~ is the default.  The offer is the agent's own ~session/list~ for
+~default-directory~, newest first, each candidate labelled
+
+#+begin_example
+Investigate the 3-minute lag between Qoder's reply and the prompt   Sep 28, 10:22  [c550e3a1-…]
+#+end_example
+
+— the agent's title, when it last spoke, and the id that actually
+selects it.  ~New session~ sits at the top of the list, so a bare ~RET~
+in a fresh project still means "start".  ~C-u M-x agent-org-start~ forces
+~new~ for one call, which is the shortcut when you mean to start over.
+
+Three details make this bearable on agents that are slow, silent or long:
+
+- The listing follows the agent's ~nextCursor~, so chats older than the
+  first page are offered too.  ~agent-org-session-list-page-limit~ caps
+  the requests; nil, the default, reads every page.
+- goose advertises ~list~ and never answers it, so
+  ~agent-org-session-list-timeout~ gives up and opens a new session
+  instead, saying so in the echo area.  Starting a chat is never blocked
+  by the feature that shows you the older ones.  On goose that wait is
+  wasted every time, so ~M-x agent-org-goose-start-agent~ followed by
+  ~C-u~ — or ~agent-org-session-strategy~ set to ~new~ — is the quick path.
+- An agent that cannot list or cannot ~session/load~ is asked neither:
+  the capability check happens on the ~initialize~ response, so it costs
+  nothing.
+
 * Resume a session
 
 ~M-x agent-org-resume-session~ reopens a session the agent still remembers for
@@ -116,12 +156,15 @@ Org buffer:
 | ~C-u M-x~           | prompts for the provider first                              |
 | ~C-u C-u M-x~       | prompts for a session id directly, skipping the listing     |
 
-The listing comes from the agent's own ~session/list~, so it is scoped
-to ~default-directory~ of the buffer you call it from — open the
-project you want to resume in, first.  One candidate is used without
-prompting; the header line shows ~Restoring~ while the history is
-replayed, then ~Ready~ with a live ~* User~ prompt at the end, and you
-continue exactly where you left off.
+The listing comes from the agent's own ~session/list~ for
+~default-directory~ of the buffer you call it from — open the
+project you want to resume in, first.  It is the same request
+~agent-org-start~ makes, including the walk over ~nextCursor~ pages, so
+an agent holding 38 sessions in this directory offers all 38, not the
+first page.  One candidate is used without prompting; the header line
+shows ~Restoring~ while the history is replayed, then ~Ready~ with a
+live ~* User~ prompt at the end, and you continue exactly where you
+left off.
 
 Resume is cheap on purpose (this is a 4 GB machine): the replayed
 ~session/update~ notifications are buffered while the load is in
@@ -129,10 +172,11 @@ flight and painted in one pass with undo recording off, so a long
 history costs one insertion run instead of a re-fontification per
 chunk.
 
-Providers that don't answer ~session/list~ fail with a clear header
-line message rather than hanging: goose advertises the capability but
-never answers it in practice, which is why ~agent-org-default-provider~
-is qoder.
+goose advertises ~session/list~ and never answers it.  Resume therefore
+sits on ~Restoring~ until you cancel with ~C-g~ — it will not guess a
+session for you — which is why ~agent-org-default-provider~ is qoder, and
+why ~agent-org-start~ has a timeout where resume has none (starting must
+not be blocked by the listing; resuming is one you asked for).
 
 * MiniMax Code
 
@@ -213,6 +257,12 @@ conversation below it.
 - ~agent-org-default-provider~ — provider ~agent-org-resume-session~ uses when
   you call it with no prefix argument (qoder by default: it answers
   ~session/list~, goose does not).
+- ~agent-org-session-strategy~ — what starting means: ~new~, ~latest~ or
+  ~prompt~ (the default), see [[*Starting: which session you get]].
+- ~agent-org-session-list-page-limit~ — how many ~session/list~ pages to
+  follow; nil reads every page.
+- ~agent-org-session-list-timeout~ — seconds ~agent-org-start~ waits for
+  the listing before opening a new session instead; nil waits forever.
 - ~agent-org-replay-settle-delay~ / ~agent-org-replay-settle-cap~ — how
   long a resume waits for the agent to stop streaming history before it
   paints it, and the hard upper bound on that wait.

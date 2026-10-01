@@ -27,9 +27,12 @@
   `((:method . "session/load")
     (:params . ((sessionId . ,session-id)
                 (cwd . ,(directory-file-name (expand-file-name cwd)))))))
-(cl-defun acp-make-session-list-request (&key cwd)
+(cl-defun acp-make-session-list-request (&key cwd cursor)
   `((:method . "session/list")
-    (:params . ((cwd . ,(directory-file-name (expand-file-name cwd)))))))
+    (:params . ,(append `((cwd . ,(directory-file-name (expand-file-name cwd))))
+                        ;; the real builder omits the key entirely rather
+                        ;; than sending (cursor . nil) on the wire
+                        (when cursor (list (cons 'cursor cursor)))))))
 (cl-defun acp-make-session-set-config-option-request
     (&key session-id config-id value)
   `((:method . "session/set_config_option")

@@ -71,6 +71,87 @@
   :group 'tools
   :prefix "agent-org-")
 
+;;;; What "start" means
+
+(defconst agent-org-new-session-label "New session"
+  "Candidate that starts a fresh session from the chooser.
+It is offered FIRST, so an untouched RET keeps `agent-org-start'
+meaning \"start\" even in a directory full of old chats.")
+
+(defun agent-org--validate-session-strategy (value)
+  "Signal a user-error unless VALUE is a known session strategy; else nil.
+The check is a setter rather than a :type accident because a strategy
+that silently did nothing would be indistinguishable from the fast path
+when `agent-org-start' opened a blank buffer anyway."
+  (unless (memq value '(new latest prompt))
+    (user-error "Unknown `agent-org-session-strategy' %S: use `new', `latest' or `prompt'"
+                value)))
+
+(defcustom agent-org-session-strategy 'prompt
+  "How `agent-org-start' treats the sessions this directory already holds.
+
+  `new'     start a fresh session, and never ask the agent to list.
+  `latest'  load the most recently updated session of the directory.
+  `prompt'  list the directory's sessions, newest first — each labelled
+            title, last-updated date and id — and offer them plus
+            `New session'.
+
+The names follow agent-shell's `agent-shell-session-strategy'.  An agent
+that does not advertise the `list' capability, or cannot `session/load',
+falls back to `new': there is nothing to choose.  A prefix argument on
+`agent-org-start' forces `new' for that one call.
+
+`prompt' costs one request before a session opens, and some agents are
+slow or silent on `session/list' (Goose advertises the capability and
+never replies) — that is what `agent-org-session-list-timeout' covers."
+  :type '(choice (const :tag "Always start a new session" new)
+                 (const :tag "Load the latest session" latest)
+                 (const :tag "Prompt for a session" prompt))
+  :set (lambda (sym value)
+         (agent-org--validate-session-strategy value)
+         (set-default sym value))
+  :group 'agent-org)
+
+(defun agent-org--validate-page-limit (value)
+  "Signal a user-error unless VALUE is nil or a positive integer."
+  (unless (or (null value) (and (integerp value) (> value 0)))
+    (user-error "`agent-org-session-list-page-limit' must be nil or a positive integer, got %S"
+                value)))
+
+(defcustom agent-org-session-list-page-limit nil
+  "How many `session/list' pages to fetch, following the agent's cursors.
+nil means every page: the older sessions an agent hides behind its first
+page are exactly what the chooser is for.  A positive integer caps the
+requests and silently omits the rest, which is the option on a slow
+agent — each page is another round trip to a process that takes seconds
+to answer, on a machine that cannot spare them."
+  :type '(choice (const :tag "Fetch every page" nil)
+                 (integer :tag "Maximum pages"))
+  :set (lambda (sym value)
+         (agent-org--validate-page-limit value)
+         (set-default sym value))
+  :group 'agent-org)
+
+(defcustom agent-org-session-list-timeout 20.0
+  "Seconds `agent-org-start' waits for `session/list' before starting new.
+Goose answers `initialize' and `session/new' and never `session/list',
+so an unbounded wait would turn the default `prompt' strategy into a
+command that appears to hang.  When the timer fires the session opens as
+a fresh one and the echo area says why; a listing arriving afterwards is
+ignored.  nil waits forever, for an agent you trust to answer.
+
+The default is a judgement about slow machines rather than a measurement
+of one: live qoder answered this directory's 38 sessions in a single page
+in seconds, and later — with the machine at load average 16 — the same
+request on the same kind of session never answered at all, which is
+exactly the case the fallback exists for.  Anything under ~15 s risks
+abandoning a listing that is merely cold, and the fallback is quiet
+(an echo-area note), so it should not be reached by accident.  Raise it,
+or set it to nil, on a machine where you would rather wait."
+  :type '(choice (const :tag "Wait forever" nil)
+                 (number :tag "Seconds"))
+  :group 'agent-org)
+
 ;;;; Session registry
 
 (defvar agent-org--sessions nil
@@ -93,6 +174,12 @@ Each entry is a plist:
                  so its modes/config options still reach the header
   :replay-deadline     - absolute float time after which the render is
                  no longer pushed back (see `agent-org--arm-replay-render')
+  :list-state          - `pending' while a `session/list' the start is
+                 waiting on is in flight, `settled' once either the
+                 answer or the timeout owns the outcome (see
+                 `agent-org--settle-listing')
+  :list-timer          - pending `agent-org-session-list-timeout' timer,
+                 nil once it has fired or been cancelled
 
 Every key is installed by `agent-org--open-session', because `setf' on
 `plist-get' can only mutate a property that already exists.")
@@ -314,7 +401,9 @@ been sent yet, so the caller picks `session/new' or `session/load'."
                           :replay-timer nil
                           :replay-session-id nil
                           :replay-response nil
-                          :replay-deadline nil)))
+                          :replay-deadline nil
+                          :list-state nil
+                          :list-timer nil)))
       (agent-org--register-session session)
       (agent-org--subscribe client session)
       (agent-org-buffer-set-session buffer session)
@@ -323,13 +412,27 @@ been sent yet, so the caller picks `session/new' or `session/load'."
 
 ;;;###autoload
 (defun agent-org-start (provider)
-  "Start a new ACP session with PROVIDER and open its Org chat buffer.
-When called interactively, prompt for the provider."
+  "Start a session with PROVIDER and open its Org chat buffer.
+When called interactively, prompt for the provider.  What \"start\"
+means is `agent-org-session-strategy''s business: with the default
+`prompt' the agent is asked what this directory already holds and you
+choose from that, or from `New session'.  A prefix argument forces `new'
+for this call, skipping the listing."
   (interactive (list (agent-org--read-provider)))
   (let* ((session (agent-org--open-session (agent-org--provider-spec provider)))
-         (buffer (plist-get session :buffer)))
+         (buffer (plist-get session :buffer))
+         ;; decided NOW, not in the handshake callback:
+         ;; `current-prefix-arg' belongs to the command loop, and the
+         ;; strategy variable is whatever the caller had bound when they
+         ;; asked.  Reading the variable late made a live probe that
+         ;; bound `new' around `agent-org-start' still go and list the
+         ;; directory, because by then the binding was gone
+         (strategy (or (and current-prefix-arg 'new)
+                       agent-org-session-strategy)))
     (agent-org-loader-begin buffer)
-    (agent-org--initialize session)
+    (agent-org--initialize session
+                           (lambda (resp)
+                             (agent-org--begin-start session resp strategy)))
     buffer))
 
 (defun agent-org--initialize (session &optional next)
@@ -389,35 +492,204 @@ value's truthiness."
                               '(agentCapabilities sessionCapabilities))))
     (and (assq 'list caps) t)))
 
-(defun agent-org--session-display (title id)
-  "One-line completion label for session TITLE and id ID.
-Providers put the session's first prompt in its title, and a live
-qoder listing was seen returning several thousand characters of it
-across dozens of lines — that would flood the completion list and wrap
-every candidate.  So
-`agent-org-buffer--label' collapses and shortens it; the id always stays
-visible because it is what actually selects the session."
-  (let ((short (agent-org-buffer--label title)))
-    (format "%s  [%s]"
+(defun agent-org--provider-name (session)
+  "Human name of the provider SESSION was opened with, for messages."
+  (plist-get (agent-org--provider-spec (plist-get session :name)) :name))
+
+(defun agent-org--format-session-date (stamp)
+  "ISO-8601 session stamp STAMP as a short human date, or nil.
+Today and yesterday are spelled out, because they are the chats you are
+most likely to want back; a stamp from this year shows the date and the
+clock; anything older shows its year instead of the time, which is not
+worth reading on a session from 2024.  A missing or unparsable stamp
+yields nil rather than a candidate ending in \"(nil)\"."
+  (when (and (stringp stamp) (not (string-empty-p stamp)))
+    (ignore-errors
+      (let ((then (date-to-time stamp)))
+        (cond
+         ((equal (format-time-string "%F" then) (format-time-string "%F"))
+          (format "Today, %s" (format-time-string "%H:%M" then)))
+         ((equal (format-time-string "%F" then)
+                 (format-time-string "%F"
+                                     (time-subtract (current-time) (days-to-time 1))))
+          (format "Yesterday, %s" (format-time-string "%H:%M" then)))
+         ((equal (format-time-string "%Y" then) (format-time-string "%Y"))
+          (format-time-string "%b %d, %H:%M" then))
+         (t (format-time-string "%b %d, %Y" then)))))))
+
+(defun agent-org--session-stamp (session)
+  "The recency stamp of a listed SESSION: `updatedAt', else `createdAt', else \"\".
+Goose lists sessions that were never updated, and either field may be
+absent on the wire.  An empty string sorts oldest, which is the honest
+answer for a session with no date at all."
+  (let ((stamp (or (map-elt session 'updatedAt) (map-elt session 'createdAt))))
+    (if (stringp stamp) stamp "")))
+
+(defun agent-org--session-display (title id stamp)
+  "One-line completion label for a session: TITLE, its date, then ID.
+Providers put the session's first prompt in its title, and a live qoder
+listing was seen returning several thousand characters of it across
+dozens of lines — that would flood the completion list and wrap every
+candidate.  So `agent-org-buffer--label' collapses and shortens it; the
+id always stays last because it is what actually selects the session.
+STAMP is the agent's ISO-8601 recency, and it is the only thing that
+tells two chats with the same opening line apart."
+  (let ((short (agent-org-buffer--label title))
+        (date (agent-org--format-session-date stamp)))
+    (format "%s%s  [%s]"
             (if (string-empty-p short) "(untitled)" short)
+            (if date (format "  %s" date) "")
             id)))
 
 (defun agent-org--session-candidates (list-resp)
-  "Convert a `session/list' response LIST-RESP into resume candidates.
-Returns ((DISPLAY . SESSION-ID) ...) newest first; DISPLAY comes from
-the agent's own session title, sanitized by
-`agent-org--session-display'.  Ordering is ours: the wire says agents
-may return entries in any order, and `updatedAt' is an ISO-8601 stamp,
-which sorts correctly as a string."
+  "Convert a `session/list' response LIST-RESP into session candidates.
+Returns ((DISPLAY . SESSION-ID) ...) newest first; DISPLAY comes from the
+agent's own title plus its recency, sanitized by
+`agent-org--session-display'.  Ordering is ours: the wire says agents may
+return entries in any order, and an ISO-8601 stamp sorts correctly as a
+string."
   (let ((sessions (agent-org--wire-list (map-elt list-resp 'sessions))))
     (seq-map (lambda (s)
-              (let ((id (map-elt s 'sessionId)))
-                (cons (agent-org--session-display (map-elt s 'title) id)
-                      id)))
-            (seq-sort (lambda (a b)
-                        (string> (or (map-elt a 'updatedAt) "")
-                                 (or (map-elt b 'updatedAt) "")))
-                      sessions))))
+               (let ((id (map-elt s 'sessionId)))
+                 (cons (agent-org--session-display (map-elt s 'title) id
+                           (agent-org--session-stamp s))
+                       id)))
+             (seq-sort (lambda (a b)
+                         (string> (agent-org--session-stamp a)
+                                  (agent-org--session-stamp b)))
+                       sessions))))
+
+(cl-defun agent-org--list-sessions (session
+                                    &key cursor seen pages
+                                    (page-limit agent-org-session-list-page-limit)
+                                    on-success on-failure)
+  "Fetch the directory's `session/list' pages for SESSION, then ON-SUCCESS.
+CURSOR is the continuation the agent offered on the previous page, SEEN
+every cursor used so far, PAGES what has been gathered: a page past the
+first is reached through exactly one cursor, so SEEN also counts the
+pages.  PAGE-LIMIT nil means follow cursors until the agent stops
+offering one; an integer caps the requests and the remainder is dropped.
+ON-SUCCESS gets one synthesized response, `((sessions . VECTOR))', so
+the candidates helper does not care how many pages it came from.
+ON-FAILURE gets the ACP error and the raw message.
+
+An agent that hands back the cursor it was just sent would page here
+forever, so a repeated cursor is a failure, not another request."
+  (agent-org--validate-page-limit page-limit)
+  (let ((buffer (plist-get session :buffer)))
+    (acp-send-request
+     :client (plist-get session :client)
+     :request (acp-make-session-list-request
+               :cwd (or (plist-get session :cwd) default-directory)
+               :cursor cursor)
+     :buffer buffer
+     :on-success (lambda (resp)
+                   (let ((all (vconcat pages
+                                       (or (map-elt resp 'sessions) [])))
+                         (next (map-elt resp 'nextCursor)))
+                     (cond
+                      ((null next)
+                       (funcall on-success `((sessions . ,all))))
+                      ((member next seen)
+                       (funcall on-failure
+                                nil '((message . "agent repeated the same session/list cursor"))))
+                      ((and page-limit (>= (1+ (length seen)) page-limit))
+                       (funcall on-success `((sessions . ,all))))
+                      (t
+                       (agent-org--list-sessions
+                        session
+                        :cursor next
+                        :seen (cons next seen)
+                        :pages all
+                        :page-limit page-limit
+                        :on-success on-success
+                        :on-failure on-failure)))))
+     :on-failure on-failure)))
+
+(defun agent-org--settle-listing (session)
+  "Own SESSION's pending listing outcome, and cancel its timeout.
+Returns t for the one caller — answer, failure or timeout — that gets to
+act, nil for whoever arrives after.  Without this a `session/list' that
+answers late would load a second session into a buffer that is already
+opening a fresh one."
+  (when-let* ((timer (plist-get session :list-timer)))
+    (cancel-timer timer)
+    (setf (plist-get session :list-timer) nil))
+  (prog1 (eq (plist-get session :list-state) 'pending)
+    (setf (plist-get session :list-state) 'settled)))
+
+(defun agent-org--list-timeout (session)
+  "Stop waiting for SESSION's silent `session/list', and start a new session.
+The function is named rather than a closure so a test can find and fire
+the timer, and because the guard belongs on the session, not on the
+timer's capture.  A listing that already answered is not re-decided:
+`agent-org--settle-listing' gives the outcome to exactly one caller."
+  (when (agent-org--settle-listing session)
+    (message "agent-org: %s did not answer session/list within %ss; starting a new session"
+             (agent-org--provider-name session)
+             agent-org-session-list-timeout)
+    (agent-org--session-new session)))
+
+(defun agent-org--read-start-choice (candidates)
+  "Complete over CANDIDATES plus `agent-org-new-session-label'.
+Returns the chosen session id, or :new.  The display is for the human and
+the cdr is what selects, same as `agent-org--read-session-id'.
+`this-command' is bound because some completion frameworks otherwise
+append the collection's default to every candidate, and the list fills
+with noise."
+  (let* ((choices (cons (cons agent-org-new-session-label :new) candidates))
+         (this-command 'agent-org-start))
+    (cdr (assoc (completing-read "Start or resume: " (seq-map #'car choices) nil t)
+                choices))))
+
+(defun agent-org--choose-start (session list-resp strategy)
+  "Open SESSION out of LIST-RESP the way STRATEGY says to.
+`latest' takes the newest without asking; `prompt' offers the listing
+with `New session' on top.  An empty directory is a new session either
+way, and that is the common case for a first chat in a fresh project."
+  (let* ((candidates (agent-org--session-candidates list-resp))
+         (choice (cond
+                  ((null candidates) :new)
+                  ((eq strategy 'latest) (cdar candidates))
+                  (t (agent-org--read-start-choice candidates)))))
+    (if (eq choice :new)
+        (agent-org--session-new session)
+      (agent-org--load-session session choice))))
+
+(defun agent-org--begin-start (session initialize-resp strategy)
+  "Open SESSION after the handshake, honouring the command's STRATEGY.
+`new', or an agent that cannot list or cannot load, goes straight to
+`session/new' — no extra round trip for a listing that would be thrown
+away.  Otherwise the directory's sessions are fetched, with
+`agent-org-session-list-timeout' covering an agent that advertises
+`list' and then never answers it, and `agent-org--choose-start' decides
+what to open.  A failed listing is a new session plus an echo note too:
+starting a chat must never be blocked by the feature that shows you the
+older ones.
+
+STRATEGY arrives already decided by `agent-org-start', which is the only
+caller: reading `agent-org-session-strategy' here would read the value
+in scope when the agent answers, not the one in scope when you asked."
+  (agent-org--validate-session-strategy strategy)
+  (if (or (eq strategy 'new)
+          (not (agent-org--lists-sessions-p initialize-resp))
+          (not (agent-org--supports-load-p initialize-resp)))
+      (agent-org--session-new session)
+    (setf (plist-get session :list-state) 'pending)
+    (when agent-org-session-list-timeout
+      (setf (plist-get session :list-timer)
+            (run-at-time agent-org-session-list-timeout nil
+                         #'agent-org--list-timeout session)))
+    (agent-org--list-sessions
+     session
+     :on-success (lambda (list-resp)
+                   (when (agent-org--settle-listing session)
+                     (agent-org--choose-start session list-resp strategy)))
+     :on-failure (lambda (_err msg)
+                   (when (agent-org--settle-listing session)
+                     (message "agent-org: session/list failed (%s); starting a new session"
+                              (agent-org--failure-text msg))
+                     (agent-org--session-new session))))))
 
 (defun agent-org--read-session-id (list-resp)
   "Pick the session to resume out of a `session/list' response LIST-RESP.
@@ -530,23 +802,25 @@ skips the listing entirely.  Otherwise ask the agent to list the
 sessions of this directory — possible only when it advertises the
 `list' capability — and let `agent-org--read-session-id' pick.
 
+Resume shares `agent-org--list-sessions' with `agent-org-start' rather
+than sending its own request: two listing renderers would drift, and the
+older chats a directory holds are exactly the ones past the first page.
+
 Goose is known to advertise list and then never answer it, so the
 request is left in flight with a Restoring header rather than guessed
-at; Ctrl-G cancels it."
+at; Ctrl-G cancels it.  (`agent-org-start' cannot hang that way — it
+arms `agent-org-session-list-timeout' — but resume already sits behind
+an explicit request to resume, so falling back to a new session there
+would be the wrong surprise.)"
   (let ((buffer (plist-get session :buffer)))
     (cond
      (session-id (agent-org--load-session session session-id))
      ((not (agent-org--lists-sessions-p initialize-resp))
       (agent-org-loader-fail buffer
-        (format "%s does not list sessions"
-                (plist-get (agent-org--provider-spec (plist-get session :name))
-                           :name))))
+        (format "%s does not list sessions" (agent-org--provider-name session))))
      (t
-      (acp-send-request
-       :client (plist-get session :client)
-       :request (acp-make-session-list-request
-                 :cwd (or (plist-get session :cwd) default-directory))
-       :buffer buffer
+      (agent-org--list-sessions
+       session
        :on-success (lambda (list-resp)
                      (if (agent-org--session-candidates list-resp)
                          (agent-org--load-session
@@ -555,7 +829,8 @@ at; Ctrl-G cancels it."
                          "No sessions to resume in this directory")))
        :on-failure (lambda (_err msg)
                      (agent-org-loader-fail buffer
-                       (format "session/list failed: %s" (agent-org--failure-text msg)))))))))
+                       (format "session/list failed: %s"
+                               (agent-org--failure-text msg)))))))))
 
 ;;;###autoload
 (defun agent-org-resume-session (provider session-id)

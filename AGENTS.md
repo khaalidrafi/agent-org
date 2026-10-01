@@ -120,3 +120,26 @@ emacs -Q --batch \
 #   start-agent-command' fails if the two lists drift.  Never keep an alias for
 #   a renamed command: one action, one name in M-x.
 
+# - "Start" is a strategy, not a request: `agent-org-session-strategy'
+#   (`new' / `latest' / `prompt', default `prompt', names borrowed from agent-shell)
+#   decides what happens after `initialize', and `agent-org--begin-start' is the
+#   only reader of it.  A prefix argument forces `new' for one call and MUST be
+#   captured synchronously in the command: the handshake callback runs after the
+#   command loop has dropped `current-prefix-arg'.  An agent that cannot `list'
+#   or cannot `load' never pays for the request.
+# - One pager for both entry points: `agent-org--list-sessions' follows the
+#   agent's `nextCursor' (page limit nil = every page; a cursor the agent
+#   repeats is a FAILURE, not another request) and synthesizes
+#   `((sessions . VECTOR))', so `agent-org--session-candidates' cannot tell one
+#   page from ten.  `agent-org-start' and `agent-org--resume-locate' both call
+#   it — never hand-send a second `session/list'.
+# - A listing has exactly ONE owner: `:list-state' (`pending' then `settled')
+#   guarded by `agent-org--settle-listing', so a `session/list' that answers
+#   after `agent-org-session-list-timeout' fired cannot load a second session
+#   into a buffer already opening one.  Failure, timeout and an empty listing
+#   all degrade to `session/new' plus an echo-area note: starting a chat must
+#   never be blocked by the feature that shows you the older ones.  Candidates
+#   are `TITLE  DATE  [id]' (`agent-org--session-display' +
+#   `agent-org--format-session-date'), sorted by `agent-org--session-stamp'
+#   (`updatedAt' else `createdAt' — live goose omits `updatedAt'), newest first,
+#   with `New session' always first in the list.

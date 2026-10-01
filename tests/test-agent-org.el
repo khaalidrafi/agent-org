@@ -1048,7 +1048,9 @@ untitled sessions still get an entry."
 over many lines — in a session's `title', so the raw value would flood
 the completion list and break the candidate lines.  DISPLAY must be one
 short line that still carries the id, and an ordinary title must
-survive untouched."
+survive untouched.  The line also spends `agent-org-buffer--label-width'
+on the title and then adds the recency date, so the whole thing is
+bounded by label width + date + id rather than by 80."
   (let* ((blob (concat "Resume all sessions paused with errors!\n"
                        (make-string 3000 ?x) "\nlast line"))
          (resp `((sessions . [((sessionId . "big") (title . ,blob)
@@ -1060,11 +1062,13 @@ survive untouched."
                     (car (seq-find (lambda (c) (equal (cdr c) id)) cands)))))
     (let ((big (funcall display "big")))
       (should-not (string-match-p "\n" big))
-      (should (<= (length big) 80))
+      (should (< (length big)
+                 (+ agent-org-buffer--label-width 30)))
       (should (string-match-p "\\[big\\]\\'" big))
       (should (string-match-p "Resume all sessions" big))
       (should (string-match-p "…" big)))
-    (should (equal (funcall display "small") "Short one  [small]"))))
+    (should (string-match "\\`Short one  Sep 01, [0-9][0-9]:[0-9][0-9]  \\[small\\]\\'"
+                          (funcall display "small")))))
 
 (ert-deftest test-agent-org-read-session-id-single-or-error ()
   "One listed session needs no prompt; an empty list errors out."
@@ -1170,6 +1174,11 @@ Each entry is (METHOD :REQUEST REQUEST :on-success CALLBACK).")
 (defvar ao--timer nil
   "Armed (FUNCTION . ARGS) of the pending timer inside `ao--capture-wire'.")
 
+(defvar ao--list-timer nil
+  "Armed (FUNCTION . ARGS) of the pending session/list timeout.
+Goose advertises the `list' capability and then never answers it, so a
+test that means \"the agent stayed silent\" fires this one.")
+
 (defvar ao--armings 0
   "How many times `run-at-time' was called inside `ao--capture-wire'.
 Tests assert on this to see a deferred render re-armed by late input.")
@@ -1183,13 +1192,28 @@ captures `run-at-time' here and the test decides when quiet has come."
     (apply #'funcall ao--timer)
     (setq ao--timer nil)))
 
+(defun ao--time-out ()
+  "Fire the pending session/list timeout, as a silent agent would allow."
+  (when ao--list-timer
+    (apply #'funcall ao--list-timer)
+    (setq ao--list-timer nil)))
+
+(defun ao--list-pages ()
+  "Params of every captured `session/list' request, oldest page first.
+Pagination tests read the `cursor' out of the second entry to see that
+the continuation the agent offered was actually followed."
+  (seq-map (lambda (entry)
+             (map-elt (plist-get (cdr entry) :request) ':params))
+           (reverse (seq-filter (lambda (pair) (equal (car pair) "session/list"))
+                                ao--sent))))
+
 (defmacro ao--capture-wire (&rest body)
   "Run BODY with `acp-send-request' capturing requests to `ao--sent'.
 Lets a test pump the resume handshake synchronously, driving each
 response callback the way the process filter would.  Timers are
 captured too (see `ao--settle'), because nothing here may block on
 real time."
-  `(let ((ao--sent nil) (ao--timer nil) (ao--armings 0))
+  `(let ((ao--sent nil) (ao--timer nil) (ao--list-timer nil) (ao--armings 0))
      (cl-letf (((symbol-function 'acp-send-request)
                 ;; `&rest' then plist reads: an interpreted `&key' lambda
                 ;; does not parse keywords at all, so the cl-letf'd
@@ -1199,17 +1223,21 @@ real time."
                   (let ((request (plist-get kw :request)))
                     (push (cons (map-elt request ':method)
                                 (list :request request
-                                      :on-success (plist-get kw :on-success)))
+                                      :on-success (plist-get kw :on-success)
+                                      :on-failure (plist-get kw :on-failure)))
                           ao--sent))))
                ((symbol-function 'executable-find) (lambda (&rest _) t))
                ;; (run-at-time SECONDS REPEAT FUNCTION &rest ARGS).  Org
                ;; arms its own timers when a chat buffer is created, so
-               ;; only the replay render is captured and counted.
+               ;; only the timers agent-org owns are captured and counted.
                ((symbol-function 'run-at-time)
                 (lambda (&rest args)
-                  (when (eq (nth 2 args) 'agent-org--finish-replay)
+                  (cond
+                   ((eq (nth 2 args) 'agent-org--finish-replay)
                     (cl-incf ao--armings)
-                    (setq ao--timer (cons (nth 2 args) (nthcdr 3 args))))
+                    (setq ao--timer (cons (nth 2 args) (nthcdr 3 args)))))
+                  (when (eq (nth 2 args) 'agent-org--list-timeout)
+                    (setq ao--list-timer (cons (nth 2 args) (nthcdr 3 args))))
                   (list :captured-timer)))
                ((symbol-function 'cancel-timer) (lambda (&rest _) nil)))
        ,@body)))
@@ -1504,10 +1532,14 @@ that in real use would not carry `:model'."
   "A provider that pins a model sends session/set_config_option for it.
 This is the many-model-host case: OpenCode answers a fresh session with a
 shared default (seen live: gomodel/aa-coding), so a pin is what makes the
-provider mean the model it names."
+provider mean the model it names.  `agent-org-session-strategy' is bound
+to `new' because these tests drive `session/new' straight off
+`initialize', and the default `prompt' lists the directory's older
+sessions before there is any `session/new' to drive."
   (ao--capture-wire
     (ao--with-pinned-provider
-      (let* ((buf (agent-org-start 'minimax))
+      (let* ((agent-org-session-strategy 'new)
+             (buf (agent-org-start 'minimax))
              (pinned ao--pin-model))
         (ao--drive "initialize" ao--fake-init-resp)
         (ao--drive "session/new"
@@ -1548,8 +1580,9 @@ Sending a no-op set_config_option would be one more round trip on a
 process that is slow to answer."
   (ao--capture-wire
     (ao--with-pinned-provider
-      (let ((buf (agent-org-start 'minimax))
-            (pinned ao--pin-model))
+      (let* ((agent-org-session-strategy 'new)
+             (buf (agent-org-start 'minimax))
+             (pinned ao--pin-model))
         (ao--drive "initialize" ao--fake-init-resp)
         (ao--drive "session/new" (ao--config-resp pinned (list (cons pinned "MiniMax"))))
         (should (zerop (ao--sent-count "session/set_config_option")))
@@ -1567,8 +1600,9 @@ a session that works fine on another model.  The report is an echo-area
 message because the Ready segment hides a bare status message."
   (ao--capture-wire
     (ao--with-pinned-provider
-      (let ((buf (agent-org-start 'minimax))
-            (seen nil))
+      (let* ((agent-org-session-strategy 'new)
+             (buf (agent-org-start 'minimax))
+             (seen nil))
         (cl-letf (((symbol-function 'message)
                    (lambda (fmt &rest args)
                      (push (apply #'format fmt args) seen))))
@@ -1591,7 +1625,8 @@ message because the Ready segment hides a bare status message."
 Otherwise every `session_info_update' would re-send the same request."
   (ao--capture-wire
     (ao--with-pinned-provider
-      (let ((buf (agent-org-start 'minimax)))
+      (let* ((agent-org-session-strategy 'new)
+             (buf (agent-org-start 'minimax)))
         (ao--drive "initialize" ao--fake-init-resp)
         (dotimes (_ 3)
           (ao--drive "session/new"
@@ -1607,7 +1642,8 @@ one; pinning would fight `defaultModel' in its config.  This guards the
 old OpenCode-shaped design — MiniMax as a pinned model inside
 `opencode acp' — from creeping back."
   (ao--capture-wire
-    (let ((buf (agent-org-start 'minimax)))
+    (let* ((agent-org-session-strategy 'new)
+           (buf (agent-org-start 'minimax)))
       (ao--drive "initialize" ao--fake-init-resp)
       (ao--drive "session/new"
                  (ao--config-resp "minimax/MiniMax-M3"
@@ -1624,7 +1660,8 @@ old OpenCode-shaped design — MiniMax as a pinned model inside
   "Choosing a model sends the request and re-reads the header from the
 response, so what the top bar shows is what the agent agreed to."
   (ao--capture-wire
-    (let ((buf (agent-org-start 'qoder)))
+    (let* ((agent-org-session-strategy 'new)
+           (buf (agent-org-start 'qoder)))
       (ao--drive "initialize" ao--fake-init-resp)
       (ao--drive "session/new"
                  (ao--config-resp "qmodel"
@@ -1650,7 +1687,8 @@ response, so what the top bar shows is what the agent agreed to."
 The check that keeps the interactive path honest is the same one that
 matters when lisp calls in."
   (ao--capture-wire
-    (let ((buf (agent-org-start 'qoder)))
+    (let* ((agent-org-session-strategy 'new)
+           (buf (agent-org-start 'qoder)))
       (ao--drive "initialize" ao--fake-init-resp)
       (ao--drive "session/new" (ao--config-resp "qmodel" (list (cons "qmodel" "QModel"))))
       (should-error (with-current-buffer buf
@@ -1721,5 +1759,343 @@ Ready segment.  `agent-org--failure-text' is the one channel every
   ;; an error carrying no message still reports something
   (should (string-match-p "404" (agent-org--failure-text '((:json . "404 not found"))))))
 
+;;;; Session strategy: starting a chat offers the directory's older sessions
+
+(defun ao--list-resp (sessions &optional next-cursor)
+  "A `session/list' response for SESSIONS, plus a NEXT-CURSOR page token.
+Each element of SESSIONS is (ID TITLE STAMP); a nil TITLE or STAMP is
+left off the wire entirely, because agents really do omit them."
+  (let ((body `((sessions . ,(vconcat
+                              (seq-map (lambda (s)
+                                         (append `((sessionId . ,(nth 0 s)))
+                                                 (when (nth 1 s)
+                                                   (list (cons 'title (nth 1 s))))
+                                                 (when (nth 2 s)
+                                                   (list (cons 'updatedAt (nth 2 s))))))
+                                       sessions))))))
+    (if next-cursor
+        (append body (list (cons 'nextCursor next-cursor)))
+      body)))
+
+(defun ao--today ()
+  "An ISO-8601 stamp for the current local instant, as an agent would send it."
+  (format-time-string "%Y-%m-%dT%H:%M:%S%z"))
+
+(defmacro ao--pick (id &rest body)
+  "Run BODY answering every prompt by choosing the candidate for session ID.
+A `completing-read' stand-in: the candidate labels carry a recency date
+the test must not hard-code, so the choice is matched on the bracketed
+id, which is the part that actually selects a session."
+  (declare (indent 1))
+  `(cl-letf (((symbol-function 'completing-read)
+              (lambda (_prompt collection &rest _)
+                (seq-find (lambda (c)
+                            (string-match-p (regexp-quote (format "[%s]" ,id)) c))
+                          collection))))
+     ,@body))
+
+(defvar ao--prompted-with nil
+  "Collections the `ao--never-prompt' stand-in was handed, newest first.")
+
+(defmacro ao--never-prompt (&rest body)
+  "Run BODY failing loudly if anything prompts, recording what it offered."
+  (declare (indent 0))
+  `(cl-letf (((symbol-function 'completing-read)
+              (lambda (_prompt collection &rest _)
+                (push collection ao--prompted-with)
+                (error "this strategy must not prompt"))))
+     ,@body))
+
+(ert-deftest test-agent-org-session-strategy-is-a-named-choice ()
+  "The three strategies are the whole vocabulary, and a typo says so.
+`agent-shell-session-strategy' is what this copies; the validator exists
+because a config value that silently did nothing would be
+indistinguishable from the fast path."
+  (should (equal agent-org-session-strategy 'prompt))
+  (dolist (value '(new latest prompt))
+    (should-not (agent-org--validate-session-strategy value))
+    (setopt agent-org-session-strategy value)
+    (should (eq (default-value 'agent-org-session-strategy) value)))
+  (should-error (setopt agent-org-session-strategy 'bogus) :type 'user-error)
+  (setopt agent-org-session-strategy 'prompt))
+
+(ert-deftest test-agent-org-start-strategy-new-never-lists ()
+  "`new' is the fast path: no session/list round trip, no silence timer.
+On a 4 GB machine every extra request to a slow agent is seconds of
+\"Starting\" for nothing, so a strategy that cannot use the listing must
+not ask for it."
+  (let ((agent-org-session-strategy 'new))
+    (ao--capture-wire
+      (let ((buf (agent-org-start 'qoder)))
+        (ao--drive "initialize" ao--fake-init-resp)
+        (should (ao--sent-get "session/new"))
+        (should-not (ao--sent-get "session/list"))
+        (should-not ao--list-timer)
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-start-prefix-arg-forces-a-new-session ()
+  "C-u on the interactive command overrides `agent-org-session-strategy'.
+The listing is worth a round trip only when you mean to choose from it;
+one keypress has to be enough to say \"not this time\"."
+  (ao--capture-wire
+    (let ((current-prefix-arg '(4))
+          (agent-org-session-strategy 'prompt))
+      (cl-letf (((symbol-function 'agent-org--read-provider)
+                 (lambda () 'qoder)))
+        (call-interactively 'agent-org-start))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (should (ao--sent-get "session/new"))
+      (should-not (ao--sent-get "session/list"))
+      (kill-buffer (current-buffer)))))
+
+(ert-deftest test-agent-org-start-prompts-with-the-directory-sessions ()
+  "Starting a chat means asking the agent what this directory already
+holds, offering that list, and loading what was chosen instead of
+opening a blank session.  This is agent-shell's `prompt' strategy, and
+the default here."
+  (ao--capture-wire
+    (let ((buf (agent-org-start 'qoder)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (should (equal (caar ao--sent) "session/list"))
+      (should-not (ao--sent-get "session/new"))
+      (ao--pick "s-old"
+        (ao--drive "session/list"
+                   (ao--list-resp
+                    `(("s-new" "Newest chat" ,(ao--today))
+                      ("s-old" "Older chat" "2026-09-02T10:00:00+0000")))))
+      (let ((params (map-elt (plist-get (ao--sent-get "session/load") ':request)
+                             ':params)))
+        (should (equal (map-elt params 'sessionId) "s-old")))
+      (should-not (ao--sent-get "session/new"))
+      (ao--drive "session/load" '((sessionId . "s-old")))
+      (ao--settle)
+      (with-current-buffer buf
+        (should (equal (plist-get agent-org-buffer--status :session-id) "s-old"))
+        (should (equal 'ready (plist-get agent-org-buffer--status :state))))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-start-prompt-offers-new-session-too ()
+  "The list the agent returns is not a trap: \"New session\" is a choice,
+and the first one, so a plain Enter keeps the old behaviour.  A prompt
+that could only resume would make `agent-org-start' the wrong command to
+reach for."
+  (let ((ao--prompted-with nil))
+    (ao--capture-wire
+      (let ((buf (agent-org-start 'qoder)))
+        (ao--drive "initialize" ao--fake-init-resp)
+        (cl-letf (((symbol-function 'completing-read)
+                   (lambda (_prompt collection &rest _)
+                     (push collection ao--prompted-with)
+                     (car collection))))
+          (ao--drive
+           "session/list"
+           (ao--list-resp `(("s1" "One chat" ,(ao--today))
+                            ("s2" "Two chat" "2026-09-02T10:00:00+0000")))))
+        (let ((choices (seq-first ao--prompted-with)))
+          (should (= 3 (length choices)))
+          (should (equal (car choices) agent-org-new-session-label)))
+        (should (ao--sent-get "session/new"))
+        (should-not (ao--sent-get "session/load"))
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-start-strategy-latest-loads-newest-unasked ()
+  "`latest' picks the newest session with no prompt at all, and wire
+order is not recency order: agents may answer in any order, so this
+sorts on `updatedAt' and falls back to `createdAt', which live goose
+sends on sessions it never touched."
+  (ao--capture-wire
+    (let* ((agent-org-session-strategy 'latest)
+           (buf (agent-org-start 'qoder)))
+      (ao--never-prompt
+        (ao--drive "initialize" ao--fake-init-resp)
+        (ao--drive
+         "session/list"
+         `((sessions . [((sessionId . "s-mid") (title . "Mid")
+                         (updatedAt . "2026-09-10T10:00:00+0000"))
+                        ((sessionId . "s-old") (title . "Old")
+                         (updatedAt . "2026-09-02T10:00:00+0000"))
+                        ((sessionId . "s-born") (title . "Born, never touched")
+                         (createdAt . "2026-09-20T09:00:00+0000"))])))
+      (let ((params (map-elt (plist-get (ao--sent-get "session/load") ':request)
+                             ':params)))
+        (should (equal (map-elt params 'sessionId) "s-born")))
+      (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-start-reads-the-strategy-at-command-time ()
+  "The strategy is decided when the command runs, not when the agent answers.
+A callback that re-reads the variable follows whatever is bound by the
+time the handshake lands: a lisp caller's `let' around
+`agent-org-start' is silently ignored, and so is any future
+buffer-local.  This is not hypothetical — a live probe that bound `new'
+around `agent-org-start' still went and asked a real qoder for its
+directory listing, because the binding was gone by the time
+`initialize' answered."
+  (ao--capture-wire
+    (let ((buf (let ((agent-org-session-strategy 'new))
+                  (agent-org-start 'qoder))))
+      ;; `buf' was returned from inside the binding, which has now exited
+      (ao--drive "initialize" ao--fake-init-resp)
+      (should (ao--sent-get "session/new"))
+      (should-not (ao--sent-get "session/list"))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-start-carries-latest-into-the-chooser ()
+  "The strategy the command read still decides after the round trip.
+The chooser runs on the `session/list' response, which is two callbacks
+downstream of the command, so the decision has to travel with the
+session rather than be looked up again."
+  (ao--capture-wire
+    (let ((buf (let ((agent-org-session-strategy 'latest))
+                  (agent-org-start 'qoder))))
+      (ao--never-prompt
+        (ao--drive "initialize" ao--fake-init-resp)
+        (ao--drive "session/list"
+                   (ao--list-resp `(("s-new" "Newest" ,(ao--today))
+                                    ("s-old" "Older"
+                                     "2026-09-02T10:00:00+0000")))))
+      (let ((params (map-elt (plist-get (ao--sent-get "session/load") ':request)
+                             ':params)))
+        (should (equal (map-elt params 'sessionId) "s-new")))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-start-without-list-capability-just-starts ()
+  "An agent that cannot list, or cannot load, gets no listing request.
+`prompt' and `latest' both need session/list plus session/load; on an
+agent advertising neither, the strategy degrades to `new' instead of
+failing a session the user never asked to resume."
+  (let ((agent-org-session-strategy 'prompt))
+    (ao--capture-wire
+      (let ((buf (agent-org-start 'opencode)))
+        (ao--drive "initialize" '((agentCapabilities . ((loadSession . nil)))))
+        (should (ao--sent-get "session/new"))
+        (should-not (ao--sent-get "session/list"))
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-session-list-follows-cursors ()
+  "Older sessions live past the first page, so `nextCursor' is followed
+until the agent stops offering one.  \"Lists the older sessions\" is not
+true of a package that reads one page and calls it the list."
+  (ao--capture-wire
+    (let* ((agent-org-session-strategy 'latest)
+           (buf (agent-org-start 'qoder)))
+      (ao--never-prompt
+        (ao--drive "initialize" ao--fake-init-resp)
+        (ao--drive "session/list"
+                   (ao--list-resp `(("s-p1" "Page one" "2026-09-01T10:00:00+0000"))
+                                  "cursor-2"))
+        (should (= 2 (ao--sent-count "session/list")))
+        (should (equal (map-elt (nth 1 (ao--list-pages)) 'cursor) "cursor-2"))
+        (should-not (map-elt (nth 0 (ao--list-pages)) 'cursor))
+        (ao--drive "session/list"
+                   (ao--list-resp `(("s-p2" "Page two, the older one" ,(ao--today))))))
+      (let ((params (map-elt (plist-get (ao--sent-get "session/load") ':request)
+                             ':params)))
+        (should (equal (map-elt params 'sessionId) "s-p2")))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-session-list-page-limit-stops-paging ()
+  "`agent-org-session-list-page-limit' bounds the requests and says
+nothing when it truncates: on a slow agent the limit exists precisely to
+stop waiting."
+  (ao--capture-wire
+    (let* ((agent-org-session-list-page-limit 1)
+           (agent-org-session-strategy 'latest)
+           (buf (agent-org-start 'qoder)))
+      (ao--never-prompt
+        (ao--drive "initialize" ao--fake-init-resp)
+        (ao--drive "session/list"
+                   (ao--list-resp
+                    `(("s-p1" "Page one" ,(ao--today))
+                      ("s-x" "Also page one" "2026-01-01T10:00:00+0000"))
+                    "cursor-2"))
+        (should (= 1 (ao--sent-count "session/list"))))
+      (let ((params (map-elt (plist-get (ao--sent-get "session/load") ':request)
+                             ':params)))
+        (should (equal (map-elt params 'sessionId) "s-p1")))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-session-list-repeated-cursor-falls-back ()
+  "An agent handing back the cursor it was just sent would page forever.
+Two requests is enough: give up on the listing and start a new session,
+because a broken session/list must not block a chat nobody wanted to
+resume."
+  (ao--capture-wire
+    (let* ((agent-org-session-strategy 'prompt)
+           (buf (agent-org-start 'qoder)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (ao--drive "session/list" (ao--list-resp `(("s1" "One" ,(ao--today))) "same"))
+      (ao--never-prompt
+        (ao--drive "session/list" (ao--list-resp `(("s2" "Two" ,(ao--today))) "same"))
+        (should (= 2 (ao--sent-count "session/list")))
+        (should (= 1 (ao--sent-count "session/new")))
+        (should-not (ao--sent-get "session/load")))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-silent-agent-list-falls-back-to-new ()
+  "Goose advertises `list' and never answers it — documented live.  With
+`prompt' as the default, silence must cost one timeout, not the session:
+after `agent-org-session-list-timeout' the start proceeds as a plain new
+session, and an answer arriving afterwards is ignored."
+  (ao--capture-wire
+    (let ((buf (agent-org-start 'goose)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (should (ao--sent-get "session/list"))
+      (should ao--list-timer)
+      (ao--time-out)
+      (should (= 1 (ao--sent-count "session/new")))
+      (should-not (ao--sent-get "session/load"))
+      ;; the agent finally speaks; what it offers is moot — the new
+      ;; session is already opening
+      (ao--never-prompt
+        (ao--drive "session/list" (ao--list-resp `(("late" "Too late" ,(ao--today))))))
+      (ao--drive "session/new" (ao--config-resp "model-x" '(("model-x" . "X"))))
+      (should (= 1 (ao--sent-count "session/new")))
+      (should-not (ao--sent-get "session/load"))
+      (with-current-buffer buf
+        (should (equal 'ready (plist-get agent-org-buffer--status :state))))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-session-label-shows-when-it-last-spoke ()
+  "A candidate for an older session is only usable if you can tell its
+age: today, yesterday, this year's date, or a dated year.  The id stays
+last, because it is what actually selects the session."
+  (let* ((today (format-time-string "%Y-%m-%dT%H:%M:%S+0600"))
+         (yesterday (format-time-string "%Y-%m-%dT12:00:00+0600"
+                                        (time-subtract (current-time)
+                                                       (days-to-time 1))))
+         (resp `((sessions . [((sessionId . "t") (title . "Today one")
+                               (updatedAt . ,today))
+                              ((sessionId . "y") (title . "Yesterday one")
+                               (updatedAt . ,yesterday))
+                              ((sessionId . "old") (title . "Ancient")
+                               (updatedAt . "2024-03-05T12:00:00+0600"))
+                              ((sessionId . "none") (title . "No stamp"))])))
+         (labels (seq-map #'car (agent-org--session-candidates resp))))
+    (should (string-match-p "Today, [0-9][0-9]:[0-9][0-9]" (nth 0 labels)))
+    (should (string-match-p "Yesterday, " (nth 1 labels)))
+    (should (string-match-p "Mar 05, 2024" (nth 2 labels)))
+    (should-not (string-match-p "[0-9][0-9]:[0-9][0-9]" (nth 3 labels)))
+    (dolist (label labels)
+      (should (string-match-p "\\[[a-z]+\\]\\'" label))
+      (should-not (string-match-p "\n" label)))))
+
+(ert-deftest test-agent-org-resume-uses-the-paged-listing-too ()
+  "Resume and start share the pager, because two renderers would drift;
+the single-candidate shortcut stays resume's own."
+  (ao--capture-wire
+    (let ((buf (agent-org-resume-session 'qoder nil)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (ao--pick "s-p2"
+        (ao--drive "session/list"
+                   (ao--list-resp `(("s-p1" "Page one" ,(ao--today))) "cursor-2"))
+        (ao--drive "session/list"
+                   (ao--list-resp `(("s-p2" "Page two"
+                                     "2026-09-01T10:00:00+0000")))))
+      (let ((params (map-elt (plist-get (ao--sent-get "session/load") ':request)
+                             ':params)))
+        (should (equal (map-elt params 'sessionId) "s-p2")))
+      (should (= 2 (ao--sent-count "session/list")))
+      (kill-buffer buf))))
+
 (provide 'test-agent-org)
-;;; test-agent-org.el ends here
+

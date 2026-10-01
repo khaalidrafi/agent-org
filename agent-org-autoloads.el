@@ -12,8 +12,12 @@
 ;;; Generated autoloads from agent-org.el
 
 (autoload 'agent-org-start "agent-org" "\
-Start a new ACP session with PROVIDER and open its Org chat buffer.
-When called interactively, prompt for the provider.
+Start a session with PROVIDER and open its Org chat buffer.
+When called interactively, prompt for the provider.  What \"start\"
+means is `agent-org-session-strategy''s business: with the default
+`prompt' the agent is asked what this directory already holds and you
+choose from that, or from `New session'.  A prefix argument forces `new'
+for this call, skipping the listing.
 
 (fn PROVIDER)" t)
 (autoload 'agent-org-resume-session "agent-org" "\

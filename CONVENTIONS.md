@@ -300,6 +300,51 @@ like every other state (§6).
 
 ---
 
+## 10. Starting is a decision, taken once, in the command
+
+`agent-org-start` does not simply mean `session/new`.  `agent-org-session-strategy`
+(`new` / `latest` / `prompt`, names borrowed from agent-shell) decides what the
+handshake is followed by, and `agent-org--begin-start` is the only place that acts
+on it.
+
+* **The strategy is read when the command runs, never when the agent answers.**
+  `agent-org-start` captures it into a local and threads it through
+  `agent-org--begin-start` and `agent-org--choose-start`.  A callback that re-reads
+  the variable follows whatever happens to be bound minutes later: a live probe that
+  bound `new` around `agent-org-start` still went and listed the directory, because
+  the `let` had exited by the time `initialize` replied.  The same rule already
+  applies to `current-prefix-arg`, which the command loop unbinds before any
+  callback runs.
+* **One pager: `agent-org--list-sessions`.**  `agent-org-start` and
+  `agent-org--resume-locate` both call it, so paging behaviour cannot drift
+  between them.  It follows `nextCursor` until the agent stops offering one
+  (`agent-org-session-list-page-limit` caps the requests), and a cursor the agent
+  repeats is treated as a **failure**, not as another page — otherwise a buggy
+  agent pages forever.  It hands `on-success` one synthesized
+  `((sessions . VECTOR))`, so nothing downstream can tell one page from ten.
+* **A listing has exactly one owner.**  `:list-state` goes `pending` then
+  `settled`, and `agent-org--settle-listing` returns t for only the first of
+  answer / failure / timeout.  Without it, goose's late (never-arriving, in
+  practice) answer could load a second session into a buffer already opening one.
+* **Degradation is always `session/new` plus an echo-area note** — never an error
+  state, never a body line (§6).  Starting a chat must not be blocked by the
+  feature that shows you the older ones.
+* **Candidate labels are `TITLE  DATE  [id]`** (`agent-org--session-display`), with
+  the date from `agent-org--format-session-date` ("Today, 14:02", "Yesterday, 09:11",
+  "Sep 28, 10:22", "Sep 02, 2024").  Recency is `updatedAt`, falling back to
+  `createdAt` (live goose omits `updatedAt`), and ISO-8601 sorts correctly as a
+  string, so ordering is a `string>` on the stamp.  The id is always last because
+  it is the part that actually selects.
+
+Live against qoder in this directory: 38 sessions in one page (no `nextCursor`),
+titles and `updatedAt`/`createdAt` stamps as the real wire sends them, and the
+`Today, HH:MM` / `Yesterday, HH:MM` / `Mon DD, HH:MM` branches all appearing in
+the candidates.  On a loaded machine (load average 16) a later listing on the
+same kind of session never answered — the reason `agent-org-session-list-timeout`
+exists.
+
+---
+
 ## Manual nodes referenced
 
 * `(org) Headlines` — §2.1 structure, left margin, separator lines.

@@ -172,6 +172,71 @@ that you will have bound one to a key: any
 ~use-package :commands~ lists (README.org §"As a ~use-package~") silently load a
 missing command only when you call it.
 
+* Starting with the directory's older sessions (=agent-org-session-strategy=)
+
+** TODO Read =agent-org-start= and =agent-org--begin-start= (agent-org.el)
+
+The strategy is read once, in the command, and then travels with the session
+through both callbacks that need it.  Question: agree that no callback should
+ever read ~agent-org-session-strategy~ itself.  This was found live, not
+theoretical: a probe that wrapped ~agent-org-start~ in
+~(let ((agent-org-session-strategy 'new)) ...)~ still sent ~session/list~,
+because ~initialize~ answered after the ~let~ had exited and the callback read
+the global value.  The same trap already governed ~current-prefix-arg~, which
+is why ~agent-org-start~ captured ~forced~ early; the bug was that the strategy
+was not treated the same way.
+
+** TODO Read =agent-org--settle-listing= and the registry's =:list-state=
+
+One listing, exactly one outcome: whoever settles first — answer, failure or
+the timeout — acts, and whoever arrives after is ignored.  Without it a goose
+that answered 30 s late would load a second session into a buffer that had
+already opened a fresh one.  Question: is leaving the value at ~settled~ right
+(never back to ~nil~), and do you agree that
+~agent-org--resume-locate~ needs no such guard because it arms no timer?
+
+** TODO Read =agent-org--list-sessions='s repeated-cursor branch
+
+A cursor the agent hands back twice is a FAILURE, not another page.  Question:
+should it instead stop paging and offer what was already fetched?  Failing was
+chosen because a partial list that looks complete is worse than no list — the
+user cannot tell a truncated listing from an empty directory.
+
+** DONE Live verification against real qoder (2026-10-01, by the agent)
+
+#+begin_example
+38 sessions for ~/agent-org, ONE page (no `nextCursor' in the response)
+first listing answered in seconds;  a later one, machine at load average 16,
+  was never answered at all (see the timeout question below)
+candidates from real wire data:
+  Investigate the 3-minute lag between Qoder's reply and the prompt   Sep 28, 10:22  [c550e3a1-…]
+  both the "Today, HH:MM" and "Yesterday, HH:MM" branches appeared
+`agent-org-start' bound to `latest': Restoring -> Ready, real session id bound,
+  49 lines of history painted by the batched replay
+`agent-org-start' bound to `new': :list-state stayed nil — no listing at all
+#+end_example
+
+** TODO Judge the =agent-org-session-list-timeout= default on your own agents
+
+20 s is a judgement, not a measurement: cold listings on this machine answered
+in seconds and a later one, under load average 16, never answered at all.  What
+is measured is that ~4 s (the first shipped default) is a coin flip on whether
+you get the feature at all, which is worse than waiting.  Two questions: is 20 s right for your agents (opencode takes 31–65 s
+just to reach ~Ready~, though the timer only starts after that), and is it
+acceptable that goose — which never answers ~session/list~ — now pays 20 s
+before /every/ new session?  The precise fix would be a ~:list-timeout~ key on
+the provider plist (it already carries ~:model~), letting goose say "do not
+ask me"; it was left out to keep this change small.  Until then: ~C-u~ on
+~agent-org-start~, or set the strategy to ~new~.
+
+** TODO Check the echo-area fallback is loud enough
+
+Timeout, failed listing and repeated cursor all open a new session with only a
+~message~ to explain it.  The header cannot say more: for ~starting~ and
+~ready~ it renders the state label, never ~:message~ (CONVENTIONS.md §6).
+Question: should the resulting header read ~Ready~ as it does now, or carry
+something like "new — listing timed out"?
+
 * How to check the whole thing
 
 #+begin_src sh
@@ -181,7 +246,7 @@ emacs -Q --batch --eval "(add-to-list 'load-path \"$PWD\")" \
   --eval "(ert-run-tests-batch-and-exit)"
 #+end_src
 
-The suite is 74 tests.  The MiniMax/model ones are
+The suite is 89 tests.  The MiniMax/model ones are
 ~test-agent-org-minimax-provider-present~ (spawns ~mcode acp~, no pin),
 ~test-agent-org-minimax-start-pins-nothing~ (the OpenCode-shaped design may
 not creep back), ~test-agent-org-opencode-provider-present~, the four
@@ -192,3 +257,18 @@ naming ones are ~test-agent-org-session-command-names-match-agent-shell~,
 ~test-agent-org-goose-start-agent-opens-goose~.  The mock
 wire in ~tests/acp-mock.el~ builds ~session/set_config_option~ requests, and
 ~ao--capture-wire~ lets a test pump the handshake without a process.
+
+The session-strategy ones are ~test-agent-org-start-strategy-new-never-lists~,
+~…-prefix-arg-forces-a-new-session~, ~…-reads-the-strategy-at-command-time~
+(the live bug), ~…-prompts-with-the-directory-sessions~,
+~…-prompt-offers-new-session-too~, ~…-carries-latest-into-the-chooser~,
+~test-agent-org-start-without-list-capability-just-starts~,
+~test-agent-org-start-strategy-latest-loads-newest-unasked~,
+plus ~test-agent-org-session-list-follows-cursors~,
+~…-page-limit-stops-paging~, ~…-repeated-cursor-falls-back~,
+~test-agent-org-silent-agent-list-falls-back-to-new~,
+~test-agent-org-session-label-shows-when-it-last-spoke~ and
+~test-agent-org-resume-uses-the-paged-listing-too~.  Their harness is
+~ao--list-resp~ (wire-shaped listing), ~ao--pick~ / ~ao--never-prompt~ (the
+chooser), ~ao--list-pages~ (the cursors actually sent) and ~ao--time-out~
+(fire the ~agent-org--list-timeout~ timer the capture stored).
