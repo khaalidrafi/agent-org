@@ -63,6 +63,20 @@ emacs -Q --batch \
 #   `org-fold-region', NOT `org-fold-hide-drawer-toggle', whose org-element
 #   cache is stale while a turn streams with font-lock off ("Not at a
 #   drawer").
+# - A tool heading is inserted at the `:thinking:` marker's
+#   `match-beginning`, never at the position `re-search-forward' RETURNS
+#   (the match's end = the drawer body's first line).  A headline placed
+#   there is *inside* the drawer, and `agent-org-buffer--redraw-drawer'
+#   rewrites the whole body on the next thought chunk — so every tool
+#   call except the turn's last one silently vanished.  Beware the same
+#   trap in general: `line-beginning-position' returns a position, it
+#   does not move point.
+# - Text the agent supplies (tool-call `title', session `title') goes
+#   through `agent-org-buffer--label' before it lands on a one-line
+#   context (heading line, completion candidate).  Live qoder titles tool
+#   calls with the whole shell command — hundreds of characters across
+#   many lines — and verbatim that breaks the heading.  Never trust a
+#   harness-provided label to be short or single-line.
 # - Resume replay: updates in `agent-org--replay-kinds' arriving while a
 #   session is `:loading' are BUFFERED, never painted one chunk at a time;
 #   the `session/load' response is NOT the flush point (qoder answers first
