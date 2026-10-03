@@ -53,20 +53,23 @@ Let me look at the buffer first…
 Nothing else may live in the body.  Status, progress and errors never
 become text — see §6.
 
-**The buffer is named for its session**: `*agent-org: <title> [<session id>]*`.
+**The buffer is named for its session**: `*agent-org: <project> <title> [<session id>]*`.
 `C-x b` and any switcher list names, and `*agent-org: qoder*` tells someone with
-three qoder chats open nothing.  The provider stands in for a title that has not
-arrived, exactly as it does for `#+TITLE:`, and the id is omitted until the agent
-gives one — so the creation name (`*agent-org: goose*`) is what a buffer wears
-during the handshake, and it is renamed by the update that first reports an id.
-Both facts come from `agent-org-buffer--wanted-name`, and only
-`agent-org-buffer-set-status` applies it, on the updates that carry `:title` or
-`:session-id`: those two are all a name is made of, so a per-chunk usage update
-builds no string and renames nothing.  Two traps that the equality guard in
-`agent-org-buffer--apply-name` exists to prevent: `generate-new-buffer-name`
-counts *this* buffer, so renaming on every update walks a session through
-`T [s]<2><3><4>`; and a title is agent-supplied free text, hence
-`agent-org-buffer--label` — a newline in a buffer name breaks the completion UI.
+three qoder chats open nothing — nor does `*agent-org: Fix the login bug [sid]*`
+once two projects produce that title.  The provider stands in for a title that
+has not arrived, exactly as it does for `#+TITLE:`, and the id is omitted until
+the agent gives one; the project — the last directory component of the session
+cwd — is there from creation, so even the handshake name
+(`*agent-org: myproj goose*`) places the buffer.  All three facts come from
+`agent-org-buffer--wanted-name`; after creation it is applied by
+`agent-org-buffer-set-status`, on the updates that carry `:title` or
+`:session-id`: those and the creation-time `:project` are all a name is made
+of, so a per-chunk usage update builds no string and renames nothing.  Two
+traps that the equality guard in `agent-org-buffer--apply-name` exists to
+prevent: `generate-new-buffer-name` counts *this* buffer, so renaming on every
+update walks a session through `T [s]<2><3><4>`; and a title is agent-supplied
+free text, hence `agent-org-buffer--label` — a newline in a buffer name breaks
+the completion UI.
 `rename-buffer` is called with `RENAME-ALL-PROCESSES` nil, so the agent process
 keeps the name `acp` gave it and `M-x list-processes` still reads sensibly.
 
@@ -114,8 +117,12 @@ Each ACP tool call renders as **one headline per `toolCallId`**, directly
 under the current `* Agent` heading:
 
 ```org
-** KEYWORD title [toolCallId]
+** KEYWORD title
 ```
+
+The `toolCallId` is *not* in the heading text — it is the agent's
+bookkeeping, and the marker stored under it already owns the line for
+in-place updates.
 
 `KEYWORD` maps the ACP `status` onto a per-file TODO set:
 

@@ -404,19 +404,22 @@ between releases, so a stale id is a real possibility."
             (map-elt (agent-org--model-option config) 'options))))
 
 (defun agent-org--model-name (config)
-  "The label CONFIG's agent gives its current model, or nil.
+  "The label CONFIG's agent gives its current model, or a cleaned id.
 The wire value is an id like `minimax/MiniMax-M3', which is what must be
 sent back in `session/set_config_option' but is not what a person wants
 read to them in a status bar; the advertised option carries the human
-label in `name'.  Nil when the current value is outside the advertised
-list — an agent can report a model it does not offer a name for — and the
-caller then shows the id rather than an empty field."
+label in `name'.  When the current value is outside the advertised list
+— an agent can report a model it does not offer a name for — fall back
+to the id minus its provider path (\"MiniMax-M3\"), the most the id
+itself can be made to say; only a missing current value answers nil,
+and the caller then shows \"unknown\"."
   (let* ((option (agent-org--model-option config))
          (current (map-elt option 'currentValue)))
     (when current
-      (map-elt (seq-find (lambda (o) (equal (map-elt o 'value) current))
-                         (agent-org--wire-list (map-elt option 'options)))
-               'name))))
+      (or (map-elt (seq-find (lambda (o) (equal (map-elt o 'value) current))
+                             (agent-org--wire-list (map-elt option 'options)))
+                   'name)
+          (car (last (split-string current "/" t)))))))
 
 (defun agent-org--session-config (session)
   "Return SESSION's configOptions as last reported by the agent.

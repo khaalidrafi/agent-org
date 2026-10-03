@@ -51,7 +51,7 @@ emacs -Q --batch \
 #   COMMANDS/MODES/CONFIG drawers — all folded by default, no heading
 #   (headings belong to the conversation).  Rewritten by
 #   `agent-org-buffer-refresh-metadata'; never edit it by hand.
-# - Per-turn tool calls render as `** KEYWORD title [id]` subheadings under
+# - Per-turn tool calls render as `** KEYWORD title` subheadings under
 #   the current `* Agent` heading, one heading per toolCallId, KEYWORD from
 #   the per-file `#+TODO: TODO DOING | DONE CANCELLED` set (pending→TODO,
 #   in_progress→DOING, completed→DONE, failed→CANCELLED); updates rewrite the

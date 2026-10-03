@@ -242,11 +242,13 @@ buffer-local status plist; safe to call headless."
 ;;;; Buffer creation
 
 (defun agent-org-buffer-create (name)
-  "Create and return a new Org chat buffer named *agent-org: NAME*.
-Buffer is in `org-mode' and `agent-org-mode' with a status header line.
-Programmatic text is protected by `read-only' text properties, not by
-a global `buffer-read-only', so the live prompt at the end is always
-typeable."
+  "Create and return a new Org chat buffer for provider NAME.
+Its initial name is `agent-org-buffer--wanted-name' — project and
+provider, id still absent — so the buffer is findable by project from
+the handshake onward.  Buffer is in `org-mode' and `agent-org-mode'
+with a status header line.  Programmatic text is protected by
+`read-only' text properties, not by a global `buffer-read-only', so the
+live prompt at the end is always typeable."
   (let ((buf (generate-new-buffer (format "*agent-org: %s*" name))))
     (with-current-buffer buf
       (org-mode)
@@ -255,6 +257,9 @@ typeable."
                   :session-id nil
                   :project (file-name-nondirectory
                             (directory-file-name default-directory))))
+      ;; the name wants the project, and the project is only known once
+      ;; the status exists: wear the full shape from the first moment
+      (agent-org-buffer--apply-name)
       (let ((inhibit-read-only t))
         ;; seed metadata: provider name stands in as the title until the
         ;; harness reports its session title; the tool keyword set must
@@ -314,8 +319,10 @@ the per-turn :thinking: drawer by `agent-org-buffer-append-thought'.")
   "The buffer name this buffer's session facts call for.
 A chat buffer is the session: `C-x b' and the switcher list its name, and
 `*agent-org: qoder*' says nothing at all to someone with three qoder
-chats open.  So the name carries the harness's own title and the ACP
-session id — the two things that make one buffer different from the next.
+chats open.  So the name carries the project directory, the harness's
+own title and the ACP session id — the three things that make one
+buffer different from the next, and the shape agent-shell's \"Claude
+Agent @ project\" names converge on.
 
 The provider stands in for a title that has not arrived, exactly as it
 does for `#+TITLE:', and the id is left out until the agent has given one
@@ -325,11 +332,17 @@ agent-supplied free text, hence `agent-org-buffer--label': a buffer name
 with a newline in it breaks the completion UI."
   (let* ((status agent-org-buffer--status)
          (sid (plist-get status :session-id))
+         (project (plist-get status :project))
          (label (agent-org-buffer--label
                  (or (plist-get status :title)
                      (plist-get status :provider)
                      "agent-org"))))
-    (format "*agent-org: %s%s*" label (if sid (format " [%s]" sid) ""))))
+    (format "*agent-org: %s%s%s*"
+            (if (and project (not (string-empty-p project)))
+                (concat project " ")
+              "")
+            label
+            (if sid (format " [%s]" sid) ""))))
 
 (defun agent-org-buffer--apply-name ()
   "Rename the current buffer to `agent-org-buffer--wanted-name', if needed.
@@ -354,8 +367,8 @@ With `agent-org-use-header-line' nil, the rendered status is shown via
 `message' instead.  Status never touches the buffer body.
 
 A `:title' or `:session-id' in STATUS also re-names the buffer, because
-those two facts and only those two are what a name is made of: a usage or
-state update does no string building and no rename."
+those two and the creation-time `:project' are all a name is made of: a
+usage or state update does no string building and no rename."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (dolist (key '(:provider :state :message :note :session-id :model :model-name
@@ -438,6 +451,26 @@ Nil when no entries; capped at 50 lines with a +N-more tail."
                 (format "… (+%d more)\n" (- (length entries) 50)))
               ":END:\n"))))
 
+(defun agent-org-buffer--config-value (option)
+  "The current value of config OPTION, as a person should read it.
+When the agent pairs `currentValue' with a label in the option's own
+`options' list, print the label: the CONFIG drawer used to print the
+raw id, so the same buffer said \"QModel Large\" in the header line and
+\"qmodel-large\" in the drawer two lines below.  `seq-find' accepts the
+wire's vector as well as a list, and the id stays as the fallback for
+values outside the advertised catalog — an agent can report a model it
+does not name, and blanking the field there would lie harder."
+  (let ((current (map-elt option 'currentValue)))
+    (if (null current)
+        ""
+      (let ((options (map-elt option 'options)))
+        (or (and options
+                 (map-elt (seq-find (lambda (o)
+                                      (equal (map-elt o 'value) current))
+                                    options)
+                          'name))
+            current)))))
+
 (defun agent-org-buffer--render-metadata (status)
   "Render the buffer-top Org metadata block for STATUS (pure).
 The PROPERTIES drawer comes first, carrying the scalars (Provider,
@@ -466,7 +499,7 @@ conversation.  Drawers whose lists are still unknown are omitted."
                        (plist-get status :modes-list)))
          (config (mapcar (lambda (o)
                           (format "%s — %s" (map-elt o 'name)
-                                  (or (map-elt o 'currentValue) "")))
+                                  (agent-org-buffer--config-value o)))
                         (plist-get status :config))))
     (concat
      (mapconcat
@@ -845,12 +878,14 @@ point.)"
 (defun agent-org-buffer-insert-tool (buffer content)
   "Record the tool call or update CONTENT in BUFFER as a `**' subheading.
 CONTENT is the tool-call alist from the ACP notification.  Each
-toolCallId owns exactly one heading `** KEYWORD title [id]' under the
-current `* Agent' heading, KEYWORD mapping the ACP status onto the
-per-file TODO set (`agent-org-buffer--todo-setup'); later updates
-rewrite that heading in place via its stored marker.  Tool calls are
-headlines, so they cannot live in a drawer (Org forbids headlines
-inside drawers) and instead fold with TAB like any heading."
+toolCallId owns exactly one heading `** KEYWORD title' under the current
+`* Agent' heading, KEYWORD mapping the ACP status onto the per-file TODO
+set (`agent-org-buffer--todo-setup'); later updates rewrite that heading
+in place via its stored marker.  The id never appears in the heading
+text — it is the agent's bookkeeping, and the marker found under it
+already owns the line.  Tool calls are headlines, so they cannot live
+in a drawer (Org forbids headlines inside drawers) and instead fold with
+TAB like any heading."
   (let ((id (map-elt content 'toolCallId))
         (title (or (map-elt content 'title) (map-elt content 'toolName)))
         (status (map-elt content 'status)))
@@ -868,7 +903,7 @@ inside drawers) and instead fold with TAB like any heading."
                       (or title (and entry (plist-get entry :title)) "tool")))
                ;; no trailing newline: the in-place rewrite keeps the
                ;; line's own, and the fresh insert adds one explicitly
-               (htext (format "** %s %s [%s]" keyword name id)))
+               (htext (format "** %s %s" keyword name)))
           (or entry
               (setq entry (list :marker nil :title nil :status nil)
                     agent-org-buffer--tools

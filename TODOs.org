@@ -64,29 +64,50 @@ The prompt queue is NOT cleared: the cancelled turn was the only thing
 holding it, so the queue drains right away.
 
 * Display fixes (the user's live complaints)
-** TODO Buffer name carries the project name and session id
+** DONE Buffer name carries the project name and session id
 agent-shell names buffers ="Claude Agent @ project"= via
 =agent-shell-buffer-name-format= and shows the session id separately
-(=agent-shell-show-session-id=).  agent-org renders
-=*agent-org: <title|provider> [sid]*= (agent-org-buffer.el:311-330) but
-omits the project even though =:project= is in the status model.
-Fix: =*agent-org: <project> <title> [sid]*= -- both parts the user asked
-for, still truncating the sid like today.
+(=agent-shell-show-session-id=).
 
-** TODO Tool call headings must not show raw ids
+Shipped: =agent-org-buffer--wanted-name= renders
+=*agent-org: <project> <title|provider> [sid]*=, the project being the
+last directory component of the session cwd (already in the status
+model as =:project=).  =agent-org-buffer-create= now applies that name
+at creation, so even the handshake buffer reads
+"*agent-org: myproj goose*" -- findable by project before the agent
+answers.  The sid stays truncated exactly as before; renames still fire
+only on =:title=/:session-id= updates plus the equality guard.
+Guarded by =test-agent-org-buffer-name-carries-project= and the
+updated exact-name tests, which bind =ao--name-dir= so the project
+part never depends on where the suite was launched.
+
+** DONE Tool call headings must not show raw ids
 agent-shell renders tool calls through =agent-shell-make-tool-call-label=
-and never shows the =toolCallId=; agent-org interpolates it into the
-visible heading text at agent-org-buffer.el:865.  The id stays as the
-hidden marker property (that is how in-place updates find the heading);
-drop it from the heading TEXT.
+and never shows the =toolCallId=; agent-org interpolated it into the
+visible heading text.
 
-** TODO Model name everywhere, not just the header
-=:model-name= is preferred by the header and the :Model: property, but
-the CONFIG drawer prints the raw =currentValue= id
-(agent-org-buffer.el:461-464), and =agent-org--model-name= (agent-org.el:397)
-returns nil when the current value has no matching option label.  Fix
-the drawer to render the label with the id in parentheses only as
-fallback, and make the lookup fall back to prettifying the id.
+Shipped: the heading line carries only the TODO keyword and the
+flattened title (agent-org-buffer.el, =agent-org-buffer-insert-tool=).
+The id is still the key of =agent-org-buffer--tools=, so in-place
+updates find their heading through the stored marker without the wire
+id ever being readable text.  Guarded by
+=test-agent-org-tool-heading-drops-raw-id=; the older tool tests now
+assert the id-free shape.
+
+** DONE Model name everywhere, not just the header
+=:model-name= was preferred by the header and the :Model: property, but
+the CONFIG drawer printed the raw =currentValue= id and
+=agent-org--model-name= returned nil for an unadvertised current
+value.
+
+Shipped: the CONFIG drawer renders each option's current value through
+=agent-org-buffer--config-value= -- the advertised label when the
+option's own =options= list carries one, the raw id only as the
+fallback for a value outside the catalog.  =agent-org--model-name=
+never answers nil for a present value: with no label it drops the
+provider path from the id ("minimax/MiniMax-M3" becomes "MiniMax-M3").
+Guarded by =test-agent-org-config-drawer-shows-model-label= and
+=test-agent-org-model-name-prettifies-unadvertised-current=.
 
 ** DONE Never touch the mode line
 CONVENTIONS.md section 6 already mandates header-line-only status with

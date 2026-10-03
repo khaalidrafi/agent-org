@@ -76,14 +76,15 @@ NonGNU ELPA.
    works).  What happens next is
    [[*Starting: which session you get][~agent-org-session-strategy~]]: by
    default the agent is asked what this directory already holds.
-   Opens =~*agent-org: Goose*= and shows ~Goose ➤ Starting~ in the
-   header line.  When the ACP ~initialize~ + ~session/new~ handshake
-   completes, the header fills in with everything the agent reported,
-   and the buffer renames itself to the session it holds —
-   =~*agent-org: Fix the login bug [20260924_4]*=: title and id, so three
-   chats from one agent are three readable names in ~C-x b~ rather than
-   three copies of the provider.  An agent that titles only after the
-   first turn (qoder does) renames it again when that title arrives.  The
+   Opens =~*agent-org: myproj Goose*= and shows ~Goose ➤ Starting~ in
+   the header line.  When the ACP ~initialize~ + ~session/new~
+   handshake completes, the header fills in with everything the agent
+   reported, and the buffer renames itself to the session it holds —
+   =~*agent-org: myproj Fix the login bug [20260924_4]*=: project,
+   title and id, so three chats from one agent are three readable
+   names in ~C-x b~ rather than three copies of the provider.  An
+   agent that titles only after the first turn (qoder does) renames it
+   again when that title arrives.  The
    header line is the agent's own report of the session:
    #+begin_example
    Goose ➤ free ➤ auto ➤ agent-org ➤ [20260924_4] ➤ ▁ 5k/128k ➤ Ready

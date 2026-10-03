@@ -67,71 +67,99 @@ model is already a MiniMax model."
 
 ;;;; Buffer creation
 
+(defconst ao--name-dir "/tmp/ao-proj/"
+  "Fixed `default-directory' for the buffer-name tests.
+A name now carries the project too — the last directory component of the
+cwd the buffer was created in — so tests that assert an exact name bind
+this instead of inheriting whatever directory the suite was launched
+from.  The directory need not exist: nothing here touches the disk.")
+
 (ert-deftest test-agent-org-buffer-create ()
   "Creates an org-mode buffer with agent-org-mode, typeable, and status."
-  (let ((buf (agent-org-buffer-create "test")))
-    (with-current-buffer buf
-      (should buf)
-      (should (buffer-live-p buf))
-      (should (string-prefix-p "*agent-org: test" (buffer-name buf)))
-      (should (derived-mode-p 'org-mode))
-      (should-not buffer-read-only)
-      (should-not (bound-and-true-p cursor-intangible-mode))
-      (should (bound-and-true-p agent-org-mode))
-      (should (equal (plist-get agent-org-buffer--status :state) 'starting))
-      (should header-line-format))
-    (kill-buffer buf)))
+  (let ((default-directory ao--name-dir))
+    (let ((buf (agent-org-buffer-create "test")))
+      (with-current-buffer buf
+        (should buf)
+        (should (buffer-live-p buf))
+        (should (string-prefix-p "*agent-org: ao-proj test" (buffer-name buf)))
+        (should (derived-mode-p 'org-mode))
+        (should-not buffer-read-only)
+        (should-not (bound-and-true-p cursor-intangible-mode))
+        (should (bound-and-true-p agent-org-mode))
+        (should (equal (plist-get agent-org-buffer--status :state) 'starting))
+        (should header-line-format))
+      (kill-buffer buf))))
 
-;;;; Buffer names carry the session title and id
+;;;; Buffer names carry the project, title and id
+
+(ert-deftest test-agent-org-buffer-name-carries-project ()
+  "The project comes before the title.
+`*agent-org: qoder [sid]*' cannot tell a chat of ~/proj-a from a chat of
+~/proj-b until you open one; agent-shell names its buffers \"Claude
+Agent @ project\" for exactly this reason.  The last directory component
+of the session's cwd is rendered first, and the creation name already
+wears it — a buffer is findable by project during the handshake, not
+only after the agent answers."
+  (let ((default-directory ao--name-dir))
+    (let ((buf (agent-org-buffer-create "qoder")))
+      (should (string-prefix-p "*agent-org: ao-proj qoder" (buffer-name buf)))
+      (agent-org-buffer-set-status buf :session-id "sid-prj")
+      (should (equal "*agent-org: ao-proj qoder [sid-prj]*" (buffer-name buf)))
+      (kill-buffer buf))))
 
 (ert-deftest test-agent-org-buffer-name-gains-title-and-id ()
   "Once the agent names the session, its buffer is that session.
 `*agent-org: qoder*' tells a user with three chats open nothing; the
-title the harness reports and the id the wire addresses are the two facts
-that make a buffer distinguishable in `C-x b' and in the switcher."
-  (let* ((pair (ao--make-test-session "nametest"))
-         (buf (car pair))
-         (session (cdr pair)))
-    (setf (plist-get session :session-id) nil)
-    (agent-org--session-ready session "sid-x" (ao--fake-session-new-resp))
-    (should (equal "*agent-org: Initial Session Title [sid-x]*"
-                   (buffer-name buf)))
-    (kill-buffer buf)))
+project, the title the harness reports and the id the wire addresses are
+the facts that make a buffer distinguishable in `C-x b' and in the
+switcher."
+  (let ((default-directory ao--name-dir))
+    (let* ((pair (ao--make-test-session "nametest"))
+           (buf (car pair))
+           (session (cdr pair)))
+      (setf (plist-get session :session-id) nil)
+      (agent-org--session-ready session "sid-x" (ao--fake-session-new-resp))
+      (should (equal "*agent-org: ao-proj Initial Session Title [sid-x]*"
+                     (buffer-name buf)))
+      (kill-buffer buf))))
 
 (ert-deftest test-agent-org-buffer-name-wears-provider-without-a-title ()
   "A session with no title yet is still findable by id.
 The provider name stands in exactly as it does for `#+TITLE:', so the
 buffer is never left with the pre-handshake name once an id exists."
-  (let ((buf (agent-org-buffer-create "standin")))
-    (agent-org-buffer-set-status buf :session-id "sid-9")
-    (should (equal "*agent-org: standin [sid-9]*" (buffer-name buf)))
-    (kill-buffer buf)))
+  (let ((default-directory ao--name-dir))
+    (let ((buf (agent-org-buffer-create "standin")))
+      (agent-org-buffer-set-status buf :session-id "sid-9")
+      (should (equal "*agent-org: ao-proj standin [sid-9]*" (buffer-name buf)))
+      (kill-buffer buf))))
 
 (ert-deftest test-agent-org-buffer-name-follows-a-late-title ()
   "A title that arrives mid-conversation renames the buffer.
 qoder titles a session after the first turn (`session_info_update'), so
 naming only at readiness would freeze every one of its buffers at the
 provider's name."
-  (let* ((pair (ao--make-test-session "latetitle"))
-         (buf (car pair)))
-    (agent-org-buffer-set-status buf :session-id "sid-l")
-    (should (equal "*agent-org: latetitle [sid-l]*" (buffer-name buf)))
-    (agent-org-buffer-set-status buf :title "Refactor the parser")
-    (should (equal "*agent-org: Refactor the parser [sid-l]*"
-                   (buffer-name buf)))
-    (kill-buffer buf)))
+  (let ((default-directory ao--name-dir))
+    (let* ((pair (ao--make-test-session "latetitle"))
+           (buf (car pair)))
+      (agent-org-buffer-set-status buf :session-id "sid-l")
+      (should (equal "*agent-org: ao-proj latetitle [sid-l]*" (buffer-name buf)))
+      (agent-org-buffer-set-status buf :title "Refactor the parser")
+      (should (equal "*agent-org: ao-proj Refactor the parser [sid-l]*"
+                     (buffer-name buf)))
+      (kill-buffer buf))))
 
 (ert-deftest test-agent-org-buffer-name-flattens-a-multiline-title ()
   "Agent-supplied titles go through the same one-line filter headings do.
 A title is free text; a newline in a buffer name would break `C-x b'
 rendering, so the label rule applies here too."
-  (let ((buf (agent-org-buffer-create "multiline"))
-        (long (concat "First line\n" (make-string 200 ?x) "\ntrailing")))
-    (agent-org-buffer-set-status buf :session-id "sid-m" :title long)
-    (with-current-buffer buf
-      (should-not (string-match-p "\n" (buffer-name)))
-      (should (string-prefix-p "*agent-org: First line " (buffer-name))))
-    (kill-buffer buf)))
+  (let ((default-directory ao--name-dir))
+    (let ((buf (agent-org-buffer-create "multiline"))
+          (long (concat "First line\n" (make-string 200 ?x) "\ntrailing")))
+      (agent-org-buffer-set-status buf :session-id "sid-m" :title long)
+      (with-current-buffer buf
+        (should-not (string-match-p "\n" (buffer-name)))
+        (should (string-prefix-p "*agent-org: ao-proj First line " (buffer-name))))
+      (kill-buffer buf))))
 
 (ert-deftest test-agent-org-buffer-name-does-not-accumulate-suffixes ()
   "Re-announcing the same title and id is not a rename.
@@ -139,33 +167,35 @@ rendering, so the label rule applies here too."
 that name, so an unconditional rename would walk
 `*agent-org: T [s]*<2><3><4>' over a session's lifetime — every status
 update, of which a turn sends dozens."
-  (let* ((pair (ao--make-test-session "churn"))
-         (buf (car pair)))
-    (dotimes (_ 5)
-      (agent-org-buffer-set-status buf :session-id "sid-c"
-        :title "Same Title")
-      (agent-org-buffer-set-status buf :used 100 :size 200 :state 'streaming)
-      (agent-org-buffer-set-status buf :state 'ready))
-    (should (equal "*agent-org: Same Title [sid-c]*" (buffer-name buf)))
-    (kill-buffer buf)))
+  (let ((default-directory ao--name-dir))
+    (let* ((pair (ao--make-test-session "churn"))
+           (buf (car pair)))
+      (dotimes (_ 5)
+        (agent-org-buffer-set-status buf :session-id "sid-c"
+          :title "Same Title")
+        (agent-org-buffer-set-status buf :used 100 :size 200 :state 'streaming)
+        (agent-org-buffer-set-status buf :state 'ready))
+      (should (equal "*agent-org: ao-proj Same Title [sid-c]*" (buffer-name buf)))
+      (kill-buffer buf))))
 
 (ert-deftest test-agent-org-buffer-names-stay-unique-per-session ()
   "Two sessions, two buffers, one name each.
 Ids differ, so the names differ; and a name that is already taken must
 still produce a live, distinct buffer rather than clobbering the other."
-  (let* ((a (ao--make-test-session "twin-a"))
-         (b (ao--make-test-session "twin-b"))
-         (bufa (car a))
-         (bufb (car b)))
-    (agent-org-buffer-set-status bufa :session-id "sid-1" :title "Twin")
-    (agent-org-buffer-set-status bufb :session-id "sid-2" :title "Twin")
-    (should (equal "*agent-org: Twin [sid-1]*" (buffer-name bufa)))
-    (should (equal "*agent-org: Twin [sid-2]*" (buffer-name bufb)))
-    ;; the same id twice cannot happen; the same title with no id can
-    (agent-org-buffer-set-status bufb :session-id nil :title "Twin")
-    (should (equal "*agent-org: Twin*" (buffer-name bufb)))
-    (kill-buffer bufa)
-    (kill-buffer bufb)))
+  (let ((default-directory ao--name-dir))
+    (let* ((a (ao--make-test-session "twin-a"))
+           (b (ao--make-test-session "twin-b"))
+           (bufa (car a))
+           (bufb (car b)))
+      (agent-org-buffer-set-status bufa :session-id "sid-1" :title "Twin")
+      (agent-org-buffer-set-status bufb :session-id "sid-2" :title "Twin")
+      (should (equal "*agent-org: ao-proj Twin [sid-1]*" (buffer-name bufa)))
+      (should (equal "*agent-org: ao-proj Twin [sid-2]*" (buffer-name bufb)))
+      ;; the same id twice cannot happen; the same title with no id can
+      (agent-org-buffer-set-status bufb :session-id nil :title "Twin")
+      (should (equal "*agent-org: ao-proj Twin*" (buffer-name bufb)))
+      (kill-buffer bufa)
+      (kill-buffer bufb))))
 
 ;;;; Session registry
 
@@ -350,7 +380,7 @@ Agent turns, thinking or tool calls nobody asked for."
 ;;;; Tool call headings
 
 (ert-deftest test-agent-org-buffer-tool-insert ()
-  "Tool calls render as `** KEYWORD title [id]' subheadings — status
+  "Tool calls render as `** KEYWORD title' subheadings — status
 maps to the per-file TODO keyword set (pending→TODO, in_progress→DOING,
 completed→DONE, failed→CANCELLED) — never as a :tool: drawer."
   (let ((buf (agent-org-buffer-create "tool")))
@@ -359,11 +389,32 @@ completed→DONE, failed→CANCELLED) — never as a :tool: drawer."
                                         (toolCallId . "tc1")
                                         (status . "in_progress")))
     (with-current-buffer buf
-      (should (string-match-p "^\\*\\* DOING read_file \\[tc1\\]$" (buffer-string)))
+      (should (string-match-p "^\\*\\* DOING read_file$" (buffer-string)))
       (should-not (string-match-p "^:tool:$" (buffer-string)))
       ;; the heading belongs under the Agent heading, never before it
-      (should (string-match-p "\\* Agent\n\n\\*\\* DOING read_file \\[tc1\\]"
+      (should (string-match-p "\\* Agent\n\n\\*\\* DOING read_file"
                               (buffer-string)))
+      (should (= 1 (ao--count-occurrences (buffer-string) "^\\*\\* "))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-tool-heading-drops-raw-id ()
+  "The visible heading carries keyword and title only, never the id.
+`toolCallId' is the agent's bookkeeping: in-place updates reach the
+heading through the marker stored under that id, so printing the id on
+the line only adds wire noise a reader never asked for (the user's
+complaint: tool-call ids should be stripped).  Nothing on disk or in
+the buffer may still carry it after an update rewrites the heading."
+  (let ((buf (agent-org-buffer-create "toohide")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool buf '((title . "shell")
+                                        (toolCallId . "tc-hide-1")
+                                        (status . "pending")))
+    (agent-org-buffer-insert-tool buf '((toolCallId . "tc-hide-1")
+                                        (status . "completed")))
+    (with-current-buffer buf
+      (should-not (string-match-p "tc-hide-1" (buffer-string)))
+      (should (string-match-p "^\\*\\* DONE shell$" (buffer-string)))
+      ;; the rewrite hit the same heading — one `**' line, not two
       (should (= 1 (ao--count-occurrences (buffer-string) "^\\*\\* "))))
     (kill-buffer buf)))
 
@@ -375,26 +426,26 @@ in place; new ids append their own heading."
     (agent-org-buffer-insert-tool buf '((title . "shell") (toolCallId . "tc1")
                                         (status . "pending")))
     (should (with-current-buffer buf
-              (string-match-p "^\\*\\* TODO shell \\[tc1\\]$" (buffer-string))))
+              (string-match-p "^\\*\\* TODO shell$" (buffer-string))))
     ;; update without a title must not downgrade it to "tool"
     (agent-org-buffer-insert-tool buf '((toolCallId . "tc1") (status . "completed")))
     (agent-org-buffer-insert-tool buf '((toolCallId . "tc2")))
     (with-current-buffer buf
       (should (= 2 (ao--count-occurrences (buffer-string) "^\\*\\* ")))
-      (should (= 1 (ao--count-occurrences (buffer-string) "\\[tc1\\]")))
-      (should (= 1 (ao--count-occurrences (buffer-string) "\\[tc2\\]")))
-      (should (string-match-p "^\\*\\* DONE shell \\[tc1\\]$" (buffer-string)))
+      (should (= 1 (ao--count-occurrences (buffer-string) "^\\*\\* DONE shell$")))
+      (should (string-match-p "^\\*\\* DONE shell$" (buffer-string)))
       (should-not (string-match-p "TODO shell" (buffer-string)))
-      (should (string-match-p "^\\*\\* TODO tool \\[tc2\\]$" (buffer-string))))
+      (should (string-match-p "^\\*\\* TODO tool$" (buffer-string))))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-tool-heading-flattens-multiline-title ()
   "A tool title is agent text, never a heading.  Live qoder replays
 shell calls whose title is the whole command: several lines, hundreds of
-characters.  Inserted verbatim into `** KEYWORD title [id]' everything
-after the first newline would fall into the body as loose text, and the
+characters.  Inserted verbatim into the heading line everything after
+the first newline would fall into the body as loose text, and the
 in-place rewrite (which deletes one line) would then shred the turn.  So
-the label is flattened and truncated; the id still tells calls apart."
+the label is flattened and truncated; the marker stored under the id
+still tells two calls apart."
   (let ((buf (agent-org-buffer-create "toollong"))
         (long (concat "ls -la\n" (make-string 300 ?x) "\nsecond line")))
     (agent-org-buffer-start-agent-turn buf nil)
@@ -408,7 +459,7 @@ the label is flattened and truncated; the id still tells calls apart."
       ;; exactly one Agent heading plus the two tool headings: no line
       ;; spilled out of the heading it belongs to
       (should (= 3 (ao--count-occurrences (buffer-string) "^\\*+ ")))
-      (should (string-match-p "^\\*\\* TODO ls -la .*\\[tc1\\]$" (buffer-string)))
+      (should (string-match-p "^\\*\\* TODO ls -la" (buffer-string)))
       (should-not (string-match-p "^second line$" (buffer-string)))
       ;; cut, not merely re-wrapped
       (should-not (string-match-p (make-string 300 ?x) (buffer-string))))
@@ -417,7 +468,7 @@ the label is flattened and truncated; the id still tells calls apart."
                                         (status . "completed")))
     (with-current-buffer buf
       (should (= 3 (ao--count-occurrences (buffer-string) "^\\*+ ")))
-      (should (string-match-p "^\\*\\* DONE ls -la .*\\[tc1\\]$" (buffer-string)))
+      (should (string-match-p "^\\*\\* DONE ls -la" (buffer-string)))
       (should-not (string-match-p "TODO ls" (buffer-string))))
     (kill-buffer buf)))
 
@@ -468,9 +519,9 @@ buffer."
     (agent-org-buffer-insert-tool buf '((title . "shell") (toolCallId . "tcA")
                                         (status . "completed")))
     (with-current-buffer buf
-      (should (= 1 (ao--count-occurrences (buffer-string) "^\\*\\* TODO shell \\[tcA\\]$")))
-      (should (= 1 (ao--count-occurrences (buffer-string) "^\\*\\* DONE shell \\[tcA\\]$")))
-      (should (= 1 (ao--count-occurrences (buffer-string) "^\\*\\* TODO tree \\[tcB\\]$")))
+      (should (= 1 (ao--count-occurrences (buffer-string) "^\\*\\* TODO shell$")))
+      (should (= 1 (ao--count-occurrences (buffer-string) "^\\*\\* DONE shell$")))
+      (should (= 1 (ao--count-occurrences (buffer-string) "^\\*\\* TODO tree$")))
       ;; a merged turn would leave only two headings
       (should (= 3 (ao--count-occurrences (buffer-string) "^\\*\\* "))))
     (kill-buffer buf)))
@@ -1103,7 +1154,7 @@ redirect the load to it instead of replaying."
       (agent-org-buffer-insert-tool buf '((title . "read_file") (toolCallId . "tc")))
       (should (save-excursion
                 (goto-char (point-min))
-                (and (re-search-forward "^\\*\\* TODO read_file \\[tc\\]$" nil t)
+                (and (re-search-forward "^\\*\\* TODO read_file$" nil t)
                      (get-text-property (match-beginning 0) 'read-only)))))
     (kill-buffer buf)))
 
@@ -1610,7 +1661,7 @@ font-lock exactly once."
           (should (string-match-p "Hello world" s))
           (should (apply #'ao--ordered s
                          (list "Hello world" "Answer"
-                               "^\\*\\* DONE shell \\[t1\\]$"
+                               "^\\*\\* DONE shell$"
                                "thinking hard" "Next question")))
           (should (string-match-p "^:thinking:$" s))
           (should-not (string-match-p "^:tool:$" s)))
@@ -1889,7 +1940,7 @@ this pins the whole turn down at once."
           ;; the completed call was rewritten in place, the others stayed
           ;; pending
           (should (equal 1 (ao--count-occurrences text
-                                                  "^\\*\\* DONE read a \\[t1\\]$")))
+                                                  "^\\*\\* DONE read a$")))
           (should (equal 3 (ao--count-occurrences text "^\\*\\* TODO ")))
           (should (equal 1 (ao--count-occurrences text "^:thinking:$")))
           (should (equal 'ready
@@ -2240,6 +2291,44 @@ both, so `:Model:' is the name and the id stays on the wire."
         (should (string-match-p "^:Model: +QModel Large" (buffer-string)))
         (should-not (string-match-p "^:Model: +qmodel-large" (buffer-string))))
       (kill-buffer buf))))
+
+(ert-deftest test-agent-org-config-drawer-shows-model-label ()
+  "The CONFIG drawer labels the current value the way the header does.
+The drawer used to print `currentValue' verbatim, so the same buffer
+said \"QModel Large\" in the header and \"qmodel-large\" two lines
+below — two renderings of one fact that disagree.  The id returns only
+as the fallback for a value the agent advertises no label for."
+  (let* ((pair (ao--make-test-session "configlabel"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (setf (plist-get session :session-id) nil)
+    (agent-org--session-ready
+     session "sid-x"
+     (ao--config-resp "qmodel-large"
+                      (list (cons "qmodel" "QModel")
+                            (cons "qmodel-large" "QModel Large"))))
+    (with-current-buffer buf
+      (should (string-match-p "^Model — QModel Large$" (buffer-string)))
+      (should-not (string-match-p "^Model — qmodel-large$" (buffer-string))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-model-name-prettifies-unadvertised-current ()
+  "No advertised label does not mean no name: the id is still cleaned.
+`agent-org--model-name' used to answer nil for a `currentValue' outside
+the catalog, which left the full wire id — \"minimax/MiniMax-M3\" — as
+the only thing a status line could show.  Dropping the provider path is
+what the id itself can be made to say without inventing a label."
+  (should (equal "MiniMax-M3"
+                 (agent-org--model-name
+                  (list (list `(id . "model") `(name . "Model")
+                              `(currentValue . "minimax/MiniMax-M3")
+                              (cons 'options
+                                    (vector (list `(value . "other")
+                                                  `(name . "Other")))))))))
+  (should (equal "ghost-model"
+                 (agent-org--model-name
+                  (list (list `(id . "model") `(currentValue . "ghost-model"))))))
+  (should-not (agent-org--model-name (list (list `(id . "model"))))))
 
 (ert-deftest test-agent-org-model-name-follows-a-switch ()
   "After `agent-org-set-session-model' the bar shows the NEW model's name.
