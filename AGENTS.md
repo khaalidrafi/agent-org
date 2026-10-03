@@ -143,3 +143,12 @@ emacs -Q --batch \
 #   `agent-org--format-session-date'), sorted by `agent-org--session-stamp'
 #   (`updatedAt' else `createdAt' — live goose omits `updatedAt'), newest first,
 #   with `New session' always first in the list.
+# - Killing the chat buffer MUST release the agent: `acp' owns the process it
+#   spawned, so dropping the registry entry leaves an `qoder --acp' child running
+#   (~100 MB each — measured live: 1 session registered, 16 stray acp processes).
+#   `agent-org--forget-session' therefore calls `acp-shutdown' and unarms both
+#   timers, and `agent-org--list-timeout' re-checks `buffer-live-p' as the second
+#   lock (a timer is best-effort insurance, never the guarantee).  Assert the
+#   BEHAVIOUR in tests, not the `cancel-timer' call: `ao--capture-wire' stubs
+#   `cancel-timer', so firing the stored timer is how a test says "the deadline
+#   arrived".

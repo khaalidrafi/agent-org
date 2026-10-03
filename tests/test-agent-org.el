@@ -2055,6 +2055,47 @@ session, and an answer arriving afterwards is ignored."
         (should (equal 'ready (plist-get agent-org-buffer--status :state))))
       (kill-buffer buf))))
 
+(ert-deftest test-agent-org-killing-the-chat-buffer-shuts-the-agent-down ()
+  "Killing a chat buffer releases its agent PROCESS, not just its registry
+entry.  Found live: `agent-org--sessions' held one session while nine
+`qoder --acp' children were still running (~100 MB each, on a 4 GB box),
+because `agent-org--forget-session' dropped the entry and left the `acp'
+client — and therefore the process it spawned — alive."
+  (ao--capture-wire
+    (let ((acp-mock-shutdown-clients nil))
+      (let* ((buf (agent-org-start 'qoder))
+             (client (plist-get (agent-org--session-for-buffer buf) :client)))
+        (should client)
+        ;; `prompt' is the shipped default, so a plain start lists the
+        ;; directory first — settle that before the buffer reaches Ready.
+        (ao--never-prompt
+          (ao--drive "initialize" ao--fake-init-resp))
+        (ao--drive "session/list" (ao--list-resp nil))
+        (ao--drive "session/new" '((sessionId . "s-keep")))
+        (should (= 1 (length agent-org--sessions)))
+        (kill-buffer buf)
+        (should-not (agent-org--session-for-buffer buf))
+        (should-not (memq buf (buffer-list)))
+        (should (equal (list client) acp-mock-shutdown-clients))))))
+
+(ert-deftest test-agent-org-killing-during-a-listing-cancels-the-timeout ()
+  "A buffer killed while a `session/list' is in flight must not go on to
+open a session: `agent-org--forget-session' unarms the timeout, and
+`agent-org--list-timeout' refuses to act on a dead buffer.  The behaviour
+is what gets asserted, because `cancel-timer' is stubbed out inside
+`ao--capture-wire' — firing the stored timer is how the test says \"the
+deadline arrived\", and a session opened into a killed buffer is the bug."
+  (ao--capture-wire
+    (let ((acp-mock-shutdown-clients nil))
+      (let ((buf (agent-org-start 'goose)))
+        (ao--drive "initialize" ao--fake-init-resp)
+        (should (ao--sent-get "session/list"))
+        (should ao--list-timer)
+        (kill-buffer buf)
+        (ao--time-out)
+        (should-not (ao--sent-get "session/new"))
+        (should (= 1 (length acp-mock-shutdown-clients)))))))
+
 (ert-deftest test-agent-org-session-label-shows-when-it-last-spoke ()
   "A candidate for an older session is only usable if you can tell its
 age: today, yesterday, this year's date, or a dated year.  The id stays

@@ -194,16 +194,27 @@ is killed."
       (add-hook 'kill-buffer-hook #'agent-org--forget-session nil t))))
 
 (defun agent-org--forget-session ()
-  "Remove the current buffer's session from `agent-org--sessions'.
-A replay render still pending would fire against the dead buffer, so
-its timer is cancelled on the way out."
+  "Release the current buffer's session: its timers, its agent and its entry.
+`acp' spawns the agent process for itself and owns it, so dropping the
+registry entry does NOT stop it — only `acp-shutdown' deletes the process.
+Skipping that leaked one `qoder --acp' child (around 100 MB) per killed
+chat buffer: found live with one session registered and nine processes
+still running.  A replay or listing timer still armed would fire against
+the dead buffer, so both are unarmed on the way out too."
   (let* ((buf (current-buffer))
-         (session (agent-org--session-for-buffer buf))
-         (timer (and session (plist-get session :replay-timer))))
-    (when timer (cancel-timer timer))
-    (setq agent-org--sessions
-          (seq-remove (lambda (s) (eq (plist-get s :buffer) buf))
-                      agent-org--sessions))))
+         (session (agent-org--session-for-buffer buf)))
+    (when session
+      (dolist (key '(:replay-timer :list-timer))
+        (when-let* ((timer (plist-get session key)))
+          (cancel-timer timer)
+          (setf (plist-get session key) nil)))
+      ;; Shutdown first: it clears the client's handlers, so a late process
+      ;; event cannot reach a buffer that is already going away.
+      (when-let* ((client (plist-get session :client)))
+        (acp-shutdown :client client))
+      (setq agent-org--sessions
+            (seq-remove (lambda (s) (eq (plist-get s :buffer) buf))
+                        agent-org--sessions)))))
 
 (defun agent-org--session-for-buffer (buffer)
   "Return the session plist whose :buffer is BUFFER, or nil."
@@ -623,12 +634,20 @@ opening a fresh one."
 The function is named rather than a closure so a test can find and fire
 the timer, and because the guard belongs on the session, not on the
 timer's capture.  A listing that already answered is not re-decided:
-`agent-org--settle-listing' gives the outcome to exactly one caller."
-  (when (agent-org--settle-listing session)
-    (message "agent-org: %s did not answer session/list within %ss; starting a new session"
-             (agent-org--provider-name session)
-             agent-org-session-list-timeout)
-    (agent-org--session-new session)))
+`agent-org--settle-listing' gives the outcome to exactly one caller.
+
+The buffer check is the second lock.  `agent-org--forget-session' unarms
+this timer when a chat buffer is killed, but a timer is only best-effort
+insurance against a dead buffer — so a firing one verifies the buffer is
+still there before it claims the listing outcome and opens a session into
+nothing."
+  (let ((buffer (plist-get session :buffer)))
+    (when (and buffer (buffer-live-p buffer)
+               (agent-org--settle-listing session))
+      (message "agent-org: %s did not answer session/list within %ss; starting a new session"
+               (agent-org--provider-name session)
+               agent-org-session-list-timeout)
+      (agent-org--session-new session))))
 
 (defun agent-org--read-start-choice (candidates)
   "Complete over CANDIDATES plus `agent-org-new-session-label'.

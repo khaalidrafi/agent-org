@@ -9,7 +9,17 @@
 ;;; Code:
 (require 'cl-lib)
 (provide 'acp)
-(defun acp-make-client (&rest _args) nil)
+;; A client must be a DISTINCT object per session: `agent-org' hands it to
+;; `acp-shutdown' when a chat buffer dies, and a test asserting that
+;; release cannot tell one `nil' from another.
+(defvar acp-mock--client-id 0
+  "Counter behind the fake clients `acp-make-client' hands out.")
+(defun acp-make-client (&rest _args)
+  (list :mock-client (cl-incf acp-mock--client-id)))
+(defvar acp-mock-shutdown-clients nil
+  "Clients `acp-shutdown' was called with, most recent first.")
+(cl-defun acp-shutdown (&key client)
+  (push client acp-mock-shutdown-clients))
 (defun acp-subscribe-to-notifications (&rest _args) nil)
 (defun acp-subscribe-to-requests (&rest _args) nil)
 (defun acp-subscribe-to-errors (&rest _args) nil)

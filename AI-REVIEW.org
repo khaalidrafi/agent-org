@@ -235,7 +235,40 @@ Timeout, failed listing and repeated cursor all open a new session with only a
 ~message~ to explain it.  The header cannot say more: for ~starting~ and
 ~ready~ it renders the state label, never ~:message~ (CONVENTIONS.md §6).
 Question: should the resulting header read ~Ready~ as it does now, or carry
-something like "new — listing timed out"?
+something like "new — listing timed out"?  Asked in practice: the first report
+of this was a user saying "I'm getting no prompts for sessions at start" — the
+listing had timed out under machine load and nothing on screen said so.
+
+* Killing a chat buffer must release its agent process
+
+** TODO Read =agent-org--forget-session= (agent-org.el)
+
+It now calls ~acp-shutdown~ before dropping the registry entry.  The thing to
+check is the ownership model: ~acp~ spawns the ~qoder --acp~ child for itself and
+no buffer-kill reaches it, so agent-org's only release path is that call.  Measured
+live before the fix: 1 session registered, 16 stray ~acp*~ processes (12 of them
+real ~qoder~ children, ~100 MB each) on a 4 GB machine at load average 16 — the
+thrash that made the ~session/list~ timeout fire during ordinary use.
+
+Question for you: is ~kill-buffer~ the right place at all, or should the buffer
+/ask/ first ("agent is running, kill it?")?  agent-shell does not ask; it kills
+its bootstrapping shell when you cancel a selection.  Note also that Emacs' own
+confirmation never fires here, because the process is attached to ~acp~'s buffer,
+not the chat buffer.
+
+** TODO Read the second lock in =agent-org--list-timeout=
+
+Killing a buffer unarms the listing timer, and the timer now also refuses to act
+unless its buffer is still live.  That is deliberate redundancy — a timer is
+best-effort insurance against a dead buffer — but it doubles the surface a future
+reader has to trust, so confirm you want both rather than only the guard.
+
+** DONE Why the tests assert behaviour and not the cancel call
+
+~ao--capture-wire~ stubs ~cancel-timer~ out, so a test that waited for that call
+would pass while testing nothing.  Instead ~test-agent-org-killing-during-a-
+listing-cancels-the-timeout~ fires the stored timer (the harness's way of saying
+"the deadline arrived") and asserts that no ~session/new~ is sent afterwards.
 
 * How to check the whole thing
 
@@ -246,7 +279,7 @@ emacs -Q --batch --eval "(add-to-list 'load-path \"$PWD\")" \
   --eval "(ert-run-tests-batch-and-exit)"
 #+end_src
 
-The suite is 89 tests.  The MiniMax/model ones are
+The suite is 91 tests.  The MiniMax/model ones are
 ~test-agent-org-minimax-provider-present~ (spawns ~mcode acp~, no pin),
 ~test-agent-org-minimax-start-pins-nothing~ (the OpenCode-shaped design may
 not creep back), ~test-agent-org-opencode-provider-present~, the four
@@ -272,3 +305,10 @@ plus ~test-agent-org-session-list-follows-cursors~,
 ~ao--list-resp~ (wire-shaped listing), ~ao--pick~ / ~ao--never-prompt~ (the
 chooser), ~ao--list-pages~ (the cursors actually sent) and ~ao--time-out~
 (fire the ~agent-org--list-timeout~ timer the capture stored).
+
+The kill/release ones are ~test-agent-org-killing-the-chat-buffer-shuts-the-
+agent-down~ and ~…-killing-during-a-listing-cancels-the-timeout~.  They need
+~tests/acp-mock.el~ to hand out a client that can be /identified/
+(~acp-make-client~ returns a counted object, ~acp-shutdown~ records into
+~acp-mock-shutdown-clients~), because "the right client was shut down" is the
+assertion.
