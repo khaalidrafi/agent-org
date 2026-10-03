@@ -306,6 +306,7 @@ the per-turn :thinking: drawer by `agent-org-buffer-append-thought'.")
 (declare-function agent-org-send "agent-org" ())
 (declare-function agent-org-set-session-model "agent-org" (model))
 (declare-function agent-org-queue-view "agent-org" ())
+(declare-function agent-org-cancel-turn "agent-org" ())
 
 ;;;; Status updates
 
@@ -383,6 +384,7 @@ state update does no string building and no rename."
     (define-key map (kbd "C-c C-c") #'agent-org-send)
     (define-key map (kbd "C-c C-m") #'agent-org-set-session-model)
     (define-key map (kbd "C-c C-q") #'agent-org-queue-view)
+    (define-key map (kbd "C-c C-k") #'agent-org-cancel-turn)
     ;; Org structure commands bypass `read-only' text properties and would
     ;; corrupt heading boundaries; block them all.
     (dolist (key (list (kbd "M-RET") (kbd "C-c C-t")
@@ -397,6 +399,7 @@ state update does no string building and no rename."
 Type at the live `* User' prompt at the end of the buffer.
 Keys:
   C-c C-c  Send the typed prompt (queues it while the agent responds)
+  C-c C-k  Cancel the running turn
   C-c C-m  Switch the session's model
   C-c C-q  List the prompts queued for this session"
   :init-value nil

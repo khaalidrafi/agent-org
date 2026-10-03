@@ -646,7 +646,7 @@ place only when the key already exists, so a session missing
 `:loading'/`:replay' would silently ignore the resume tests' setup."
   (let* ((buf (agent-org-buffer-create name))
          (session (list :name 'test :client nil :buffer buf
-                        :session-id "sid-test" :streaming nil
+                        :session-id "sid-test" :streaming nil :turn nil
                         :loading nil :replay nil :replay-timer nil
                         :replay-session-id nil :replay-response nil
                         :replay-deadline nil :pending-prompts nil)))
@@ -881,6 +881,96 @@ as the default, keeping queue order."
         (should (string-match-p "2 prompt" (buffer-string)))
         (should (apply #'ao--ordered (buffer-string)
                        (list "1. first one" "2. second")))))
+    (kill-buffer buf)))
+
+;;;; Interrupt (cancel a running turn)
+
+(ert-deftest test-agent-org-cancel-turn-notifies-and-frees-buffer ()
+  "Cancel sends `session/cancel' for the live session and ends the turn
+locally — the buffer goes Ready with a cancelled note and a fresh prompt,
+without waiting for the agent to answer."
+  (let* ((pair (ao--make-test-session "cancel"))
+         (buf (car pair))
+         (session (cdr pair))
+         (sent nil)
+         (acp-mock-notifications nil))
+    (cl-letf (((symbol-function 'acp-send-request)
+               (lambda (&rest kw) (push kw sent)))
+              ((symbol-function 'acp-make-session-prompt-request)
+               (lambda (&rest a) (plist-get a :prompt))))
+      (with-current-buffer buf
+        (agent-org-buffer-insert-prompt buf)
+        (ao--type "long task")
+        (agent-org-send)
+        (agent-org-cancel-turn))
+      (let ((note (car acp-mock-notifications)))
+        (should (= 1 (length acp-mock-notifications)))
+        (should (equal "session/cancel" (map-elt note ':method)))
+        (should (equal "sid-test"
+                       (map-elt (map-elt note ':params) 'sessionId))))
+      (should-not (plist-get session :streaming))
+      (with-current-buffer buf
+        (should (eq 'ready (plist-get agent-org-buffer--status :state)))
+        (should (equal "turn cancelled"
+                       (plist-get agent-org-buffer--status :note)))
+        (should (agent-org-buffer--open-prompt-p))
+        (should (= 2 (ao--count-substrings "* User"))))
+      ;; the agent's late (cancelled) answer must not re-close the turn,
+      ;; drain twice, or insert another prompt
+      (funcall (plist-get (car sent) :on-success) nil)
+      (should (= 1 (length sent)))
+      (with-current-buffer buf
+        (should (= 2 (ao--count-substrings "* User"))))
+      (funcall (plist-get (car sent) :on-failure) nil "late failure")
+      (with-current-buffer buf
+        (should (= 2 (ao--count-substrings "* User")))
+        (should (eq 'ready (plist-get agent-org-buffer--status :state)))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-cancel-turn-keeps-and-drains-queue ()
+  "The queue outlives the cancelled turn and goes out immediately: the
+turn that was holding it back is gone."
+  (let* ((pair (ao--make-test-session "cancel-q"))
+         (buf (car pair))
+         (session (cdr pair))
+         (sent nil)
+         (acp-mock-notifications nil))
+    (cl-letf (((symbol-function 'acp-send-request)
+               (lambda (&rest kw) (push kw sent)))
+              ((symbol-function 'acp-make-session-prompt-request)
+               (lambda (&rest a) (plist-get a :prompt)))
+              ((symbol-function 'read-string) (lambda (&rest _) "next")))
+      (with-current-buffer buf
+        (agent-org-buffer-insert-prompt buf)
+        (ao--type "running")
+        (agent-org-send)
+        (agent-org-send))                  ; queues "next"
+      (with-current-buffer buf
+        (agent-org-cancel-turn)
+        (should (equal '("running" "next") (ao--sent-texts sent)))
+        (should-not (plist-get session :pending-prompts))
+        (should (plist-get session :streaming)) ; the drained turn is live
+        (should (string-match-p "\\* User\n\nnext" (buffer-string)))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-cancel-turn-rejects-when-idle ()
+  "Nothing streaming, nothing to cancel."
+  (let ((buf (car (ao--make-test-session "cancel-idle"))))
+    (with-current-buffer buf
+      (should-error (agent-org-cancel-turn) :type 'user-error))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-cancel-turn-sends-nothing-until-ready ()
+  "No session id means no turn can be cancelled on the wire."
+  (let* ((pair (ao--make-test-session "cancel-none"))
+         (buf (car pair))
+         (session (cdr pair))
+         (acp-mock-notifications nil))
+    (setf (plist-get session :session-id) nil)
+    (setf (plist-get session :streaming) t)
+    (with-current-buffer buf
+      (should-error (agent-org-cancel-turn) :type 'user-error)
+      (should-not acp-mock-notifications))
     (kill-buffer buf)))
 
 ;;;; Reload (restart the same session, agent-shell's `agent-shell-reload')

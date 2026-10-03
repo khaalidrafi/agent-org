@@ -184,6 +184,11 @@ Each entry is a plist:
   :cwd         - working directory the agent was spawned in (string)
   :session-id  - ACP session-id (string, once known)
   :streaming   - non-nil while a turn is streaming
+  :turn        - id (integer) of the in-flight prompt turn, nil between
+                 turns or after `agent-org-cancel-turn' retired it; the
+                 send callbacks compare it to their own turn and drop a
+                 late answer to a cancelled request.  See
+                 `agent-org--send-turn'.
   :loading     - non-nil while a `session/load' replay is in flight
   :replay      - `session/update' alists buffered while :loading,
                  newest first, painted by `agent-org--render-replay'
@@ -640,6 +645,7 @@ been sent yet, so the caller picks `session/new' or `session/load'."
                           :want-model (plist-get spec :model)
                           :session-id nil
                           :streaming nil
+                          :turn nil
                           :loading nil
                           :replay nil
                           :replay-timer nil
@@ -1260,6 +1266,49 @@ also how callers from lisp pin one."
                    (plist-get spec :name))))))
     (plist-get session :buffer)))
 
+;;;; Interrupt
+
+;;;###autoload
+(defun agent-org-cancel-turn ()
+  "Stop the streaming turn: send ACP `session/cancel' and free the buffer.
+Port of `agent-shell-interrupt' (agent-shell.el:2243), whose mechanism
+is the fire-and-forget notification plus nothing else: agent-shell lets
+the agent's own (cancelled) answer to the outstanding prompt request
+end the turn.  That is not safe here — an agent that never answers
+would keep the buffer frozen in Streaming forever, which is exactly the
+state the user just tried to escape — so this closes the turn locally
+the moment the notification goes out, and the turn id in SESSION's
+`:turn' makes the late answer drop (`agent-org--send-turn').
+
+The session survives (unlike `agent-org-reload', which restarts the
+agent process); the prompt queue survives and is drained right away,
+because the turn that was holding it is gone."
+  (interactive)
+  (let* ((buffer (current-buffer))
+         (session (agent-org--session-for-buffer buffer)))
+    (unless session
+      (user-error "Not an agent-org chat buffer"))
+    (unless (plist-get session :session-id)
+      (user-error "Session not ready"))
+    (unless (plist-get session :streaming)
+      (user-error "No turn in flight"))
+    (acp-send-notification
+     :client (plist-get session :client)
+     :notification (acp-make-session-cancel-notification
+                    :session-id (plist-get session :session-id)
+                    :reason "User cancelled"))
+    ;; Retire the turn BEFORE closing anything: the guard above drops
+    ;; the agent's answer whenever `:turn' no longer matches the id the
+    ;; request was sent under, and nil matches no id at all.
+    (setf (plist-get session :turn) nil)
+    (setf (plist-get session :streaming) nil)
+    (agent-org-buffer-end-agent-turn buffer)
+    ;; The note rides the Ready label by design (`:note' is the fact
+    ;; that outlives the message): "Ready (turn cancelled)".
+    (agent-org-buffer-set-status buffer :state 'ready :note "turn cancelled")
+    (agent-org--drain-queue session buffer)
+    (agent-org-buffer-refresh-metadata buffer)))
+
 ;;;; Reload
 
 ;;;###autoload
@@ -1731,10 +1780,20 @@ The `* User' heading is already in BUFFER (frozen by
 `agent-org-buffer-insert-user' for a drained queue prompt); this only
 does the busy bookkeeping and installs the two callbacks.  Success ends
 the turn, accounts usage and drains the queue
-(`agent-org--drain-queue'); failure leaves the queue where it is."
+(`agent-org--drain-queue'); failure leaves the queue where it is.
+
+Each turn carries an id in SESSION's `:turn'.  `agent-org-cancel-turn'
+retires it locally, and the agent's own (cancelled) answer to the
+request then arrives against a turn id nobody holds — both callbacks
+drop it rather than closing the turn a second time, draining the queue
+twice, or overwriting the buffer's post-cancel state."
   (with-current-buffer buffer (goto-char (point-max)))
-  (let ((client (plist-get session :client))
-        (sid (plist-get session :session-id)))
+  (let* ((client (plist-get session :client))
+         (sid (plist-get session :session-id))
+         (turn (progn
+                 (setf (plist-get session :turn)
+                       (1+ (or (plist-get session :turn) 0)))
+                 (plist-get session :turn))))
     (setf (plist-get session :streaming) t)
     (agent-org-buffer-set-status buffer :state 'streaming
       :message (agent-org--queue-message "Sending…" session))
@@ -1745,20 +1804,24 @@ the turn, accounts usage and drains the queue
                :prompt (agent-org--make-content-blocks text))
      :buffer buffer
      :on-success (lambda (resp)
-                   (setf (plist-get session :streaming) nil)
-                   (agent-org-buffer-end-agent-turn buffer)
-                   (agent-org--record-usage buffer resp)
-                   (agent-org-buffer-set-status buffer :state 'ready)
-                   (agent-org--drain-queue session buffer)
-                   (agent-org-buffer-refresh-metadata buffer))
+                   (when (eq (plist-get session :turn) turn)
+                     (setf (plist-get session :turn) nil)
+                     (setf (plist-get session :streaming) nil)
+                     (agent-org-buffer-end-agent-turn buffer)
+                     (agent-org--record-usage buffer resp)
+                     (agent-org-buffer-set-status buffer :state 'ready)
+                     (agent-org--drain-queue session buffer)
+                     (agent-org-buffer-refresh-metadata buffer)))
      :on-failure (lambda (_err msg)
-                   (setf (plist-get session :streaming) nil)
-                   (agent-org-buffer-end-agent-turn buffer)
-                   (agent-org-buffer-set-status
-                    buffer :state 'error
-                    :message (format "prompt failed: %s"
-                                     (agent-org--failure-text msg)))
-                   (agent-org-buffer-insert-prompt buffer)))))
+                   (when (eq (plist-get session :turn) turn)
+                     (setf (plist-get session :turn) nil)
+                     (setf (plist-get session :streaming) nil)
+                     (agent-org-buffer-end-agent-turn buffer)
+                     (agent-org-buffer-set-status
+                      buffer :state 'error
+                      :message (format "prompt failed: %s"
+                                       (agent-org--failure-text msg)))
+                     (agent-org-buffer-insert-prompt buffer))))))
 
 ;;;###autoload
 (defun agent-org-send ()

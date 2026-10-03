@@ -54,6 +54,16 @@
 (defun acp-make-fs-read-text-file-response (&rest _args) nil)
 (defun acp-make-fs-write-text-file-response (&rest _args) nil)
 (defun acp-make-error (&rest _args) nil)
-(defun acp-make-session-request-permission-response (&rest _args) nil)
+(cl-defun acp-make-session-request-permission-response (&rest _args) nil)
 (defun acp-make-session-prompt-request (&rest _args) nil)
+(cl-defun acp-make-session-cancel-notification (&key session-id reason)
+  `((:method . "session/cancel")
+    (:params . ((sessionId . ,session-id)
+                ,@(when reason `((reason . ,reason)))))))
+(defvar acp-mock-notifications nil
+  "Notifications `acp-send-notification' was called with, newest first.
+`agent-org-cancel-turn' is fire-and-forget on the wire, so this record
+is the only way a test can see the cancel was actually sent.")
+(cl-defun acp-send-notification (&key client notification sync)
+  (push notification acp-mock-notifications))
 ;;; acp.el ends here

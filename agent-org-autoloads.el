@@ -29,6 +29,20 @@ from the agent's `session/list' for the current directory; two
 also how callers from lisp pin one.
 
 (fn PROVIDER SESSION-ID)" t)
+(autoload 'agent-org-cancel-turn "agent-org" "\
+Stop the streaming turn: send ACP `session/cancel' and free the buffer.
+Port of `agent-shell-interrupt' (agent-shell.el:2243), whose mechanism
+is the fire-and-forget notification plus nothing else: agent-shell lets
+the agent's own (cancelled) answer to the outstanding prompt request
+end the turn.  That is not safe here — an agent that never answers
+would keep the buffer frozen in Streaming forever, which is exactly the
+state the user just tried to escape — so this closes the turn locally
+the moment the notification goes out, and the turn id in SESSION's
+`:turn' makes the late answer drop (`agent-org--send-turn').
+
+The session survives (unlike `agent-org-reload', which restarts the
+agent process); the prompt queue survives and is drained right away,
+because the turn that was holding it is gone." t)
 (autoload 'agent-org-reload "agent-org" "\
 Restart this chat's agent and replay the SAME session through resume.
 Port of `agent-shell-reload' (agent-shell.el:1604), which is exactly

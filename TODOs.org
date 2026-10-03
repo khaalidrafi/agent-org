@@ -46,13 +46,22 @@ name regenerates from the replayed title and id, so it comes back
 looking like the one that was replaced; queued prompts die with the
 buffer.
 
-** TODO Interrupt --- cancel a running turn
-agent-shell binds =agent-shell-interrupt= (agent-shell.el:2243) to stop
-the current response; ACP spells this =session/cancel=.
+** DONE Interrupt --- cancel a running turn
+agent-shell binds =agent-shell-interrupt= (agent-shell.el:2243): it
+rejects any pending permission requests and sends the fire-and-forget
+=session/cancel= notification, leaving the turn to end when the agent
+answers.  agent-org answers the same notification, but an agent that
+never does would keep the buffer frozen in Streaming forever -- exactly
+the state the cancel was for.
 
-Ported as =agent-org-cancel-turn= (bound in =agent-org-mode-map=): sends
-=session/cancel= for the live turn, marks the in-flight agent heading
-cancelled, clears =:streaming=; does NOT clear the prompt queue.
+Ported as =agent-org-cancel-turn= (bound to C-c C-k in
+=agent-org-mode-map=): sends =session/cancel= with the live session id,
+then closes the turn locally -- end the heading, =Ready (turn
+cancelled)= in the header, live prompt back.  A per-turn id
+(=agent-org--send-turn''s =:turn=) makes the agent's late answer to the
+cancelled request drop instead of double-closing or double-draining.
+The prompt queue is NOT cleared: the cancelled turn was the only thing
+holding it, so the queue drains right away.
 
 * Display fixes (the user's live complaints)
 ** TODO Buffer name carries the project name and session id
