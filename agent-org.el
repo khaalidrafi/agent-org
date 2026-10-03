@@ -78,6 +78,13 @@
 It is offered FIRST, so an untouched RET keeps `agent-org-start'
 meaning \"start\" even in a directory full of old chats.")
 
+(defconst agent-org--open-marker " (open)"
+  "Appended to a candidate's title when a live buffer already has that session.
+Listing rows are the agent's history, and some of it is usually already
+open in another window; without a marker the only way to find out is to
+choose the row and watch nothing load.  Inside the title column, so the
+padding measures it like any other text and the dates stay in line.")
+
 (defun agent-org--validate-session-strategy (value)
   "Signal a user-error unless VALUE is a known session strategy; else nil.
 The check is a setter rather than a :type accident because a strategy
@@ -221,6 +228,21 @@ the dead buffer, so both are unarmed on the way out too."
   (seq-find (lambda (s) (eq (plist-get s :buffer) buffer))
             agent-org--sessions))
 
+(defun agent-org--session-open-p (session-id)
+  "The live chat buffer already holding SESSION-ID, or nil.
+A `session/list' of this directory includes chats that are open in other
+windows, and nothing on the wire says so — so a candidate is only
+\\\"open\\\" when the registry still points a live buffer at its id.
+A session whose buffer died but whose kill-hook has not run yet is not
+open: offering to switch to a dead buffer would be worse than the double
+load it replaces."
+  (seq-some (lambda (s)
+              (let ((buffer (plist-get s :buffer)))
+                (and (equal (plist-get s :session-id) session-id)
+                     (buffer-live-p buffer)
+                     buffer)))
+            agent-org--sessions))
+
 (defun agent-org--cancel-open (session)
   "Release SESSION because the user backed out before it ever opened.
 Cancelling a `completing-read' signals `quit', which arrives inside the
@@ -235,6 +257,22 @@ timers.  The echo area is the only channel left once the buffer is gone."
   (let ((buffer (plist-get session :buffer)))
     (when (buffer-live-p buffer)
       (kill-buffer buffer))))
+
+(defun agent-org--show-open-instead (session buffer)
+  "Raise BUFFER, which already holds the session SESSION was about to open.
+One ACP session id, one client: loading it twice would give two buffers
+the same history, both able to prompt, both replaying into each other.
+The buffer this command opened is released the way a cancelled one is —
+killed, which runs `agent-org--forget-session' and shuts down the agent
+process spawned for it before it ever had a session.  The echo area is
+where the explanation goes: the buffer being killed may be the one on
+screen."
+  (message "agent-org: %s is already open - showing it, not loading twice"
+           (buffer-name buffer))
+  (let ((ours (plist-get session :buffer)))
+    (when (and (buffer-live-p ours) (not (eq ours buffer)))
+      (kill-buffer ours)))
+  (pop-to-buffer buffer))
 
 (defmacro agent-org--quit-cancels (session &rest body)
   "Run BODY; if the user quit the session prompt, release SESSION and yield nil.
@@ -619,15 +657,26 @@ Returns ((DISPLAY . SESSION-ID) ...) newest first; DISPLAY is built by
 is ours: the wire says agents may return entries in any order, and an
 ISO-8601 stamp sorts correctly as a string.
 The columns are padded to the batch's own maxima, so one long title moves
-every other date into its column instead of leaving a ragged list."
+every other date into its column instead of leaving a ragged list.  A row
+whose session a live buffer already holds gets
+`agent-org--open-marker' on its title, because choosing it switches
+instead of loading (see `agent-org--load-session')."
   (let* ((sessions (agent-org--wire-list (map-elt list-resp 'sessions)))
          (sorted (seq-sort (lambda (a b)
                              (string> (agent-org--session-stamp a)
                                       (agent-org--session-stamp b)))
                            sessions))
          (columns (seq-map (lambda (s)
-                             (agent-org--session-columns (map-elt s 'title)
-                                                         (agent-org--session-stamp s)))
+                             (let ((cols (agent-org--session-columns
+                                          (map-elt s 'title)
+                                          (agent-org--session-stamp s))))
+                               ;; marked before measuring: the marker is
+                               ;; part of the column, so it cannot widen one
+                               (when (agent-org--session-open-p
+                                      (map-elt s 'sessionId))
+                                 (setf (car cols)
+                                       (concat (car cols) agent-org--open-marker)))
+                               cols))
                            sorted))
          (title-width (agent-org--column-width columns #'car))
          (date-width (agent-org--column-width columns #'cdr)))
@@ -909,29 +958,37 @@ low-spec machine — a 200-turn session would otherwise re-fontify the
 buffer once per chunk.
 
 Responses from the wire carry the session id only inside the replay
-notifications, so the request's SESSION-ID is the fallback."
+notifications, so the request's SESSION-ID is the fallback.
+
+This is the one place that decides whether to send `session/load' at all:
+when some buffer already holds SESSION-ID, showing it beats loading it
+twice, whoever asked (`agent-org-start', `agent-org-resume-session' or a
+typed id) and however the id was chosen."
   (let ((buffer (plist-get session :buffer))
         (cwd (or (plist-get session :cwd) default-directory)))
-    (setf (plist-get session :loading) t)
-    (agent-org-buffer-set-status buffer :state 'loading :message "Restoring…")
-    (acp-send-request
-     :client (plist-get session :client)
-     :request (acp-make-session-load-request :session-id session-id :cwd cwd)
-     :buffer buffer
-     :on-success (lambda (resp)
-                   ;; The response is not the end of the replay: hold the
-                   ;; buffered updates until the agent goes quiet, then
-                   ;; render (see `agent-org--arm-replay-render').
-                   (setf (plist-get session :replay-session-id)
-                         (or (map-elt resp 'sessionId) session-id))
-                   (setf (plist-get session :replay-response) resp)
-                   (setf (plist-get session :replay-deadline)
-                         (+ (float-time) agent-org-replay-settle-cap))
-                   (agent-org--arm-replay-render session))
-     :on-failure (lambda (_err msg)
-                   (agent-org--cancel-replay session)
-                   (agent-org-loader-fail buffer
-                     (format "session/load failed: %s" (agent-org--failure-text msg)))))))
+    (if-let* ((open (agent-org--session-open-p session-id)))
+        (agent-org--show-open-instead session open)
+      (setf (plist-get session :loading) t)
+      (agent-org-buffer-set-status buffer :state 'loading :message "Restoring…")
+      (acp-send-request
+       :client (plist-get session :client)
+       :request (acp-make-session-load-request :session-id session-id :cwd cwd)
+       :buffer buffer
+       :on-success (lambda (resp)
+                     ;; The response is not the end of the replay: hold the
+                     ;; buffered updates until the agent goes quiet, then
+                     ;; render (see `agent-org--arm-replay-render').
+                     (setf (plist-get session :replay-session-id)
+                           (or (map-elt resp 'sessionId) session-id))
+                     (setf (plist-get session :replay-response) resp)
+                     (setf (plist-get session :replay-deadline)
+                           (+ (float-time) agent-org-replay-settle-cap))
+                     (agent-org--arm-replay-render session))
+       :on-failure (lambda (_err msg)
+                     (agent-org--cancel-replay session)
+                     (agent-org-loader-fail buffer
+                       (format "session/load failed: %s"
+                               (agent-org--failure-text msg))))))))
 
 (defun agent-org--resume-locate (session initialize-resp session-id)
   "Work out which session of SESSION to load, then load it.

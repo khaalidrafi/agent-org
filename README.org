@@ -126,8 +126,8 @@ and the session opening — the same three choices ~agent-shell~ offers:
 ~default-directory~, newest first, each candidate labelled
 
 #+begin_example
-Investigate the 3-minute lag between Qoder's reply and the…  Sep 28, 10:22  [c550e3a1]
-Reconcile the failing ERT suite                              Today, 09:14   [0f2c8e1a]
+Investigate the 3-minute lag between Qoder's reply and the… (open)  Sep 28, 10:22  [c550e3a1]
+Reconcile the failing ERT suite                                     Today, 09:14   [0f2c8e1a]
 #+end_example
 
 — the agent's title, when it last spoke, and the id that actually
@@ -135,7 +135,9 @@ selects it.  The columns line up however long a title is, and the date
 and id are dimmed, so the list is scannable at a glance rather than
 read line by line.  ~New session~ sits at the top of the list, and the
 order is pinned so it stays there, so a bare ~RET~ in a fresh project
-still means "start".  Backing out of the offer (ESC /
+still means "start".  A chat that is already open in another window is
+marked ~(open)~: choosing it shows that window instead of loading the
+same session a second time.  Backing out of the offer (ESC /
 ~C-g~) closes the half-open chat buffer and its agent, instead of leaving a
 window stuck on "Starting".  ~C-u M-x agent-org-start~ forces
 ~new~ for one call, which is the shortcut when you mean to start over.

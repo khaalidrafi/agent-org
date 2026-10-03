@@ -340,6 +340,17 @@ on it.
   `settled`, and `agent-org--settle-listing` returns t for only the first of
   answer / failure / timeout.  Without it, goose's late (never-arriving, in
   practice) answer could load a second session into a buffer already opening one.
+* **A session that is already open is shown, not loaded twice.**  A
+  `session/list` of the directory includes chats open in other windows, and the
+  wire does not say so, so `agent-org--session-open-p` asks the registry for a
+  *live* buffer holding the id (a dead buffer whose kill-hook has not run is not
+  "open").  `agent-org--session-candidates` marks such a row with
+  `agent-org--open-marker` — inside the title column, so the measuring pass
+  includes it — and `agent-org--load-session` is the one choke point that turns
+  the choice into `pop-to-buffer`: it sends no `session/load`, kills the
+  half-open buffer (which shuts down the agent spawned for it), and says so in
+  the echo area.  One ACP session id, one client: two buffers replaying the same
+  history and both accepting prompts is not a shape worth supporting.
 * **Degradation is always `session/new` plus an echo-area note** — never an error
   state, never a body line (§6).  Starting a chat must not be blocked by the
   feature that shows you the older ones.

@@ -2328,6 +2328,65 @@ land on top of the list you are about to choose from."
             (should (string-match-p "\\[s2\\]\\'" (nth 2 choices)))))
         (kill-buffer buf)))))
 
+(ert-deftest test-agent-org-candidates-mark-an-already-open-session ()
+  "A `session/list' of this directory includes chats this Emacs already
+has open.  Nothing on the candidate says so, so choosing one loads the
+same ACP session a second time: two clients, two buffers, one history.
+The open rows say `(open)', and the marker is part of the title column
+it is measured with, so adding it cannot push the dates out of line."
+  (let* ((open-buffer (generate-new-buffer " *ao-open-test*"))
+         (agent-org--sessions (list (list :buffer open-buffer
+                                          :session-id "s-live")))
+         (resp (list (cons 'sessions
+                           (vector (list (cons 'sessionId "s-live")
+                                         (cons 'title "Already open chat")
+                                         (cons 'updatedAt "2026-09-28T10:22:00+0000"))
+                                   (list (cons 'sessionId "s-shut")
+                                         (cons 'title "Closed chat")
+                                         (cons 'updatedAt "2026-09-27T10:22:00+0000"))))))
+         (cands (agent-org--session-candidates resp))
+         (labels (seq-map #'car cands)))
+    (should (string-match-p "(open)" (nth 0 labels)))
+    (should-not (string-match-p "(open)" (nth 1 labels)))
+    (should (apply #'equal
+                   (seq-map (lambda (l) (string-width (substring l 0 (string-match-p "\\[" l))))
+                            labels)))
+    ;; the marker is display only: what selects is still the id
+    (should (equal (cdr (nth 0 cands)) "s-live"))
+    (kill-buffer open-buffer)))
+
+(ert-deftest test-agent-org-dead-buffer-does-not-mark-a-session-open ()
+  "The registry is dropped by a kill-hook, but a hook that has not run
+yet leaves a session pointing at a dead buffer.  Offering to switch to
+that buffer would be worse than the double load: the choice would do
+nothing."
+  (let* ((gone (generate-new-buffer " *ao-gone-test*"))
+         (agent-org--sessions (list (list :buffer gone :session-id "s-dead"))))
+    (kill-buffer gone)
+    (should-not (agent-org--session-open-p "s-dead"))))
+
+(ert-deftest test-agent-org-choosing-an-open-session-shows-its-buffer ()
+  "Choosing an open chat must raise the buffer that has it and send
+nothing: no `session/load' (a second client on the same session id), and
+no `session/new' either.  The half-open buffer this command created is
+killed, which is what releases the agent process spawned for it
+(`agent-org--forget-session')."
+  (let* ((open (generate-new-buffer " *ao-open-choice*"))
+         (agent-org--sessions (list (list :buffer open :session-id "s-live")))
+         (acp-mock-shutdown-clients nil))
+    (ao--capture-wire
+      (let ((buf (agent-org-start 'qoder)))
+        (ao--drive "initialize" ao--fake-init-resp)
+        (ao--pick "s-live"
+          (ao--drive "session/list"
+                     (ao--list-resp `(("s-live" "Already open" ,(ao--today))))))
+        (should-not (ao--sent-get "session/load"))
+        (should-not (ao--sent-get "session/new"))
+        (should-not (buffer-live-p buf))
+        (should (eq (window-buffer (selected-window)) open))
+        (should (= 1 (length acp-mock-shutdown-clients)))
+        (kill-buffer open)))))
+
 (ert-deftest test-agent-org-session-label-shows-when-it-last-spoke ()
   "A candidate for an older session is only usable if you can tell its
 age: today, yesterday, this year's date, or a dated year.  The id stays

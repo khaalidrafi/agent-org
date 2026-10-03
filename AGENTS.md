@@ -161,6 +161,13 @@ emacs -Q --batch \
 #   with `agent-org--selection-value' (property-free `equal'), NEVER `assoc':
 #   `equal' on strings compares properties too, and a framework that rebuilds the
 #   string would match nothing and resume the wrong chat.
+# - A listed session that a live buffer already holds is SHOWN, never loaded
+#   again: `agent-org--session-open-p' answers from the registry (buffer-live-p,
+#   so a session whose kill-hook has not run is not "open"), the candidate carries
+#   `agent-org--open-marker', and `agent-org--load-session' — the single choke
+#   point — pops that buffer instead of sending `session/load', killing the
+#   half-open buffer (which releases the agent spawned for it) and noting the
+#   switch in the echo area.
 # - Killing the chat buffer MUST release the agent: `acp' owns the process it
 #   spawned, so dropping the registry entry leaves an `qoder --acp' child running
 #   (~100 MB each — measured live: 1 session registered, 16 stray acp processes).

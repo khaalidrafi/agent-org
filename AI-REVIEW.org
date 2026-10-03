@@ -375,6 +375,53 @@ with action =t=.  (It first used ='all=, which is not an action:
 passed on an empty list forever.)  Suite is 99 tests, all green;
 byte-compile warning-free.
 
+* Choosing an already-open session switches instead of loading twice
+
+** TODO Read =agent-org--load-session='s short-circuit (agent-org.el)
+The guard sits at the top of =agent-org--load-session= rather than in
+=agent-org--choose-start=, on purpose: every path that could load a
+session id goes through it — =prompt=, =latest=,
+=agent-org-resume-session= with no argument, and the double-prefix
+=agent-org-resume-session= where the user TYPED the id.  Judge that: a
+typed id is an explicit request, and silently being shown another
+window instead is arguably the wrong answer for it.  The counter-argument
+in the code is that a second client on one session id is not a supported
+shape at all, so the explicit request cannot be honoured anyway.
+
+** TODO The switch kills a buffer without asking
+=agent-org--show-open-instead= kills the half-open buffer to release the
+agent process it spawned (the only release path is the kill-hook), then
+pops the target.  That kill is silent.  It destroys no conversation — the
+buffer never got a session — but it does throw away whatever
+=#+TITLE=/drawer block had been painted.  This is the same question the
+kill-buffer TODO above asks; if you add a confirmation, add it to both
+paths, not here alone.
+
+** DONE =(open)= lives inside the title column, not after the id
+Marking a row after the id would have broken "the id is always last
+because it is what actually selects", and marking it as a fourth column
+would need the measuring pass to know about a column that only exists for
+some rows.  Appending it to the title text before
+=agent-org--column-width= runs means the marker is measured like any other
+character, so the dates stay in line whether or not a row is open.
+
+** TODO =agent-org--session-open-p= trusts the registry's =:session-id= timing
+`:session-id= is set when the session becomes ready (and by
+=agent-org--finish-replay=), so a buffer that is mid-`=session/load'= and
+has not rendered its replay yet is NOT considered open, and its session
+can be loaded a second time into a new buffer.  Narrow window, real
+though: two resumes of the same id within one replay settle delay.  Read
+=agent-org--load-session= and =agent-org--finish-replay= together and
+decide whether =:replay-session-id= should count.
+
+** DONE Three tests, and batch =pop-to-buffer= works
+=generate-buffer= does not exist in Emacs (=generate-new-buffer= does) and the
+first red run said so.  The switch test asserts the outcome, not the
+calls: no =session/load=, no =session/new=, our buffer dead, one
+=acp-shutdown=, and =(window-buffer (selected-window))= being the target
+buffer — =pop-to-buffer= really does work in batch, so there is no need
+to stub it and assert a mock was called.  Suite: 99 -> 102 tests, all green.
+
 * How to check the whole thing
 
 #+begin_src sh
@@ -384,7 +431,7 @@ emacs -Q --batch --eval "(add-to-list 'load-path \"$PWD\")" \
   --eval "(ert-run-tests-batch-and-exit)"
 #+end_src
 
-The suite is 99 tests.  The MiniMax/model ones are
+The suite is 102 tests.  The MiniMax/model ones are
 ~test-agent-org-minimax-provider-present~ (spawns ~mcode acp~, no pin),
 ~test-agent-org-minimax-start-pins-nothing~ (the OpenCode-shaped design may
 not creep back), ~test-agent-org-opencode-provider-present~, the four
