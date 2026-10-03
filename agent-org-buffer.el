@@ -96,12 +96,17 @@ Either way, status text is never written into the chat buffer body."
 (defvar-local agent-org-buffer--status
   (list :provider "agent-org" :state 'idle :message nil :session-id nil)
   "Status plist backing this buffer's header line and metadata block.
-Keys: :provider :state :message :note :session-id :model :mode :project
-:title :used :size :tokens :cost-amount :cost-currency :commands
+Keys: :provider :state :message :note :session-id :model :model-name :mode
+:project :title :used :size :tokens :cost-amount :cost-currency :commands
 :modes-list :config.  STATE is one of `idle', `starting', `loading'
 (session/load replay in flight), `streaming', `ready', `awaiting' or
 `error'.  The list keys hold wire-format alists collected from ACP
 notifications.
+
+`:model' is the wire id (`minimax/MiniMax-M3') and `:model-name' the
+label the agent advertises for it (\"MiniMax M3\"); the bar renders the
+second and falls back to the first, so a display change can never touch
+what gets sent back to the agent.
 
 `:message' is what a non-ready state SAYS (see
 `agent-org-buffer--status-segment'), so it is invisible while Ready.
@@ -201,6 +206,14 @@ Bar height and color scale with the used percentage, like the
           (format "%.2f %s" cents (or (plist-get status :cost-currency)
                                       "")))))))
 
+(defun agent-org-buffer--model-display (status)
+  "Model string to SHOW for STATUS: the agent's label, else the id.
+The id is a wire value — `minimax/MiniMax-M3' is what
+`session/set_config_option' takes — and an agent does not always name the
+model it reports as current, so the id is the fallback rather than nil: a
+status bar that drops the model field reads as \"no model\"."
+  (or (plist-get status :model-name) (plist-get status :model)))
+
 (defun agent-org-buffer--render-header-line ()
   "Render `agent-org-buffer--status' as a header-line string.
 Agent-shell-style fields joined with a single separator; empty fields
@@ -216,7 +229,7 @@ buffer-local status plist; safe to call headless."
                         (propertize (or (plist-get status :provider)
                                         "agent-org")
                                     'face 'bold)
-                        (plist-get status :model)
+                        (agent-org-buffer--model-display status)
                         (plist-get status :mode)
                         (plist-get status :project)
                         (when sid
@@ -304,8 +317,8 @@ With `agent-org-use-header-line' nil, the rendered status is shown via
 `message' instead.  Status never touches the buffer body."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (dolist (key '(:provider :state :message :note :session-id :model :mode
-                         :project :title :used :size :tokens :cost-amount
+      (dolist (key '(:provider :state :message :note :session-id :model :model-name
+                         :mode :project :title :used :size :tokens :cost-amount
                          :cost-currency :commands :modes-list :config))
         (when (plist-member status key)
           (setq agent-org-buffer--status
@@ -418,7 +431,8 @@ conversation.  Drawers whose lists are still unknown are omitted."
               (format ":Session: %s\n"
                       (or (plist-get status :session-id) "unknown"))
               (format ":Mode: %s\n" (or (plist-get status :mode) "unknown"))
-              (format ":Model: %s\n" (or (plist-get status :model) "unknown"))
+              (format ":Model: %s\n"
+                      (or (agent-org-buffer--model-display status) "unknown"))
               (format ":Context: %s\n" context)
               (format ":Cost: %s\n"
                       (or (agent-org-buffer--cost-indicator status) "$0.00"))

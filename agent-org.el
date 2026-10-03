@@ -335,6 +335,21 @@ between releases, so a stale id is a real possibility."
            (agent-org--wire-list
             (map-elt (agent-org--model-option config) 'options))))
 
+(defun agent-org--model-name (config)
+  "The label CONFIG's agent gives its current model, or nil.
+The wire value is an id like `minimax/MiniMax-M3', which is what must be
+sent back in `session/set_config_option' but is not what a person wants
+read to them in a status bar; the advertised option carries the human
+label in `name'.  Nil when the current value is outside the advertised
+list — an agent can report a model it does not offer a name for — and the
+caller then shows the id rather than an empty field."
+  (let* ((option (agent-org--model-option config))
+         (current (map-elt option 'currentValue)))
+    (when current
+      (map-elt (seq-find (lambda (o) (equal (map-elt o 'value) current))
+                         (agent-org--wire-list (map-elt option 'options)))
+               'name))))
+
 (defun agent-org--session-config (session)
   "Return SESSION's configOptions as last reported by the agent.
 The buffer status holds them: it is what the header line and the metadata
@@ -347,10 +362,17 @@ block are rendered from, so a second copy in the session could drift."
   "Show configOptions CONFIG on BUFFER's header line and metadata.
 Shared by the session/new and session/load responses and by a
 `session/set_config_option' answer, so the model shown is always the one
-the agent just agreed to."
+the agent just agreed to.
+
+Both the id and the label are stored, from one read of CONFIG: `:model'
+is the wire value (what tests assert and what a future request would
+send) and `:model-name' is what the bar renders.  Storing only the label
+would leave nothing to send back; storing only the id is the thing this
+pair exists to fix."
   (agent-org-buffer-set-status buffer
     :config config
-    :model (agent-org--model-from-config config)))
+    :model (agent-org--model-from-config config)
+    :model-name (agent-org--model-name config)))
 
 (defun agent-org--set-model-request (session model)
   "Ask SESSION's agent to switch to MODEL, then refresh the header line.
@@ -1405,8 +1427,7 @@ kind is handled here and nothing is delegated to another handler."
           ("config_option_update"
            (let ((config (agent-org--wire-list (map-elt update 'configOptions))))
              (when config
-               (agent-org-buffer-set-status buffer
-                 :config config :model (agent-org--model-from-config config))
+               (agent-org--ingest-config buffer config)
                (agent-org-buffer-refresh-metadata buffer))))
           (_ nil))))))
 

@@ -1721,7 +1721,7 @@ response, so what the top bar shows is what the agent agreed to."
       (with-current-buffer buf
         (should (equal "qmodel-large"
                        (plist-get agent-org-buffer--status :model)))
-        (should (string-match-p "qmodel-large"
+        (should (string-match-p "QModel Large"
                                 (agent-org-buffer--render-header-line))))
       (kill-buffer buf))))
 
@@ -1744,6 +1744,90 @@ matters when lisp calls in."
   "Outside a chat buffer there is no session to reconfigure."
   (with-temp-buffer
     (should-error (agent-org-set-session-model "m") :type 'user-error)))
+
+;;;; Model NAME in the header line (the id is still what the wire wants)
+
+(ert-deftest test-agent-org-header-shows-model-name-not-id ()
+  "The top bar labels the model the way the agent labels it.
+An id such as `minimax/MiniMax-M3' is a wire value: it is what
+`session/set_config_option' must be sent, and `agent-org--model-values'
+checks against it — but a human reading a status bar wants \"MiniMax M3\".
+So the display comes from the advertised option's `name' while `:model'
+keeps the id, because a header that could not tell the two apart could not
+be trusted to show the model actually in force."
+  (ao--capture-wire
+    (let* ((agent-org-session-strategy 'new)
+           (buf (agent-org-start 'qoder)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (ao--drive "session/new"
+                 (ao--config-resp "qmodel-large"
+                  (list (cons "qmodel" "QModel")
+                        (cons "qmodel-large" "QModel Large"))))
+      (with-current-buffer buf
+        (let ((header (agent-org-buffer--render-header-line)))
+          (should (string-match-p "QModel Large" header))
+          (should-not (string-match-p "qmodel-large" header))
+          (should (equal "qmodel-large"
+                         (plist-get agent-org-buffer--status :model)))))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-header-model-name-falls-back-to-id ()
+  "A current model the agent does not name is still shown.
+Agents can report a `currentValue' outside their own advertised list (the
+catalog moves between releases); showing nothing there would read as
+\"no model\", which is a worse lie than the id."
+  (ao--capture-wire
+    (let* ((agent-org-session-strategy 'new)
+           (buf (agent-org-start 'qoder)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (ao--drive "session/new"
+                 (ao--config-resp "ghost-model" (list (cons "qmodel" "QModel"))))
+      (with-current-buffer buf
+        (let ((header (agent-org-buffer--render-header-line)))
+          (should (string-match-p "ghost-model" header))
+          (should (equal "ghost-model"
+                         (plist-get agent-org-buffer--status :model)))))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-metadata-model-line-uses-name ()
+  "The metadata block labels the model like the header does.
+Two renderings of one fact that disagree is how a user starts distrusting
+both, so `:Model:' is the name and the id stays on the wire."
+  (ao--capture-wire
+    (let* ((agent-org-session-strategy 'new)
+           (buf (agent-org-start 'qoder)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (ao--drive "session/new"
+                 (ao--config-resp "qmodel-large"
+                  (list (cons "qmodel-large" "QModel Large"))))
+      (with-current-buffer buf
+        (should (string-match-p "^:Model: +QModel Large" (buffer-string)))
+        (should-not (string-match-p "^:Model: +qmodel-large" (buffer-string))))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-model-name-follows-a-switch ()
+  "After `agent-org-set-session-model' the bar shows the NEW model's name.
+The switch response is the agent's own last word on configOptions, so the
+label is re-read from it rather than remembered from the choice."
+  (ao--capture-wire
+    (let* ((agent-org-session-strategy 'new)
+           (buf (agent-org-start 'qoder)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (ao--drive "session/new"
+                 (ao--config-resp "qmodel"
+                  (list (cons "qmodel" "QModel")
+                        (cons "qmodel-large" "QModel Large"))))
+      (with-current-buffer buf (agent-org-set-session-model "qmodel-large"))
+      (ao--drive "session/set_config_option"
+                 (ao--config-resp "qmodel-large"
+                  (list (cons "qmodel" "QModel")
+                        (cons "qmodel-large" "QModel Large"))))
+      (with-current-buffer buf
+        (should (string-match-p "QModel Large"
+                                (agent-org-buffer--render-header-line)))
+        (should-not (string-match-p "qmodel-large"
+                                    (agent-org-buffer--render-header-line))))
+      (kill-buffer buf))))
 
 ;;;; Command names, following agent-shell
 

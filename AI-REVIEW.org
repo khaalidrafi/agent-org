@@ -510,6 +510,49 @@ not what the line looks like in a real echo area.  Live check: start qoder with
 percentage.  On a slow answer, try =M-x customize-variable agent-org-progress-min-time=
 at 1.0 and confirm the line simply updates less often.
 
+* The header shows the model's /name/, not its id (=agent-org--model-name=)
+
+** TODO Read =agent-org--model-name= and the pair it writes (agent-org.el)
+
+The lookup is one =seq-find= over the advertised options for the value equal to
+=currentValue=, and it returns the option's =name=.  The thing to judge is what
+*not* to do: replacing =:model= with the label would have been one key instead
+of two, and would have left =agent-org--model-values= (which checks the id) and
+the header reading two different things from one word.  =agent-org--ingest-config=
+is the only writer of the pair, and the =config_option_update= notification now
+goes through it too rather than hand-setting =:config= and =:model= — that
+duplicate write is how a name would have gone stale on a mid-turn switch.
+
+** TODO Read =agent-org-buffer--model-display= (agent-org-buffer.el)
+
+=(or :model-name :model)=, used by the header segment /and/ the =:Model:= line of
+the metadata block.  Two renderings of one fact disagreeing is how a user stops
+trusting either, so they share the accessor.  The fallback matters more than the
+lookup: live goose answers with a =provider= option that has no =options= list
+at all (see =ao--fake-session-new-resp=), so =free= has no name to find and the
+bar would otherwise go blank in that segment.
+
+** DONE Four tests, and the one old assertion they had to break
+
+=header-shows-model-name-not-id=, =header-model-name-falls-back-to-id=,
+=metadata-model-line-uses-name= and =model-name-follows-a-switch=.  The first
+asserts the negative too (=should-not= the id on the bar), because "the label is
+present" passes trivially if both are.  =set-session-model-switches-and-updates-header=
+was the pre-existing test that pinned the /id/ onto the header; it now expects
+the label while still checking =:model= for the id — that is the pair contract,
+so the change is the feature rather than collateral damage.  Suite: 112 -> 116
+tests, all green, four files byte-compile warning-free.
+
+** TODO What the suite cannot prove
+
+The mock advertises whatever =ao--config-resp= is handed, so it proves the
+mapping, not that a real agent's =name= field is spelled =name= (OpenCode's
+labels — "OpenCode Zen/MiniMax-M2.7" — were confirmed live when the chooser was
+built; =C-c C-m= and the bar read the same field, so a wrong guess there would
+already have shown up as an empty chooser).  Live check: start opencode, ~C-c
+C-m~, pick one, and read the top bar; it should show the same string the chooser
+showed, with no =opencode/= prefix.
+
 * How to check the whole thing
 
 #+begin_src sh
@@ -519,12 +562,15 @@ emacs -Q --batch --eval "(add-to-list 'load-path \"$PWD\")" \
   --eval "(ert-run-tests-batch-and-exit)"
 #+end_src
 
-The suite is 112 tests.  The MiniMax/model ones are
+The suite is 116 tests.  The MiniMax/model ones are
 ~test-agent-org-minimax-provider-present~ (spawns ~mcode acp~, no pin),
 ~test-agent-org-minimax-start-pins-nothing~ (the OpenCode-shaped design may
 not creep back), ~test-agent-org-opencode-provider-present~, the four
 ~pinned-model-*~ names (which drive the pin through ~ao--with-pinned-provider~
 because no shipped provider pins anything now) and ~set-session-model-*~.  The
+model-/name/ ones are ~test-agent-org-header-shows-model-name-not-id~,
+~…-header-model-name-falls-back-to-id~, ~…-metadata-model-line-uses-name~ and
+~…-model-name-follows-a-switch~.  The
 naming ones are ~test-agent-org-session-command-names-match-agent-shell~,
 ~test-agent-org-every-provider-has-a-start-agent-command~ and
 ~test-agent-org-goose-start-agent-opens-goose~.  The mock

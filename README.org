@@ -83,6 +83,10 @@ NonGNU ELPA.
    Goose ➤ free ➤ auto ➤ agent-org ➤ [20260924_4] ➤ ▁ 5k/128k ➤ Ready
    #+end_example
    (provider ➤ model ➤ mode ➤ project ➤ session id ➤ context usage ➤ status)
+   The model segment is the /name/ the agent advertises ("MiniMax M3"),
+   not the id it takes on the wire (~minimax/MiniMax-M3~); an agent that
+   reports a current model without naming it falls back to the id, since
+   a bar with no model reads as a bar with no model.
    Note: the first ~session/new~ can take tens of seconds while goose
    loads its extensions — the buffer stays on "Starting" meanwhile.
 2. Type at the end of the buffer — no unlocking, no composing step.
@@ -229,6 +233,9 @@ agent-org sends ~session/set_config_option~ for that id and the header
 line's model segment shows the model you are actually on — ~M-x
 agent-org-opencode-start-agent~ then picking a MiniMax id is how you run
 MiniMax /through/ OpenCode, which is not the same thing as MiniMax Code.
+Both the chooser and the header show the agent's own label
+("OpenCode Zen/MiniMax-M2.7"); the id stays behind, which is why ~C-c
+C-m~ can be read without knowing a catalog's naming scheme.
 
 | Keys                      | Effect                                          |
 |---------------------------|-------------------------------------------------|

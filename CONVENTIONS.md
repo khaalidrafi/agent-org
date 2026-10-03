@@ -205,6 +205,17 @@ there is noise and a blanking risk.  The header line at the top is our
 designated status surface and is what the user's eye is on while a session
 streams.
 
+What that surface says is a *label*, never a wire value.  The model segment is
+the `name' the agent advertises for its current model ("MiniMax M3"), not the
+id (`minimax/MiniMax-M3`) that `session/set_config_option' takes — an id is
+what a machine routes on, not what a person reads, and the `C-c C-m' chooser
+already listed labels, so the two agree.  Both live on the status plist
+(`:model-name' to show, `:model' to send) and only
+`agent-org--ingest-config' writes the pair, from one read of `configOptions',
+so a bar cannot drift from the model actually in force.  An agent that reports
+a current value it does not name falls back to the id: an absent model field
+reads as "no model", which is the worse of the two lies.
+
 One trap inside that rule: `agent-org-buffer--status-segment` renders exactly
 **one** status string, and for `starting` and `ready` it renders the *state
 label*, not the `:message`.  So `:message "something went mildly wrong"` is

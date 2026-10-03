@@ -115,6 +115,13 @@ emacs -Q --batch \
 #   `agent-org-set-session-model' (C-c C-m) is the interactive path over the same
 #   advertised list; the model option's id is "model", except goose calls it
 #   "provider".
+# - The header line and `:Model:' show the option's `name' ("MiniMax M3"), never
+#   the id (`minimax/MiniMax-M3'), because an id is a wire value a person is not
+#   reading.  Both are stored (`:model` is still the id, and the only thing
+#   `session/set_config_option' may send) and an unnamed current value falls
+#   back to the id — a bar that drops the model field reads as "no model",
+#   which is the worse lie.  Every writer goes through
+#   `agent-org--ingest-config', so the pair cannot drift apart.
 # - User-facing command names follow the agent-shell package (`~/agent-shell`,
 #   same author, same ACP ground): session-level verbs name their object
 #   (`agent-org-resume-session', `agent-org-set-session-model', matching
