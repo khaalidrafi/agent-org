@@ -122,6 +122,35 @@ model is already a MiniMax model."
       (should (string-match-p "boom" (agent-org-buffer--render-header-line))))
     (kill-buffer buf)))
 
+(ert-deftest test-agent-org-status-note-rides-the-ready-label ()
+  "`:note' is the one thing allowed to qualify a Ready state.  A bare
+`:message' cannot do the job: for `starting'/`ready' the segment renders
+the state LABEL and nothing else (CONVENTIONS.md §6), which is why a
+listing that timed out was reported only in the echo area and read as
+\"the prompt never happens\".  The note rides AFTER the label, so the
+state stays readable, and it is still exactly one segment."
+  (let ((buf (agent-org-buffer-create "note")))
+    (with-current-buffer buf
+      (agent-org-buffer-set-status buf :state 'ready)
+      (should (equal "Ready" (car (agent-org-buffer--status-segment
+                                   agent-org-buffer--status))))
+      (agent-org-buffer-set-status buf :note "new session (listing timed out)")
+      (let ((segment (car (agent-org-buffer--status-segment
+                           agent-org-buffer--status))))
+        (should (string-prefix-p "Ready" segment))
+        (should (string-match-p "listing timed out" segment))
+        ;; one segment, one line
+        (should-not (string-match-p "\n" segment)))
+      ;; an error still wins: a note must not dilute a real failure
+      (agent-org-buffer-set-status buf :state 'error :message "boom")
+      (should (equal "Error: boom" (car (agent-org-buffer--status-segment
+                                         agent-org-buffer--status))))
+      ;; and the note is gone once cleared, not left as trailing noise
+      (agent-org-buffer-set-status buf :state 'ready :note nil)
+      (should (equal "Ready" (car (agent-org-buffer--status-segment
+                                   agent-org-buffer--status)))))
+    (kill-buffer buf)))
+
 ;;;; Streaming (the hot path)
 
 (ert-deftest test-agent-org-buffer-streaming-lifecycle ()
@@ -2169,6 +2198,47 @@ never reach the bug."
       (should-not (agent-org--session-for-buffer buf))
       (should-not (ao--sent-get "session/load"))
       (should (= 1 (length acp-mock-shutdown-clients))))))
+
+(ert-deftest test-agent-org-start-silent-listing-says-why-on-the-header ()
+  "A listing that never answers must not degrade in silence.  The echo
+area note exists but is easy to miss — and after `session/new' the header
+says plain Ready, so the first the user hears of the fallback is that the
+prompt they configured never came.  The reason now sits on the Ready
+segment."
+  (ao--capture-wire
+    (let ((buf (agent-org-start 'goose)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (should ao--list-timer)
+      (ao--time-out)
+      (ao--drive "session/new" '((sessionId . "s-t")))
+      (with-current-buffer buf
+        (should (equal 'ready (plist-get agent-org-buffer--status :state)))
+        (should (string-match-p "timed out"
+                                (plist-get agent-org-buffer--status :note)))
+        (should (string-match-p "timed out"
+                                (car (agent-org-buffer--status-segment
+                                      agent-org-buffer--status)))))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-start-failed-listing-says-why-on-the-header ()
+  "Same channel for an agent that answers `session/list' with an error:
+the failure text is the diagnostic, so it goes on the header too, short
+and on one line however much the agent wrote."
+  (ao--capture-wire
+    (let ((buf (agent-org-start 'qoder)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (let ((entry (ao--sent-get "session/list")))
+        (should entry)
+        (funcall (plist-get entry :on-failure)
+                 nil '((:object (error (code . -32603)
+                                        (message . "boom"))) (:json . "{}"))))
+      (ao--drive "session/new" '((sessionId . "s-f")))
+      (with-current-buffer buf
+        (should (equal 'ready (plist-get agent-org-buffer--status :state)))
+        (let ((note (plist-get agent-org-buffer--status :note)))
+          (should (string-match-p "boom" note))
+          (should-not (string-match-p "\n" note))))
+      (kill-buffer buf))))
 
 (ert-deftest test-agent-org-session-label-shows-when-it-last-spoke ()
   "A candidate for an older session is only usable if you can tell its

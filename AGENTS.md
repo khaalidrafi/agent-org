@@ -96,6 +96,11 @@ emacs -Q --batch \
 #   while Ready.  A real request failure must set `:state 'error' (which
 #   does render its message); a non-failure note that must not steal the
 #   Ready segment goes to the echo area with `message'.  Never the body.
+#   The exception is `:note', which qualifies a Ready label (`Ready (new
+#   session: listing timed out)') because an invisible listing fallback read
+#   as "the prompt never happens".  Set it through `agent-org--note-new-session'
+#   (agent text goes through `agent-org-buffer--label', one line always), never
+#   by reusing `:message'.
 # - Two different things named MiniMax: MiniMax CODE (`mcode', its own ACP
 #   server via `mcode acp', provider id `minimax', pins nothing — its default
 #   model is MiniMax already) and MiniMax MODELS served by another agent

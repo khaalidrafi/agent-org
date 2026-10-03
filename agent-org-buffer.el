@@ -96,12 +96,19 @@ Either way, status text is never written into the chat buffer body."
 (defvar-local agent-org-buffer--status
   (list :provider "agent-org" :state 'idle :message nil :session-id nil)
   "Status plist backing this buffer's header line and metadata block.
-Keys: :provider :state :message :session-id :model :mode :project
+Keys: :provider :state :message :note :session-id :model :mode :project
 :title :used :size :tokens :cost-amount :cost-currency :commands
 :modes-list :config.  STATE is one of `idle', `starting', `loading'
 (session/load replay in flight), `streaming', `ready', `awaiting' or
 `error'.  The list keys hold wire-format alists collected from ACP
-notifications.")
+notifications.
+
+`:message' is what a non-ready state SAYS (see
+`agent-org-buffer--status-segment'), so it is invisible while Ready.
+`:note' is the different thing: one short fact about the session that has
+to survive reaching Ready — why the directory listing gave up, say.  Keep
+it to a line, and to one clause; it is a suffix on a status bar, not a
+log.")
 
 (defun agent-org-buffer--state-label (state)
   "Human-readable label for STATUS state."
@@ -126,10 +133,14 @@ notifications.")
   "Return the single (TEXT . FACE) status segment for STATUS.
 Exactly one status string is ever shown in the header line: generic
 placeholder messages never ride along with the state label, and
-diagnostics (errors) are folded into the single segment."
+diagnostics (errors) are folded into the single segment.  The one
+exception is `:note' on a Ready state: it is a fact that has to outlive
+the handshake (`agent-org-buffer--status'), so it qualifies the label
+instead of replacing it."
   (let* ((state (or (plist-get status :state) 'idle))
          (label (agent-org-buffer--state-label state))
          (message (plist-get status :message))
+         (note (plist-get status :note))
          (face (agent-org-buffer--state-face state)))
     (cons (pcase state
             ('error (if message (format "Error: %s" message) "Error"))
@@ -137,7 +148,10 @@ diagnostics (errors) are folded into the single segment."
                                 (not (string-equal message "Permission required")))
                            message
                          label))
-            ((or 'starting 'ready) label)
+            ((or 'starting 'ready)
+             (if (and note (eq state 'ready))
+                 (format "%s (%s)" label note)
+               label))
             ('loading (or message label))
             ('streaming (or message label))
             (_ label))
@@ -290,7 +304,7 @@ With `agent-org-use-header-line' nil, the rendered status is shown via
 `message' instead.  Status never touches the buffer body."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (dolist (key '(:provider :state :message :session-id :model :mode
+      (dolist (key '(:provider :state :message :note :session-id :model :mode
                          :project :title :used :size :tokens :cost-amount
                          :cost-currency :commands :modes-list :config))
         (when (plist-member status key)

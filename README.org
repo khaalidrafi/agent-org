@@ -143,10 +143,13 @@ Three details make this bearable on agents that are slow, silent or long:
   the requests; nil, the default, reads every page.
 - goose advertises ~list~ and never answers it, so
   ~agent-org-session-list-timeout~ gives up and opens a new session
-  instead, saying so in the echo area.  Starting a chat is never blocked
-  by the feature that shows you the older ones.  On goose that wait is
-  wasted every time, so ~M-x agent-org-goose-start-agent~ followed by
-  ~C-u~ — or ~agent-org-session-strategy~ set to ~new~ — is the quick path.
+  instead, saying so in the echo area /and/ on the header line — the
+  status reads ~Ready (new session: listing timed out after 20s)~ rather
+  than plain ~Ready~, so a fallback never looks like a prompt that failed
+  to appear.  Starting a chat is never blocked by the feature that shows
+  you the older ones.  On goose that wait is wasted every time, so
+  ~M-x agent-org-goose-start-agent~ followed by ~C-u~ — or
+  ~agent-org-session-strategy~ set to ~new~ — is the quick path.
 - An agent that cannot list or cannot ~session/load~ is asked neither:
   the capability check happens on the ~initialize~ response, so it costs
   nothing.

@@ -229,15 +229,28 @@ the provider plist (it already carries ~:model~), letting goose say "do not
 ask me"; it was left out to keep this change small.  Until then: ~C-u~ on
 ~agent-org-start~, or set the strategy to ~new~.
 
-** TODO Check the echo-area fallback is loud enough
+** DONE Check the echo-area fallback is loud enough → it was not, so it moved
 
-Timeout, failed listing and repeated cursor all open a new session with only a
-~message~ to explain it.  The header cannot say more: for ~starting~ and
-~ready~ it renders the state label, never ~:message~ (CONVENTIONS.md §6).
-Question: should the resulting header read ~Ready~ as it does now, or carry
-something like "new — listing timed out"?  Asked in practice: the first report
-of this was a user saying "I'm getting no prompts for sessions at start" — the
-listing had timed out under machine load and nothing on screen said so.
+Timeout, failed listing and repeated cursor all opened a new session with only a
+~message~ to explain it, and the header could not carry it: for ~starting~ and
+~ready~ the segment renders the state label, never ~:message~ (CONVENTIONS.md §6).
+Asked in practice, the first report was "I'm getting no prompts for sessions at
+start" — the listing had timed out under machine load and nothing on screen said
+so.  Fixed by giving the header a key that /is/ allowed to qualify Ready:
+~:note~, rendered as ~Ready (new session: …)~.
+
+** TODO Read the ~:note~ rules (agent-org-buffer.el, agent-org-loader.el)
+
+Three decisions to re-examine, all small and all easy to get wrong later:
+
+- It renders for ~ready~ only.  ~starting~ ignores it, so the bootstrap stays a
+  plain state label; the reason appears the moment there is a session to explain.
+- It is cleared by ~agent-org-loader-begin~, not by ~agent-org-send~ — so the note
+  survives the whole chat.  Right or wrong, that is the choice: "why is this
+  session empty" stays answered, at the cost of a suffix nobody re-reads.
+- Agent-supplied reasons go through ~agent-org-buffer--label~, so a long
+  ~session/list~ error becomes one truncated clause.  Check the width
+  (~agent-org-buffer--label-width~) actually suits a status bar.
 
 * Killing a chat buffer must release its agent process
 
@@ -311,7 +324,7 @@ emacs -Q --batch --eval "(add-to-list 'load-path \"$PWD\")" \
   --eval "(ert-run-tests-batch-and-exit)"
 #+end_src
 
-The suite is 93 tests.  The MiniMax/model ones are
+The suite is 96 tests.  The MiniMax/model ones are
 ~test-agent-org-minimax-provider-present~ (spawns ~mcode acp~, no pin),
 ~test-agent-org-minimax-start-pins-nothing~ (the OpenCode-shaped design may
 not creep back), ~test-agent-org-opencode-provider-present~, the four

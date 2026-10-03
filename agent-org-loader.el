@@ -35,8 +35,11 @@
 (require 'agent-org-buffer)
 
 (defun agent-org-loader-begin (buffer)
-  "Mark BUFFER as connecting.  Called right after session bootstrap starts."
-  (agent-org-buffer-set-status buffer :state 'starting :message "Connecting…"))
+  "Mark BUFFER as connecting.  Called right after session bootstrap starts.
+Clears `:note' too: the reason a previous attempt gave up on the listing
+belongs to that attempt, not to the session now opening."
+  (agent-org-buffer-set-status buffer
+    :state 'starting :message "Connecting…" :note nil))
 
 (cl-defun agent-org-loader-finish (buffer &key session-id message)
   "Mark BUFFER's bootstrap complete and Ready.

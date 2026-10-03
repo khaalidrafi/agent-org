@@ -214,6 +214,20 @@ non-failure note that must not steal the Ready segment — e.g. a provider's
 pinned model not being offered by the agent — goes to the echo area with
 `message` instead.  Never invent a third channel, and never write to the body.
 
+`:note` is not a third channel — it is the header channel, for the one case
+where the echo area demonstrably was not enough.  A `session/list` that timed
+out fell back to `session/new` with nothing on screen but `Ready`, and the user
+reported "I'm getting no prompts for sessions at start": the feature looked
+broken precisely because the degradation was invisible.  So a ready segment may
+qualify its label — `Ready (new session: listing timed out after 20s)` — from
+`agent-org-buffer--status`'s `:note` key.  The rules that keep it honest: it is
+suffix text, never a replacement for the label; it is set by
+`agent-org--note-new-session`, which runs the agent's own words through
+`agent-org-buffer--label` so the header stays one line; and it is cleared by
+`agent-org-loader-begin`, so a reason belongs to the attempt that produced it.
+`starting` deliberately ignores it — during a bootstrap the user is watching the
+state change, not reading footnotes.
+
 ---
 
 ## 7. Read-only protection

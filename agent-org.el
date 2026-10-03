@@ -672,7 +672,21 @@ nothing."
       (message "agent-org: %s did not answer session/list within %ss; starting a new session"
                (agent-org--provider-name session)
                agent-org-session-list-timeout)
+      (agent-org--note-new-session session
+        (format "listing timed out after %ss" agent-org-session-list-timeout))
       (agent-org--session-new session))))
+
+(defun agent-org--note-new-session (session reason)
+  "Say on SESSION's header line why this session is new and not chosen.
+The echo-area `message' these fallback paths also make is easy to miss,
+and the header renders only the label \"Ready\" for a ready state
+(CONVENTIONS.md §6) — so a listing that gave up looked exactly like a
+listing that never ran.  That is how it was first reported, in fact.
+REASON arrives as agent text, so it goes through
+`agent-org-buffer--label': the header is one line, whatever the agent
+chose to say in it."
+  (agent-org-buffer-set-status (plist-get session :buffer)
+    :note (agent-org-buffer--label (format "new session: %s" reason))))
 
 (defun agent-org--read-start-choice (candidates)
   "Complete over CANDIDATES plus `agent-org-new-session-label'.
@@ -734,8 +748,10 @@ in scope when the agent answers, not the one in scope when you asked."
                      (agent-org--choose-start session list-resp strategy)))
      :on-failure (lambda (_err msg)
                    (when (agent-org--settle-listing session)
-                     (message "agent-org: session/list failed (%s); starting a new session"
-                              (agent-org--failure-text msg))
+                     (let ((reason (agent-org--failure-text msg)))
+                       (message "agent-org: session/list failed (%s); starting a new session"
+                                reason)
+                       (agent-org--note-new-session session reason))
                      (agent-org--session-new session))))))
 
 (defun agent-org--read-session-id (list-resp)
