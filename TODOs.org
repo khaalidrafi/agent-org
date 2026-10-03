@@ -115,6 +115,17 @@ CONVENTIONS.md section 6 already mandates header-line-only status with
 Keep it that way: doom-modeline owns the mode line; agent-org renders
 into the header line only.
 
+** DONE Keep Org colors live while streaming
+=agent-org-buffer-start-agent-turn= switched =font-lock-mode= off for the
+whole turn (a speed hack) and =end-agent-turn= switched it back, so every
+Org color vanished mid-response.  Shipped: streaming never touches
+font-lock; only the freshly appended region is fontified, so colors stay
+live at negligible cost.  The one bulk path that still needs suppression
+is =agent-org--render-replay= (hundreds of synchronous insertions), which
+now disables font-lock for the paint run and flushes once at the end.
+=test-agent-org-streaming-never-toggles-font-lock= pins the no-toggle
+invariant.
+
 * TODO Later --- still worth porting, not "basic"
 ** TODO Steer --- inject into the live turn
 agent-shell's =agent-shell-prompt-steer= sends a mid-turn message via

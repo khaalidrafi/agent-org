@@ -50,10 +50,11 @@
 ;; `agent-org-providers.el' for adding new agents.
 ;;
 ;; Everything here is written for a low-spec machine: streaming turns
-;; run with font-lock off, restored history is buffered and painted in
-;; ONE pass (see `agent-org--render-replay'), and the metadata block
-;; above the conversation is only rebuilt when its rendered text
-;; actually changed.
+;; keep font-lock on so Org colors stay live (only the append path
+;; fontifies, never the whole buffer), restored history is buffered and
+;; painted in ONE pass with font-lock suppressed for the bulk run (see
+;; `agent-org--render-replay'), and the metadata block above the
+;; conversation is only rebuilt when its rendered text actually changed.
 
 ;;; Code:
 
@@ -1502,7 +1503,15 @@ to count down to some stride."
     (setf (plist-get session :replay) nil)
     (agent-org--progress-start session "Restoring session history" :total total)
     (with-current-buffer buffer
-      (let ((buffer-undo-list t))
+      (let ((buffer-undo-list t)
+            ;; A replay is the one bulk paint: hundreds of insertions in
+            ;; a synchronous run.  Fontifying each would re-scan the
+            ;; whole buffer per chunk, so suppress during the pass and
+            ;; flush once at the end -- the same one-shot the streaming
+            ;; path deliberately does NOT do.  `font-lock-mode' is
+            ;; buffer-local, so this reads this buffer's own state.
+            (font-lock-was font-lock-mode))
+        (when font-lock-was (font-lock-mode -1))
         (dolist (update updates)
           (agent-org--progress-step session (cl-incf painted))
           (if (equal (map-elt update 'sessionUpdate) "user_message_chunk")
@@ -1513,7 +1522,10 @@ to count down to some stride."
             (setq pending nil)
             (agent-org--buffer-update buffer update)))
         (agent-org--flush-user buffer pending)
-        (agent-org-buffer-end-agent-turn buffer)))
+        (agent-org-buffer-end-agent-turn buffer)
+        (when font-lock-was
+          (font-lock-mode 1)
+          (font-lock-flush))))
     (agent-org--progress-stop session)))
 
 (defun agent-org--on-notification (session notification)

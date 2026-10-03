@@ -360,6 +360,26 @@ Agent turns, thinking or tool calls nobody asked for."
 
 ;;;; Thought chunks
 
+(ert-deftest test-agent-org-streaming-never-toggles-font-lock ()
+  "A streaming turn must not switch `font-lock-mode' off and back on.
+The old per-turn toggle blanked every Org color while a turn ran and
+re-rendered the whole buffer on finish.  Font-lock now stays as the user
+set it: the value is identical before and after a full streamed turn, so
+colors never vanish mid-turn.  In batch font-lock is off, so this cannot
+assert it turns *on* -- the invariant is that we never touch it."
+  (let ((buf (agent-org-buffer-create "flive")))
+    (let ((before (with-current-buffer buf font-lock-mode)))
+      (agent-org-buffer-start-agent-turn buf nil)
+      (with-current-buffer buf
+        (should (eq font-lock-mode before)))
+      (agent-org-buffer-append-chunk buf "some answer" nil)
+      (with-current-buffer buf
+        (should (eq font-lock-mode before)))
+      (agent-org-buffer-end-agent-turn buf)
+      (with-current-buffer buf
+        (should (eq font-lock-mode before))))
+    (kill-buffer buf)))
+
 (ert-deftest test-agent-org-buffer-thought ()
   "Thought chunks are written into a single well-formed :thinking: drawer."
   (let ((buf (agent-org-buffer-create "think")))

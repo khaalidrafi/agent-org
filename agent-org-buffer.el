@@ -22,9 +22,10 @@
 
 ;;; Commentary:
 
-;; Org-native chat buffer: each turn is a level-1 headline, chunks
-;; stream as raw text (font-lock off during streaming for speed),
-;; and Org formatting is applied on turn-complete.
+;; Org-native chat buffer: each turn is a level-1 headline and chunks
+;; stream with font-lock left on, so Org colors stay live throughout the
+;; turn (only the freshly appended region is fontified, never the whole
+;; buffer).
 ;;
 ;; Tool calls render as level-2 `** KEYWORD title [id]' subheadings
 ;; under the current `* Agent' heading, using the per-file keyword set
@@ -684,7 +685,10 @@ or when nothing has been typed yet."
 
 (defun agent-org-buffer-start-agent-turn (buffer _session)
   "Begin a new Agent heading in BUFFER if one isn't already streaming.
-Disable font-lock for the duration of the turn."
+Font-lock stays on for the whole turn so Org colors never vanish while
+streaming.  Incremental cost is kept low by the append path, which only
+ever fontifies the freshly inserted chunk (see
+`agent-org-buffer-append-chunk'), not the whole buffer."
   (with-current-buffer buffer
     (let ((inhibit-read-only t))
       (unless agent-org-buffer--streaming-p
@@ -696,11 +700,6 @@ Disable font-lock for the duration of the turn."
           (move-marker (setq-local agent-org-buffer--turn-anchor
                                    (make-marker))
                        beg))
-        ;; Turning font-lock off for a turn is the single biggest win on
-        ;; a slow machine: without it every chunk re-fontifies the
-        ;; buffer.  Guarded so a replay of many turns pays one
-        ;; mode switch, not one per turn.
-        (when font-lock-mode (font-lock-mode -1))
         ;; turn-local tool state: drop the previous turn's markers so a
         ;; reused toolCallId (e.g. after `resume') cannot rewrite its
         ;; old heading
@@ -713,19 +712,16 @@ Disable font-lock for the duration of the turn."
               agent-org-buffer--thought nil)))))
 
 (defun agent-org-buffer-end-agent-turn (buffer)
-  "Finish the streaming Agent turn in BUFFER, re-enable font-lock."
+  "Finish the streaming Agent turn in BUFFER.
+Font-lock is left as it was -- streaming never turned it off, so there
+is nothing to re-enable here."
   (with-current-buffer buffer
     (let ((inhibit-read-only t))
       (when agent-org-buffer--streaming-p
         (goto-char (point-max))
         (unless (bolp) (insert "\n"))
         (setq agent-org-buffer--streaming-p nil
-              agent-org-buffer--stream-start nil)
-        ;; re-enable only when `start-agent-turn' actually turned it
-        ;; off; a redundant call would re-fontify the whole buffer
-        (unless font-lock-mode
-          (font-lock-mode 1)
-          (font-lock-flush))))))
+              agent-org-buffer--stream-start nil)))))
 
 (defun agent-org-buffer-append-chunk (buffer text session)
   "Append TEXT chunk from agent into BUFFER.
@@ -759,8 +755,8 @@ turn anchor, not the last heading, because `**' tool headings make the
 Agent heading no longer the buffer's last heading.  Fold state is
 driven with `org-fold-region' directly:
 `org-fold-hide-drawer-toggle' validates the org-element cache, which
-is stale while a turn streams with font-lock off, and raises
-\"Not at a drawer\"."
+is stale for the just-streamed region until it is re-fontified, and
+raises \"Not at a drawer\"."
   (with-current-buffer buffer
     (let ((inhibit-read-only t)
           (body (mapconcat #'identity lines "\n")))
