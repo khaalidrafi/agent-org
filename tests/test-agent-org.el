@@ -2322,6 +2322,191 @@ client — and therefore the process it spawned — alive."
         (should-not (memq buf (buffer-list)))
         (should (equal (list client) acp-mock-shutdown-clients))))))
 
+;;;; Killing a chat buffer asks first, because an agent is running
+
+(defun ao--chat-buffer-with-agent ()
+  "A chat buffer whose session holds a live agent process.
+Returns (BUFFER . PROCESS).  The process is a real `sleep': what is under
+test is \"is there a live process to ask about\", and a stub object would
+let the test pass on something that cannot be live."
+  (let* ((pair (ao--make-test-session "killer"))
+         (buf (car pair))
+         (session (cdr pair))
+         (proc (start-process "ao-test-agent" nil
+                             (executable-find "sleep") "120")))
+    (setf (plist-get session :client) (list :mock-client 99 :process proc))
+    (cons buf proc)))
+
+(defmacro ao--answers-kill (&rest body)
+  "Run BODY answering every kill prompt NO, recording the prompts.
+Returns (ANSWER-LIST . PROMPT-TEXTS) — the prompts recorded, so a test
+can assert the wording as well as the refusal."
+  (declare (indent 0))
+  `(let ((ao--prompts nil))
+     (cl-letf (((symbol-function 'yes-or-no-p)
+                (lambda (prompt &rest _)
+                  (push prompt ao--prompts)
+                  nil)))
+       ,@body)
+     (nreverse ao--prompts)))
+
+(defmacro ao--agrees-to-kill (&rest body)
+  "Run BODY answering every kill prompt YES, recording the prompts."
+  (declare (indent 0))
+  `(let ((ao--prompts nil))
+     (cl-letf (((symbol-function 'yes-or-no-p)
+                (lambda (prompt &rest _)
+                  (push prompt ao--prompts)
+                  t)))
+       ,@body)
+     (nreverse ao--prompts)))
+
+(ert-deftest test-agent-org-kill-of-chat-buffer-with-agent-asks ()
+  "Killing a chat buffer whose agent runs asks, like Emacs asks about
+process buffers.  `acp' starts the agent with `:noquery t' and no
+`:buffer', so Emacs' own `process-kill-buffer-query-function' can never
+see it: without a query of ours, `M-x kill-buffer' silently dropped a
+running agent — and the answer NO has to leave the buffer, its session
+and its process all still there."
+  (let* ((pair (ao--chat-buffer-with-agent))
+         (buf (car pair))
+         (proc (cdr pair)))
+    (unwind-protect
+        (let ((prompts (ao--answers-kill (kill-buffer buf))))
+          (should (= 1 (length prompts)))
+          (should (buffer-live-p buf))
+          (should (agent-org--session-for-buffer buf))
+          (should (process-live-p proc)))
+      (delete-process proc)
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-kill-query-wording-names-the-process ()
+  "The prompt says WHICH process, in Emacs' own words.
+`Process <name> is running; kill it? ' is what `kill-buffer' asks about
+a shell or compile buffer; borrowing the sentence is what makes the
+question feel like it belongs to Emacs rather than to a package."
+  (let* ((pair (ao--chat-buffer-with-agent))
+         (buf (car pair))
+         (proc (cdr pair)))
+    (unwind-protect
+        (let ((prompts (ao--answers-kill (kill-buffer buf))))
+          (should (= 1 (length prompts)))
+          (should (string-match-p "\\`Process .* is running; kill it\\? \\'"
+                                  (car prompts)))
+          (should (string-match-p "ao-test-agent" (car prompts))))
+      (delete-process proc)
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-kill-query-yes-kills-and-releases-the-agent ()
+  "YES kills the buffer AND shuts the agent down: the query is a question,
+not a second release path — `agent-org--forget-session' on
+`kill-buffer-hook' is still what deletes the process."
+  (let* ((acp-mock-shutdown-clients nil)
+         (pair (ao--chat-buffer-with-agent))
+         (buf (car pair))
+         (proc (cdr pair))
+         (client (plist-get (agent-org--session-for-buffer buf) :client)))
+    (let ((prompts (ao--agrees-to-kill (kill-buffer buf))))
+      (should (= 1 (length prompts)))
+      (should-not (buffer-live-p buf))
+      (should-not (agent-org--session-for-buffer buf))
+      (should (equal (list client) acp-mock-shutdown-clients)))))
+
+(ert-deftest test-agent-org-kill-query-stays-silent-without-a-live-agent ()
+  "No live process, no question.  A Ready buffer whose agent died
+mid-conversation must still be killable in one keystroke, and every
+buffer with `:client' nil — which is what the offline suite builds —
+would otherwise hang batch tests on a prompt they cannot answer."
+  (let* ((buf (agent-org-buffer-create "quiet"))
+         (session (list :name 'test :client nil :buffer buf
+                        :session-id "sid-q" :streaming nil
+                        :loading nil :replay nil :replay-timer nil
+                        :replay-session-id nil :replay-response nil
+                        :replay-deadline nil)))
+    (agent-org--register-session session)
+    (agent-org-buffer-set-session buf session)
+    (let ((prompts (ao--answers-kill (kill-buffer buf))))
+      (should (zerop (length prompts)))
+      (should-not (buffer-live-p buf)))))
+
+(ert-deftest test-agent-org-kill-query-ignores-a-dead-process ()
+  "A process object that has already exited is not a reason to ask.
+`process-live-p' is the predicate, not `processp': the child of an agent
+that crashed still sits on the client plist until the buffer is killed."
+  (let* ((pair (ao--chat-buffer-with-agent))
+         (buf (car pair))
+         (proc (cdr pair)))
+    (delete-process proc)
+    (let ((prompts (ao--answers-kill (kill-buffer buf))))
+      (should (zerop (length prompts)))
+      (should-not (buffer-live-p buf)))))
+
+(ert-deftest test-agent-org-own-cancels-kill-without-asking ()
+  "The kill agent-org performs on ITS OWN behalf is never a question.
+`agent-org--cancel-open' releases a half-open buffer when the user quits
+the chooser, and `agent-org--show-open-instead' kills the buffer this
+command just opened when the chosen session turns out to be live in
+another window.  Both already have a running agent process attached, so
+an un-bypassed query would ask the user about a buffer they never
+asked to kill — in the middle of a response callback."
+  (let* ((pair (ao--chat-buffer-with-agent))
+         (buf (car pair))
+         (proc (cdr pair))
+         (session (agent-org--session-for-buffer buf)))
+    (unwind-protect
+        (progn
+          (let ((prompts (ao--answers-kill (agent-org--cancel-open session))))
+            (should (zerop (length prompts))))
+          (should-not (buffer-live-p buf))
+          ;; the cancel killed the buffer, so the second path gets a fresh one
+          (let* ((other (ao--chat-buffer-with-agent))
+                 (other-buf (car other))
+                 (other-proc (cdr other))
+                 (ours (ao--chat-buffer-with-agent))
+                 (ours-buf (car ours)))
+            (unwind-protect
+                (let ((prompts (ao--answers-kill
+                                 (agent-org--show-open-instead
+                                  (agent-org--session-for-buffer ours-buf)
+                                  other-buf))))
+                  (should (zerop (length prompts)))
+                  (should-not (buffer-live-p ours-buf))
+                  (should (buffer-live-p other-buf)))
+              (when (process-live-p other-proc)
+                (delete-process other-proc))
+              (when (buffer-live-p other-buf)
+                (kill-buffer other-buf))
+              (when (buffer-live-p ours-buf)
+                (delete-process (cdr ours))
+                (kill-buffer ours-buf)))))
+      (when (process-live-p proc)
+        (delete-process proc))
+      (when (buffer-live-p buf)
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-kill-query-is-buffer-local ()
+  "The question belongs to chat buffers only.  `kill-buffer-query-functions'
+is a global hook, so a chat buffer must not make an ordinary buffer ask
+about a process it has never seen."
+  (let ((buf (generate-new-buffer " *ao-plain-kill*")))
+    (let ((prompts (ao--answers-kill (kill-buffer buf))))
+      (should (zerop (length prompts))))
+    (should-not (buffer-live-p buf))))
+
+(ert-deftest test-agent-org-kill-query-is-registered-not-global ()
+  "The query is installed per buffer by the registry, never on the global
+hook — a package that adds itself to `kill-buffer-query-functions'
+globally has to keep its answer correct for every buffer in Emacs."
+  (should-not (memq 'agent-org--kill-query kill-buffer-query-functions))
+  (let ((buf (agent-org-buffer-create "hooked")))
+    (agent-org--register-session
+     (list :name 'test :client nil :buffer buf :session-id nil
+           :streaming nil :loading nil :replay nil :replay-timer nil
+           :replay-session-id nil :replay-response nil :replay-deadline nil))
+    (should (memq 'agent-org--kill-query
+                  (buffer-local-value 'kill-buffer-query-functions buf)))
+    (kill-buffer buf)))
+
 (ert-deftest test-agent-org-killing-during-a-listing-cancels-the-timeout ()
   "A buffer killed while a `session/list' is in flight must not go on to
 open a session: `agent-org--forget-session' unarms the timeout, and

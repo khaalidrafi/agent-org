@@ -209,6 +209,13 @@ Each entry is a plist:
 Every key is installed by `agent-org--open-session', because `setf' on
 `plist-get' can only mutate a property that already exists.")
 
+(defvar agent-org--inhibit-kill-query nil
+  "Non-nil inside a kill agent-org decided on itself, so `agent-org--kill-query'
+answers without asking.  Dynamically bound by
+`agent-org--kill-buffer-silently' and read by no other path — an
+inhibitor that some third-party buffer code could set is an agent that
+gets killed by accident.")
+
 (defun agent-org--register-session (entry)
   "Add ENTRY to `agent-org--sessions'.
 Installs a buffer-local hook so the entry is dropped when its buffer
@@ -216,7 +223,8 @@ is killed."
   (push entry agent-org--sessions)
   (when-let* ((buf (plist-get entry :buffer)))
     (with-current-buffer buf
-      (add-hook 'kill-buffer-hook #'agent-org--forget-session nil t))))
+      (add-hook 'kill-buffer-hook #'agent-org--forget-session nil t)
+      (add-hook 'kill-buffer-query-functions #'agent-org--kill-query nil t))))
 
 (defun agent-org--forget-session ()
   "Release the current buffer's session: its timers, its agent and its entry.
@@ -265,6 +273,59 @@ load it replaces."
                      buffer)))
             agent-org--sessions))
 
+(defun agent-org--agent-process (session)
+  "The live agent PROCESS behind SESSION, or nil.
+`acp' spawns the agent itself and keeps the process on its client plist
+under `:process'.  It starts it with `:noquery t' and no `:buffer', so
+Emacs' own `process-kill-buffer-query-function' can never find it: as far
+as the editor is concerned a running qoder has no process at all.
+
+A dead child is nil, not a reason to ask — the agent of a session that
+crashed mid-turn leaves the buffer merely unresponsive, and killing it
+needs no consent.
+
+`:process' is read with `plist-get', not `map-elt': acp's client is a
+KEYWORD plist (it does `(map-put! client :process process)'), and
+`map-elt' with the plain symbol `process' matches nothing there — the
+same trap the wire alists do not have, because those keys come from JSON
+and carry no colon."
+  (when-let* ((proc (and session (plist-get (plist-get session :client) :process))))
+    (and (processp proc) (process-live-p proc) proc)))
+
+(defun agent-org--kill-query ()
+  "Ask before killing the current buffer while its agent is running.
+On `kill-buffer-query-functions', installed buffer-locally by
+`agent-org--register-session'; returning nil aborts the kill.  The
+question is Emacs' own, word for word — `Process %s is running; kill it? '
+is what `kill-buffer' asks about a shell or compile buffer, and an
+agent-org chat buffer holds exactly that kind of thing: a child process
+the user did not start by hand and might not remember is alive.
+
+Nothing is released here.  A YES lets the kill proceed and
+`agent-org--forget-session' on `kill-buffer-hook' does the shutdown, so
+there is one release path and it is the one the process-leak fix already
+put under test.  Hook functions run with the target buffer current and
+are documented not to change it, hence no `with-current-buffer'."
+  (or agent-org--inhibit-kill-query
+      (let ((proc (agent-org--agent-process
+                   (agent-org--session-for-buffer (current-buffer)))))
+        (if proc
+            (yes-or-no-p (format "Process %s is running; kill it? " proc))
+          t))))
+
+(defun agent-org--kill-buffer-silently (buffer)
+  "Kill BUFFER with the agent query answered YES in advance.
+For the two kills agent-org performs on its OWN initiative:
+`agent-org--cancel-open' releasing a buffer the user backed out of, and
+`agent-org--show-open-instead' dropping the half-open buffer when the
+session they chose is already live elsewhere.  Both have a running agent
+attached, and asking about a buffer the user never asked to kill — from
+inside an acp response callback, where a quit would be swallowed — is not
+a question, it is a trap."
+  (when (buffer-live-p buffer)
+    (let ((agent-org--inhibit-kill-query t))
+      (kill-buffer buffer))))
+
 (defun agent-org--cancel-open (session)
   "Release SESSION because the user backed out before it ever opened.
 Cancelling a `completing-read' signals `quit', which arrives inside the
@@ -276,9 +337,7 @@ Killing the buffer IS the release: its `kill-buffer-hook' runs
 `agent-org--forget-session', which shuts the agent down and unarms its
 timers.  The echo area is the only channel left once the buffer is gone."
   (message "agent-org: cancelled - no session opened")
-  (let ((buffer (plist-get session :buffer)))
-    (when (buffer-live-p buffer)
-      (kill-buffer buffer))))
+  (agent-org--kill-buffer-silently (plist-get session :buffer)))
 
 (defun agent-org--show-open-instead (session buffer)
   "Raise BUFFER, which already holds the session SESSION was about to open.
@@ -293,7 +352,7 @@ screen."
            (buffer-name buffer))
   (let ((ours (plist-get session :buffer)))
     (when (and (buffer-live-p ours) (not (eq ours buffer)))
-      (kill-buffer ours)))
+      (agent-org--kill-buffer-silently ours)))
   (pop-to-buffer buffer))
 
 (defmacro agent-org--quit-cancels (session &rest body)
