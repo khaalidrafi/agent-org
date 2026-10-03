@@ -40,7 +40,21 @@ MiniMax included; `agent-org-providers' pins one per provider instead.
 
 (fn MODEL)" t)
 (autoload 'agent-org-send "agent-org" "\
-Send the typed prompt at the end of the chat buffer to the agent." t)
+Send the typed prompt at the end of the chat buffer to the agent.
+While a turn is streaming, read a prompt from the minibuffer and queue
+it instead — see `agent-org-queue-when-busy' — and it goes out, FIFO,
+when the running turn ends successfully." t)
+(autoload 'agent-org-queue-view "agent-org" "\
+List the prompts queued for this session, oldest first.
+The listing lives in a read-only ` *agent-org queue*' buffer; the queue
+itself is session state, and `agent-org-queue-remove' drops entries." t)
+(autoload 'agent-org-queue-remove "agent-org" "\
+Drop a queued prompt of this session, chosen by number from the queue." t)
+(autoload 'agent-org-queue-edit "agent-org" "\
+Re-read the most recently queued prompt, replacing it with the edit.
+The old text is the minibuffer default, so RET keeps it and typing
+replaces it.  The edited prompt goes back at the end of the queue, the
+place it came from." t)
 (register-definition-prefixes "agent-org" '("agent-org-"))
 
 

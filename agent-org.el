@@ -205,6 +205,10 @@ Each entry is a plist:
                  phase in flight (a listing, or a `session/load'
                  replay), nil while nothing is being loaded.  See
                  `agent-org--progress-start'.
+  :pending-prompts     - prompts queued while :streaming (FIFO list of
+                 strings), sent one per successful turn end by
+                 `agent-org--drain-queue'.  See
+                 `agent-org-queue-when-busy'.
 
 Every key is installed by `agent-org--open-session', because `setf' on
 `plist-get' can only mutate a property that already exists.")
@@ -644,7 +648,8 @@ been sent yet, so the caller picks `session/new' or `session/load'."
                           :replay-deadline nil
                           :list-state nil
                           :list-timer nil
-                          :progress nil)))
+                          :progress nil
+                          :pending-prompts nil)))
       (agent-org--register-session session)
       (agent-org--subscribe client session)
       (agent-org-buffer-set-session buffer session)
@@ -1611,49 +1616,203 @@ report usage); anything missing is simply left untouched."
 
 ;;;; Sending
 
+(defcustom agent-org-queue-when-busy t
+  "Whether `agent-org-send' queues a prompt while the agent is streaming.
+With nil, a mid-turn send errors \"Agent is still responding\" and the
+typed text stays at the prompt.  The port of agent-shell's prompt queue
+(`agent-shell-prompt-queue.el'): queued prompts go out FIFO as each turn
+ENDS SUCCESSFULLY; a failed turn leaves the queue intact."
+  :type 'boolean
+  :group 'agent-org)
+
+(defun agent-org--queue-message (base session)
+  "Status text BASE with SESSION's pending count appended when nonzero.
+Any previous \" (N queued)\" tail is stripped before recomputing, so
+repeated enqueue/remove passes cannot stack suffixes on one message."
+  (let ((base (replace-regexp-in-string " ([0-9]+ queued)\\'" "" base))
+        (depth (length (plist-get session :pending-prompts))))
+    (if (> depth 0)
+        (format "%s (%d queued)" base depth)
+      base)))
+
+(defun agent-org--queue-refresh (session buffer)
+  "Re-render BUFFER's busy header message for SESSION's queue depth.
+Only a busy header carries the count: once the state is ready the
+message is someone else's business again."
+  (let ((status (buffer-local-value 'agent-org-buffer--status buffer)))
+    (when (memq (plist-get status :state) '(streaming loading))
+      (agent-org-buffer-set-status
+       buffer :message
+       (agent-org--queue-message (or (plist-get status :message)
+                                     "Streaming")
+                                 session)))))
+
+(defun agent-org--read-queued-prompt (&optional default)
+  "Read a prompt to queue from the minibuffer, defaulting to DEFAULT.
+Mid-turn there is no live `* User' heading to type into: the buffer
+freezes it the moment a send starts, and the next one only appears when
+the turn ends.  The minibuffer is therefore the queue's input line."
+  (let ((text (string-trim (read-string "Queue for agent: " nil nil default))))
+    (when (string-empty-p text)
+      (user-error "Empty prompt"))
+    text))
+
+(defun agent-org--queue-enqueue (session buffer text)
+  "Append TEXT to SESSION's pending queue and show the depth in BUFFER."
+  (setf (plist-get session :pending-prompts)
+        (append (plist-get session :pending-prompts) (list text)))
+  (agent-org--queue-refresh session buffer)
+  (message "[agent-org] queued prompt (%d waiting)"
+           (length (plist-get session :pending-prompts))))
+
+(defun agent-org--drain-queue (session buffer)
+  "Send SESSION's next queued prompt into BUFFER, or open a live prompt.
+Reached only from a successful turn end: `agent-org--send-turn''s
+failure callback never drains, so a broken agent is not hammered and the
+queue survives for the user to inspect.  A drained prompt is rendered as
+its own frozen `* User' heading at the end of BUFFER first, exactly like
+a typed one."
+  (let ((prompts (plist-get session :pending-prompts)))
+    (if (null prompts)
+        (agent-org-buffer-insert-prompt buffer)
+      (setf (plist-get session :pending-prompts) (cdr prompts))
+      (agent-org-buffer-insert-user buffer (car prompts))
+      (agent-org--send-turn session buffer (car prompts)))))
+
+(defun agent-org--send-turn (session buffer text)
+  "Put TEXT on the wire as the current turn of SESSION.
+The `* User' heading is already in BUFFER (frozen by
+`agent-org-buffer-read-prompt', or written by
+`agent-org-buffer-insert-user' for a drained queue prompt); this only
+does the busy bookkeeping and installs the two callbacks.  Success ends
+the turn, accounts usage and drains the queue
+(`agent-org--drain-queue'); failure leaves the queue where it is."
+  (with-current-buffer buffer (goto-char (point-max)))
+  (let ((client (plist-get session :client))
+        (sid (plist-get session :session-id)))
+    (setf (plist-get session :streaming) t)
+    (agent-org-buffer-set-status buffer :state 'streaming
+      :message (agent-org--queue-message "Sending…" session))
+    (acp-send-request
+     :client client
+     :request (acp-make-session-prompt-request
+               :session-id sid
+               :prompt (agent-org--make-content-blocks text))
+     :buffer buffer
+     :on-success (lambda (resp)
+                   (setf (plist-get session :streaming) nil)
+                   (agent-org-buffer-end-agent-turn buffer)
+                   (agent-org--record-usage buffer resp)
+                   (agent-org-buffer-set-status buffer :state 'ready)
+                   (agent-org--drain-queue session buffer)
+                   (agent-org-buffer-refresh-metadata buffer))
+     :on-failure (lambda (_err msg)
+                   (setf (plist-get session :streaming) nil)
+                   (agent-org-buffer-end-agent-turn buffer)
+                   (agent-org-buffer-set-status
+                    buffer :state 'error
+                    :message (format "prompt failed: %s"
+                                     (agent-org--failure-text msg)))
+                   (agent-org-buffer-insert-prompt buffer)))))
+
 ;;;###autoload
 (defun agent-org-send ()
-  "Send the typed prompt at the end of the chat buffer to the agent."
+  "Send the typed prompt at the end of the chat buffer to the agent.
+While a turn is streaming, read a prompt from the minibuffer and queue
+it instead — see `agent-org-queue-when-busy' — and it goes out, FIFO,
+when the running turn ends successfully."
   (interactive)
   (let* ((buffer (current-buffer))
          (session (agent-org--session-for-buffer buffer)))
     (unless session
       (user-error "Not an agent-org chat buffer"))
-    (when (plist-get session :streaming)
-      (user-error "Agent is still responding"))
-    ;; a replayed session_info_update already fills :session-id, so the
-    ;; check below cannot cover an in-flight load
-    (when (plist-get session :loading)
-      (user-error "Session history is still loading"))
-    (unless (plist-get session :session-id)
-      (user-error "Session not ready"))
-    (let ((text (agent-org-buffer-read-prompt buffer)))
-      (with-current-buffer buffer (goto-char (point-max)))
-      (let ((client (plist-get session :client))
-            (sid (plist-get session :session-id)))
-        (setf (plist-get session :streaming) t)
-        (agent-org-buffer-set-status buffer :state 'streaming :message "Sending…")
-        (acp-send-request
-         :client client
-         :request (acp-make-session-prompt-request
-                   :session-id sid
-                   :prompt (agent-org--make-content-blocks text))
-         :buffer buffer
-         :on-success (lambda (resp)
-                       (setf (plist-get session :streaming) nil)
-                       (agent-org-buffer-end-agent-turn buffer)
-                       (agent-org--record-usage buffer resp)
-                       (agent-org-buffer-set-status buffer :state 'ready)
-                       (agent-org-buffer-insert-prompt buffer)
-                       (agent-org-buffer-refresh-metadata buffer))
-         :on-failure (lambda (_err msg)
-                       (setf (plist-get session :streaming) nil)
-                       (agent-org-buffer-end-agent-turn buffer)
-                       (agent-org-buffer-set-status
-                        buffer :state 'error
-                        :message (format "prompt failed: %s"
-                                         (agent-org--failure-text msg)))
-                       (agent-org-buffer-insert-prompt buffer)))))))
+    (if (plist-get session :streaming)
+        (progn
+          (unless agent-org-queue-when-busy
+            (user-error "Agent is still responding"))
+          (agent-org--queue-enqueue session buffer
+            (agent-org--read-queued-prompt)))
+      ;; a replayed session_info_update already fills :session-id, so the
+      ;; check below cannot cover an in-flight load
+      (when (plist-get session :loading)
+        (user-error "Session history is still loading"))
+      (unless (plist-get session :session-id)
+        (user-error "Session not ready"))
+      (agent-org--send-turn session buffer
+        (agent-org-buffer-read-prompt buffer)))))
+
+;;;; Queue maintenance commands
+
+(defun agent-org--queue-session-or-error (session prompts)
+  "Explain why SESSION/PROMPTS cannot service a queue command, or nil.
+Two distinct failures, two distinct messages: a non-chat buffer has no
+queue at all, a chat buffer with an empty queue had nothing to remove."
+  (cond
+   ((null session) (user-error "Not an agent-org chat buffer"))
+   ((null prompts) (user-error "Nothing queued"))
+   (t nil)))
+
+;;;###autoload
+(defun agent-org-queue-view ()
+  "List the prompts queued for this session, oldest first.
+The listing lives in a read-only ` *agent-org queue*' buffer; the queue
+itself is session state, and `agent-org-queue-remove' drops entries."
+  (interactive)
+  (let* ((session (agent-org--session-for-buffer (current-buffer)))
+         (prompts (and session (plist-get session :pending-prompts))))
+    (unless session
+      (user-error "Not an agent-org chat buffer"))
+    (if (null prompts)
+        (message "[agent-org] nothing queued for %s"
+                 (or (plist-get session :name) "this session"))
+      (with-current-buffer (get-buffer-create " *agent-org queue*")
+        (special-mode)
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (insert (format "%d prompt(s) queued for %s, sent in this order:\n\n"
+                          (length prompts) (plist-get session :name)))
+          (cl-loop for text in prompts for i from 1
+                   do (insert (format "%d. %s\n\n" i text))))
+        (goto-char (point-min))
+        (pop-to-buffer (current-buffer))))))
+
+;;;###autoload
+(defun agent-org-queue-remove ()
+  "Drop a queued prompt of this session, chosen by number from the queue."
+  (interactive)
+  (let* ((session (agent-org--session-for-buffer (current-buffer)))
+         (prompts (and session (plist-get session :pending-prompts))))
+    (agent-org--queue-session-or-error session prompts)
+    (let* ((candidates (cl-loop for text in prompts for i from 1
+                                collect (cons (format "%d: %s"
+                                                      i
+                                                      (truncate-string-to-width
+                                                       text 60 nil nil "…"))
+                                              i)))
+           (choice (completing-read "Remove queued prompt: "
+                                    candidates nil t))
+           (index (cdr (assoc choice candidates))))
+      (setf (plist-get session :pending-prompts)
+            (seq-remove-at-position prompts (1- index)))
+      (agent-org--queue-refresh session (current-buffer))
+      (message "[agent-org] removed queued prompt %d of %d"
+               index (length prompts)))))
+
+;;;###autoload
+(defun agent-org-queue-edit ()
+  "Re-read the most recently queued prompt, replacing it with the edit.
+The old text is the minibuffer default, so RET keeps it and typing
+replaces it.  The edited prompt goes back at the end of the queue, the
+place it came from."
+  (interactive)
+  (let* ((session (agent-org--session-for-buffer (current-buffer)))
+         (prompts (and session (plist-get session :pending-prompts))))
+    (agent-org--queue-session-or-error session prompts)
+    (let ((text (agent-org--read-queued-prompt (car (last prompts)))))
+      (setf (plist-get session :pending-prompts)
+            (append (butlast prompts) (list text)))
+      (agent-org--queue-refresh session (current-buffer))
+      (message "[agent-org] edited the last queued prompt"))))
 
 (provide 'agent-org)
 ;;; agent-org.el ends here

@@ -8,7 +8,7 @@ it touches.  Everything marked DONE is on this branch with tests in
 tests/test-agent-org.el.
 
 * Basic chat-loop features (this round)
-** TODO Prompt queue --- submit while the agent is still responding
+** DONE Prompt queue --- submit while the agent is still responding
 agent-shell keeps this in =agent-shell-prompt-queue.el=: the queue lives
 in the session state under =:pending-prompts=; =agent-shell--prompt-queue-enqueue=
 stores a prompt typed while busy, and =--process-next= auto-drains it
@@ -21,8 +21,9 @@ Ported to agent-org as:
 - =agent-org-send= enqueues instead of signalling "Agent is still
   responding" while =:streaming=; option =agent-org-queue-when-busy=
   keeps the old hard-error behaviour when nil.
-- Drain only on a *successful* turn end (=agent-org--send-done=); a
-  failed turn leaves the queue intact so nothing hammers a dead agent.
+- Drain only on a *successful* turn end (=agent-org--drain-queue= called
+  from the send success callback); a failed turn leaves the queue intact
+  so nothing hammers a dead agent.
 - =agent-org-queue-view= (transient listing), =agent-org-queue-remove=
   (drop one, completion), =agent-org-queue-edit= (pull the last queued
   prompt back into the minibuffer prompt read).

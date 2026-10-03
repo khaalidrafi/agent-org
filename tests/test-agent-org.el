@@ -649,7 +649,7 @@ place only when the key already exists, so a session missing
                         :session-id "sid-test" :streaming nil
                         :loading nil :replay nil :replay-timer nil
                         :replay-session-id nil :replay-response nil
-                        :replay-deadline nil)))
+                        :replay-deadline nil :pending-prompts nil)))
     (agent-org--register-session session)
     (agent-org-buffer-set-session buf session)
     (cons buf session)))
@@ -711,13 +711,177 @@ place only when the key already exists, so a session missing
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-send-rejects-while-streaming ()
-  "The streaming guard rejects sends while the agent is responding."
+  "With the queue option off, the streaming guard rejects sends."
   (let* ((pair (ao--make-test-session "busy"))
-         (session (cdr pair)))
+         (session (cdr pair))
+         (agent-org-queue-when-busy nil))
     (setf (plist-get session :streaming) t)
     (should-error (with-current-buffer (car pair) (agent-org-send))
                   :type 'user-error)
+    (should-not (plist-get session :pending-prompts))
     (kill-buffer (car pair))))
+
+;;;; Prompt queue (submitting while the agent is still responding)
+
+(defun ao--sent-texts (sent)
+  "The prompt texts of captured send requests in SENT, oldest first.
+Pairs with the `acp-make-session-prompt-request' stub used by the queue
+tests, which hands back the :prompt argument verbatim: a list of the
+plain alists `agent-org--make-content-blocks' builds."
+  (mapcar (lambda (kw) (map-elt (car (plist-get kw :request)) 'text))
+          (reverse sent)))
+
+(ert-deftest test-agent-org-send-queues-while-streaming ()
+  "A send while the agent responds reads from the minibuffer and waits.
+Nothing goes on the wire, the queue keeps FIFO order, and the header
+message grows a pending count."
+  (let* ((pair (ao--make-test-session "q-enq"))
+         (buf (car pair))
+         (session (cdr pair))
+         (sent nil))
+    (setf (plist-get session :streaming) t)
+    (with-current-buffer buf
+      (agent-org-buffer-set-status buf :state 'streaming :message "Sending…")
+      (cl-letf (((symbol-function 'acp-send-request)
+                 (lambda (&rest kw) (push kw sent)))
+                ((symbol-function 'read-string)
+                 (lambda (&rest _) "queued one")))
+        (agent-org-send))
+      (should (equal (list "queued one")
+                     (plist-get session :pending-prompts)))
+      (should (null sent))
+      (should (plist-get session :streaming))
+      (should (string-match-p "1 queued"
+                              (plist-get agent-org-buffer--status :message))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-send-rejects-blank-queue-input ()
+  "A blank queue read is an error and leaves the queue untouched."
+  (let* ((pair (ao--make-test-session "q-blank"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (setf (plist-get session :streaming) t)
+    (with-current-buffer buf
+      (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "   ")))
+        (should-error (agent-org-send) :type 'user-error)
+        (should-not (plist-get session :pending-prompts))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-queue-drains-in-order-on-success ()
+  "Every successful turn end sends the next queued prompt, FIFO.
+The drained text is rendered as its own frozen `* User' heading before
+it goes on the wire; when the queue runs out, the live prompt opens as
+before."
+  (let* ((pair (ao--make-test-session "q-drain"))
+         (buf (car pair))
+         (session (cdr pair))
+         (sent nil)
+         (reads (list "two" "three")))
+    (cl-letf (((symbol-function 'acp-send-request)
+               (lambda (&rest kw) (push kw sent)))
+              ((symbol-function 'acp-make-session-prompt-request)
+               (lambda (&rest a) (plist-get a :prompt)))
+              ((symbol-function 'read-string)
+               (lambda (&rest _) (pop reads))))
+      (with-current-buffer buf
+        (agent-org-buffer-insert-prompt buf)
+        (ao--type "one")
+        (agent-org-send)                       ; real turn
+        (agent-org-send)                       ; queues "two"
+        (agent-org-send))                      ; queues "three"
+      (should (equal '("two" "three") (plist-get session :pending-prompts)))
+      (should (= 1 (length sent)))
+      ;; turn "one" succeeds: "two" is rendered and sent, queue shrinks
+      (funcall (plist-get (nth 0 sent) :on-success) nil)
+      (should (equal '("one" "two") (ao--sent-texts sent)))
+      (should (equal '("three") (plist-get session :pending-prompts)))
+      (should (plist-get session :streaming))
+      (with-current-buffer buf
+        (should (string-match-p "\\* User\n\ntwo" (buffer-string))))
+      ;; turn "two" succeeds: "three" goes out, count drops in the header
+      (funcall (plist-get (car sent) :on-success) nil)
+      (should (equal '("one" "two" "three") (ao--sent-texts sent)))
+      (should-not (plist-get session :pending-prompts))
+      ;; turn "three" succeeds: nothing left, so the live prompt opens
+      (funcall (plist-get (car sent) :on-success) nil)
+      (should (= 3 (length sent)))
+      (should-not (plist-get session :streaming))
+      (with-current-buffer buf
+        (should (agent-org-buffer--open-prompt-p))
+        (should (eq 'ready (plist-get agent-org-buffer--status :state)))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-queue-survives-failed-turn ()
+  "A failed turn does not drain: nothing hammers a dead agent.
+The queue keeps its prompts in order so the user can look at the error
+before deciding; the live prompt still reopens like any failed turn."
+  (let* ((pair (ao--make-test-session "q-fail"))
+         (buf (car pair))
+         (session (cdr pair))
+         (sent nil))
+    (cl-letf (((symbol-function 'acp-send-request)
+               (lambda (&rest kw) (push kw sent)))
+              ((symbol-function 'acp-make-session-prompt-request)
+               (lambda (&rest a) (plist-get a :prompt)))
+              ((symbol-function 'read-string) (lambda (&rest _) "spare")))
+      (with-current-buffer buf
+        (agent-org-buffer-insert-prompt buf)
+        (ao--type "one")
+        (agent-org-send)
+        (agent-org-send))                    ; queues "spare"
+      (funcall (plist-get (car sent) :on-failure) nil "boom")
+      (should (equal '("spare") (plist-get session :pending-prompts)))
+      (should (= 1 (length sent)))
+      (with-current-buffer buf
+        (should (eq 'error (plist-get agent-org-buffer--status :state)))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-queue-remove-drops-chosen ()
+  "`agent-org-queue-remove' drops the entry the user picks by number."
+  (let* ((pair (ao--make-test-session "q-rem"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (setf (plist-get session :pending-prompts) (list "a" "b"))
+    (with-current-buffer buf
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (&rest _) "2: b")))
+        (agent-org-queue-remove))
+      (should (equal '("a") (plist-get session :pending-prompts)))
+      (should-error (progn
+                      (setf (plist-get session :pending-prompts) nil)
+                      (agent-org-queue-remove))
+                    :type 'user-error))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-queue-edit-replaces-last ()
+  "`agent-org-queue-edit' re-reads the last queued prompt with its text
+as the default, keeping queue order."
+  (let* ((pair (ao--make-test-session "q-edit"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (setf (plist-get session :pending-prompts) (list "a" "b"))
+    (with-current-buffer buf
+      (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "b fixed")))
+        (agent-org-queue-edit))
+      (should (equal '("a" "b fixed")
+                     (plist-get session :pending-prompts))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-queue-view-lists-pending ()
+  "`agent-org-queue-view' shows every queued prompt, oldest first."
+  (let* ((pair (ao--make-test-session "q-view"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (setf (plist-get session :pending-prompts) (list "first one" "second"))
+    (with-current-buffer buf
+      (agent-org-queue-view))
+    (let ((shown (get-buffer " *agent-org queue*")))
+      (should shown)
+      (with-current-buffer shown
+        (should (string-match-p "2 prompt" (buffer-string)))
+        (should (apply #'ao--ordered (buffer-string)
+                       (list "1. first one" "2. second")))))
+    (kill-buffer buf)))
 
 (ert-deftest test-agent-org-session-ready-inserts-prompt-once ()
   "`agent-org--session-ready' is idempotent across repeated session updates."
