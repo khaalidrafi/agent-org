@@ -87,9 +87,12 @@ NonGNU ELPA.
    again when that title arrives.  The
    header line is the agent's own report of the session:
    #+begin_example
-   Goose ➤ free ➤ auto ➤ agent-org ➤ [20260924_4] ➤ ▁ 5k/128k ➤ Ready
+   Goose ➤ free ➤ auto ➤ agent-org ➤ ▁ 5k/128k ➤ Ready
    #+end_example
-   (provider ➤ model ➤ mode ➤ project ➤ session id ➤ context usage ➤ status)
+   (provider ➤ model ➤ mode ➤ project ➤ context usage ➤ status)
+   The session id is not on the bar — it lives in the buffer body as a
+   ~:ID:~ property in the top ~:PROPERTIES:~ drawer, readable and
+   selectable like any text.
    The model segment is the /name/ the agent advertises ("MiniMax M3"),
    not the id it takes on the wire (~minimax/MiniMax-M3~); an agent that
    reports a current model without naming it falls back to the id, since
@@ -283,8 +286,8 @@ heading, ~agent-org~ keeps a frozen Org-native metadata section that
 refreshes itself as the session reports new facts:
 
 - a ~:PROPERTIES:~ drawer at the very top, before everything else,
-  carrying the scalars (Provider, Session, Mode, Model, Context,
-  Cost, Tokens),
+  carrying the scalars (Provider, ID — the ACP session id, only once
+  the agent has issued one, Mode, Model, Context, Cost, Tokens),
 - a ~#+TITLE:~ keyword line (provider — session title),
 - ~:COMMANDS:~ (available ~/slash-commands~), ~:MODES:~ and
   ~:CONFIG:~ drawers listing everything the agent advertised.

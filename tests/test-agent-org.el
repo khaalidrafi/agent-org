@@ -210,22 +210,27 @@ still produce a live, distinct buffer rather than clobbering the other."
 ;;;; Header-line status (the "top bar")
 
 (ert-deftest test-agent-org-status-never-pollutes-buffer ()
-  "Status updates change the header line, not the conversation body."
+  "Status updates change the header line; the session id lands in the body.
+The id used to ride the header-line `[sid]' segment; it now belongs to
+the document as a `:ID:' property in the top PROPERTIES drawer, so the
+top bar stays a status bar and the id is copyable/readable in the
+transcript.  The header must not repeat it."
   (let ((buf (agent-org-buffer-create "status")))
     (agent-org-buffer-set-status buf :state 'ready :message "Ready" :session-id "abc123")
+    (agent-org-buffer-refresh-metadata buf)
     (with-current-buffer buf
-      ;; body holds only the #+TITLE metadata line — no headings, no status text
-      (should (string-match-p "\\`#\\+TITLE:" (buffer-string)))
+      ;; the id lands in the body as a drawer property
+      (should (string-match-p "^:ID: abc123$" (buffer-string)))
       (should-not (string-match-p "^\\* " (buffer-string)))
       (should-not (string-match-p "System" (buffer-string)))
       (should-not (string-match-p "begin_comment" (buffer-string)))
-      (should-not (string-match-p "abc123" (buffer-string)))
       ;; status is reflected in the header-line model
       (should (equal (plist-get agent-org-buffer--status :state) 'ready))
       (should (equal (plist-get agent-org-buffer--status :session-id) "abc123"))
+      ;; but the header line no longer carries the id
       (let ((rendered (agent-org-buffer--render-header-line)))
         (should (string-match-p "Ready" rendered))
-        (should (string-match-p "abc123" rendered))))
+        (should-not (string-match-p "abc123" rendered))))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-status-error-renders-error-label ()
@@ -316,7 +321,7 @@ state stays readable, and it is still exactly one segment."
     (with-current-buffer buf
       (should (equal (plist-get session :session-id) "sess-9"))
       (should (equal (plist-get agent-org-buffer--status :state) 'ready))
-      (should (string-match-p ":Session: +sess-9" (buffer-string)))
+      (should (string-match-p ":ID: +sess-9" (buffer-string)))
       ;; no status labels ever land in the body
       (should-not (string-match-p "Ready\\|Starting\\|Connecting" (buffer-string))))
     (kill-buffer buf)))
@@ -1342,7 +1347,12 @@ redirect the load to it instead of replaying."
       (should (string-match-p "\\`:PROPERTIES:" (buffer-string)))
       ;; no heading is used for metadata; conversation owns `* ' lines
       (should-not (string-match-p "Session info" (buffer-string)))
-      (should (string-match-p "^:Session: +sid-x" (buffer-string)))
+      (should (string-match-p "^:ID: +sid-x" (buffer-string)))
+      ;; the id is a drawer property, not a keyword line and not on the
+      ;; header bar; inside the drawer it sits between Provider and Mode
+      (should-not (string-match-p "^#\\+ID:" (buffer-string)))
+      (should (apply #'ao--ordered (buffer-string)
+                     (list ":PROPERTIES:" ":Provider:" ":ID:" ":Mode:")))
       (should (string-match-p "^:Mode: +auto" (buffer-string)))
       (should (string-match-p "^:Model: +gomodel" (buffer-string)))
       (should (string-match-p "^#\\+TITLE: " (buffer-string)))

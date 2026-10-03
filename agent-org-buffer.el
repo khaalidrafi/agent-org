@@ -222,10 +222,14 @@ status bar that drops the model field reads as \"no model\"."
   "Render `agent-org-buffer--status' as a header-line string.
 Agent-shell-style fields joined with a single separator; empty fields
 are dropped so no dangling separators appear.  Pure function of the
-buffer-local status plist; safe to call headless."
+buffer-local status plist; safe to call headless.
+
+The session id is deliberately NOT a segment: it lives in the body's
+PROPERTIES drawer as a `:ID:' property, where it is readable and
+selectable.  A `[sid]' on the bar is clutter that changes once per
+session and says nothing about the session's state."
   (let* ((status agent-org-buffer--status)
-         (seg (agent-org-buffer--status-segment status))
-         (sid (plist-get status :session-id)))
+         (seg (agent-org-buffer--status-segment status)))
     (concat " "
             (mapconcat
              #'identity
@@ -236,12 +240,18 @@ buffer-local status plist; safe to call headless."
                         (agent-org-buffer--model-display status)
                         (plist-get status :mode)
                         (plist-get status :project)
-                        (when sid
-                          (propertize (format "[%s]" sid) 'face 'shadow))
                         (agent-org-buffer--context-indicator status)
                         (agent-org-buffer--cost-indicator status)
                         (propertize (car seg) 'face (cdr seg))))
              " ➤ "))))
+
+;; Defined here rather than in the metadata section below: `buffer-create'
+;; seeds the title block with it, and a use before `defconst' byte-compiles
+;; as a free-variable reference.
+(defconst agent-org-buffer--todo-setup "#+TODO: TODO DOING | DONE CANCELLED"
+  "Per-file keyword set (`org-set-regexps-and-options' reads it from
+the metadata block) backing tool-call headings: pending→TODO,
+in_progress→DOING, completed→DONE, failed→CANCELLED.")
 
 ;;;; Buffer creation
 
@@ -440,11 +450,6 @@ Keys:
 
 ;;;; Session metadata block (Org-native, agent-shell bootstrapping)
 
-(defconst agent-org-buffer--todo-setup "#+TODO: TODO DOING | DONE CANCELLED"
-  "Per-file keyword set (`org-set-regexps-and-options' reads it from
-the metadata block) backing tool-call headings: pending→TODO,
-in_progress→DOING, completed→DONE, failed→CANCELLED.")
-
 (defun agent-org-buffer--tool-keyword (status)
   "Org TODO keyword for ACP tool STATUS (nil/unknown means pending)."
   (pcase status
@@ -487,12 +492,15 @@ does not name, and blanking the field there would lie harder."
 
 (defun agent-org-buffer--render-metadata (status)
   "Render the buffer-top Org metadata block for STATUS (pure).
-The PROPERTIES drawer comes first, carrying the scalars (Provider,
-Session, Mode, Model, Context, Cost, Tokens), then the `#+TITLE:'
-keyword line, then COMMANDS/MODES/CONFIG drawers listing everything
-the agent reported.  No heading: `* ' lines belong to the
-conversation.  Drawers whose lists are still unknown are omitted."
+The PROPERTIES drawer comes first, carrying the scalars (Provider, ID,
+Mode, Model, Context, Cost, Tokens), then the `#+TITLE:' keyword line,
+then COMMANDS/MODES/CONFIG drawers listing everything the agent
+reported.  No heading: `* ' lines belong to the conversation.  Drawers
+whose lists are still unknown are omitted, and so is the `:ID:' line
+until an id exists — a `:ID: unknown' would be a property Org's id
+machinery would choke on, and a lie besides."
   (let* ((provider (or (plist-get status :provider) "agent-org"))
+         (sid (plist-get status :session-id))
          (used (plist-get status :used))
          (size (plist-get status :size))
          (pct (agent-org-buffer--context-percent used size))
@@ -523,8 +531,9 @@ conversation.  Drawers whose lists are still unknown are omitted."
              (concat
               ":PROPERTIES:\n"
               (format ":Provider: %s\n" provider)
-              (format ":Session: %s\n"
-                      (or (plist-get status :session-id) "unknown"))
+              ;; qoder issues a real UUID per session, so this doubles
+              ;; as an Org id-link target once per-heading ids land
+              (if sid (format ":ID: %s\n" sid) "")
               (format ":Mode: %s\n" (or (plist-get status :mode) "unknown"))
               (format ":Model: %s\n"
                       (or (agent-org-buffer--model-display status) "unknown"))
