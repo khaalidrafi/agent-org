@@ -96,22 +96,28 @@ NonGNU ELPA.
    a bar with no model reads as a bar with no model.
    Note: the first ~session/new~ can take tens of seconds while goose
    loads its extensions — the buffer stays on "Starting" meanwhile.
-2. Type at the end of the buffer — no unlocking, no composing step.
-   Once the session is Ready a live =~* User=~ prompt appears: the
-   heading itself is frozen, but the empty line under it is always
-   typeable.  Hit ~C-c C-c~ to send; the typed text freezes in place
-   as your turn and a fresh prompt opens under the reply.  Everything
-   the program writes (headings, agent output, tool calls) is
-   read-only via text properties, so chat history can't be mangled by
-   accident.  The cursor still travels freely over history — you can
-   browse and copy it; typing into frozen text is refused.
+2. Type in the live =~* User=~ box at the end of the buffer — no
+   unlocking, no composing step.  Once the session is Ready the box
+   appears and never goes away: the heading itself is frozen, the body
+   under it is always typeable, mid-turn included (that is where
+   type-ahead goes).  Hit ~C-c C-c~ to send; the draft freezes into its
+   own =~* User=~ heading above the reply and the same empty box stays
+   open for the next message.  Everything the program writes (headings,
+   agent output, tool calls) is read-only via text properties, and turns
+   render /above/ the box, so chat history can't be mangled by accident
+   and a streaming reply never scribbles over what you are typing.  The
+   cursor still travels freely over history — you can browse and copy
+   it; typing into frozen text is refused.
 3. Watch the reply stream under a ~* Agent~ heading; each tool call is
    a ~**~ subheading whose TODO keyword tracks its state (~TODO~ pending
    → ~DOING~ running → ~DONE~ completed / ~CANCELLED~ failed), updated
    in place, while extended thinking accumulates in one folded
    ~:thinking:~ drawer under the same heading.
-   Sending while the agent is still
-   responding is refused (~Agent is still responding~).
+   Sending while the agent is still responding /queues/ the draft
+   (~agent-org-queue-when-busy~, on by default — agent-shell's type-ahead
+   model): queued prompts go out FIFO as each turn ends successfully,
+   and ~agent-org-queue-view~ / ~agent-org-queue-edit~ /
+   ~agent-org-queue-remove~ manage what is waiting.
 
 If the agent asks for permission, the header line shows
 ~… ➤ Awaiting permission~ and the minibuffer offers the agent's

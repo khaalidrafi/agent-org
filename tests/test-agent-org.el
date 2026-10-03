@@ -549,7 +549,9 @@ buffer."
 ;;;; Prompt protection helpers
 
 (ert-deftest test-agent-org-buffer-insert-prompt-idempotent ()
-  "insert-prompt adds one open prompt; repeats and streaming are no-ops."
+  "insert-prompt adds one box; repeats -- streaming included -- are no-ops.
+The box is persistent (agent-shell's model): streaming cannot stack a
+second one, because the open box IS the type-ahead while the turn runs."
   (let ((buf (agent-org-buffer-create "prompt")))
     (with-current-buffer buf
       (agent-org-buffer-insert-prompt buf)
@@ -560,24 +562,38 @@ buffer."
       (should (= 1 (ao--count-substrings "* User"))) ; idempotent
       (setq agent-org-buffer--streaming-p t)
       (agent-org-buffer-insert-prompt buf)
-      (should (= 1 (ao--count-substrings "* User")))) ; no prompt mid-turn
+      (should (= 1 (ao--count-substrings "* User")))) ; the box streams with us
     (kill-buffer buf)))
 
-(ert-deftest test-agent-org-buffer-read-prompt-freezes-typed-text ()
-  "read-prompt returns the typed text and freezes the whole prompt."
+(ert-deftest test-agent-org-buffer-take-draft-empties-box-stays-open ()
+  "take-draft returns the typed text and leaves the box open and empty.
+Sending no longer consumes the prompt heading: the draft is taken out of
+a box that stays at the buffer end, ready for the next message."
   (let ((buf (agent-org-buffer-create "freeze")))
     (with-current-buffer buf
       (agent-org-buffer-insert-prompt buf)
       ;; simulate typing with real self-insert-command
-      (dolist (ch (append "Hello agent" nil))
-        (let ((last-command-event ch))
-          (funcall #'self-insert-command 1)))
-      (should (equal (agent-org-buffer-read-prompt buf) "Hello agent"))
-      ;; after the freeze everything up to point-max is protected
+      (ao--type "Hello agent")
+      (should (equal (agent-org-buffer-take-draft buf) "Hello agent"))
+      (should (= 1 (ao--count-substrings "* User"))) ; no new box, no lost one
+      (should (agent-org-buffer--open-prompt-p))     ; still typeable
+      (should-not (string-match-p "Hello agent" (buffer-string)))
+      ;; the heading stays frozen...
       (should (get-text-property (point-min) 'read-only))
-      (should (get-text-property (1- (point-max)) 'read-only))
-      ;; but the cursor may still travel there
-      (should-not (get-text-property (point-min) 'cursor-intangible)))
+      ;; ...and typing fresh text must not inherit the freeze: the
+      ;; heading's own newlines stay read-only, rear-nonsticky is what
+      ;; keeps a typed draft typeable (open-prompt-p above proves it)
+      )
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-buffer-take-draft-rejects-blank ()
+  "A whitespace-only draft is an error, and the text stays put."
+  (let ((buf (agent-org-buffer-create "blank")))
+    (with-current-buffer buf
+      (agent-org-buffer-insert-prompt buf)
+      (ao--type "   ")
+      (should-error (agent-org-buffer-take-draft buf) :type 'user-error)
+      (should (string-suffix-p "   " (buffer-string))))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-frozen-history-is-navigable ()
@@ -597,18 +613,19 @@ buffer."
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-insert-prompt-escapes-frozen-point ()
-  "With point trapped on frozen text, a new prompt takes point to it."
+  "With point trapped on frozen text, opening a box takes point to it.
+The box-free state this reconstructs is a replay mid-paint: turns render
+at `point-max' until the session is ready and the type-ahead box opens."
   (let ((buf (agent-org-buffer-create "escape")))
     (with-current-buffer buf
-      (agent-org-buffer-insert-prompt buf)
-      (ao--type "Hi")
-      (agent-org-buffer-read-prompt buf) ; as send freezes it
+      (agent-org-buffer-insert-user buf "Hi")
       (agent-org-buffer-append-chunk buf "Hello" (list :buffer buf))
       (agent-org-buffer-end-agent-turn buf)
       (goto-char (point-min))
+      (should (get-text-property (point) 'read-only)) ; trapped
       (agent-org-buffer-insert-prompt buf)
       (should (agent-org-buffer--open-prompt-p))
-      (should (= (point) (point-max))))
+      (should (= (point) (point-max)))) ; rescued into the box
     (kill-buffer buf)))
 
 ;;;; Session registry cleanup
@@ -732,8 +749,10 @@ place only when the key already exists, so a session missing
     (let ((last-command-event ch))
       (funcall #'self-insert-command 1))))
 
-(ert-deftest test-agent-org-send-freezes-prompt-and-streams ()
-  "Typing at the live prompt and sending freezes it; one User heading."
+(ert-deftest test-agent-org-send-echoes-above-a-persistent-box ()
+  "Sending freezes the draft into a User heading above the box; the box
+survives the send open and empty, so the next prompt is typeable at once
+(agent-shell's persistent-prompt UX)."
   (let* ((pair (ao--make-test-session "send"))
          (buf (car pair))
          (session (cdr pair)))
@@ -742,14 +761,41 @@ place only when the key already exists, so a session missing
         (agent-org-buffer-insert-prompt buf)
         (ao--type "Hi")
         (agent-org-send)
-        (should (= 1 (ao--count-substrings "* User")))
-        (should (get-text-property (1- (point-max)) 'read-only)) ; frozen body
+        (should (= 2 (ao--count-substrings "* User"))) ; echo + box
+        (should (string-match-p "\\* User\n\nHi" (buffer-string)))
+        (should (agent-org-buffer--open-prompt-p))     ; box still typeable
         (should (eq 'streaming (plist-get agent-org-buffer--status :state)))
         (should (plist-get session :streaming))))
     (kill-buffer buf)))
 
-(ert-deftest test-agent-org-send-callback-reopens-prompt ()
-  "Ending the turn (success callback) appends a fresh live prompt."
+(ert-deftest test-agent-org-draft-survives-streaming-renders ()
+  "Text typed into the box mid-turn is never rendered over.
+The invariant the anchor exists for: every streaming insert lands BEFORE
+the box, pushing it down instead of scribbling into the draft."
+  (let ((buf (agent-org-buffer-create "typed-ahead")))
+    (with-current-buffer buf
+      (agent-org-buffer-insert-prompt buf)
+      ;; a turn streams while the user is mid-sentence in the box
+      (ao--type "next prompt")
+      (let ((draft-marker (copy-marker (point))))
+        (agent-org-buffer-append-chunk buf "thinking aloud " (list :buffer buf))
+        (agent-org-buffer-append-thought buf "a thought")
+        (agent-org-buffer-insert-tool buf '((title . "shell") (toolCallId . "t1")))
+        (agent-org-buffer-end-agent-turn buf)
+        ;; the draft is intact, still typeable, and point never moved
+        (should (string-match-p "\\* User\n\nnext prompt" (buffer-string)))
+        (should (= (marker-position draft-marker) (point)))
+        (should (agent-org-buffer--open-prompt-p))
+        ;; and the turn rendered strictly above the box, in render order
+        (should (apply #'ao--ordered (buffer-string)
+                       (list "* Agent" "thinking aloud"
+                             "** TODO shell" ":thinking:" "next prompt")))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-send-callback-keeps-the-same-box ()
+  "Ending the turn (success callback) does not stack a second box: the
+type-ahead box was never consumed, so the buffer ends the turn with the
+one it started with."
   (let* ((pair (ao--make-test-session "reopen"))
          (buf (car pair))
          (captured nil))
@@ -760,7 +806,7 @@ place only when the key already exists, so a session missing
         (ao--type "Hi")
         (agent-org-send)
         (funcall (plist-get captured :on-success) nil)
-        (should (= 2 (ao--count-substrings "* User")))
+        (should (= 2 (ao--count-substrings "* User"))) ; echo + box, no third
         (should (agent-org-buffer--open-prompt-p))
         (should (eq 'ready (plist-get agent-org-buffer--status :state)))))
     (kill-buffer buf)))
@@ -804,62 +850,52 @@ plain alists `agent-org--make-content-blocks' builds."
           (reverse sent)))
 
 (ert-deftest test-agent-org-send-queues-while-streaming ()
-  "A send while the agent responds reads from the minibuffer and waits.
+  "A send while the agent responds takes the buffer draft and waits.
 Nothing goes on the wire, the queue keeps FIFO order, and the header
-message grows a pending count."
+message grows a pending count -- all without touching the minibuffer:
+type-ahead, like a TUI agent."
   (let* ((pair (ao--make-test-session "q-enq"))
          (buf (car pair))
          (session (cdr pair))
          (sent nil))
     (setf (plist-get session :streaming) t)
     (with-current-buffer buf
+      (agent-org-buffer-insert-prompt buf)
       (agent-org-buffer-set-status buf :state 'streaming :message "Sending…")
+      (ao--type "queued one")
       (cl-letf (((symbol-function 'acp-send-request)
-                 (lambda (&rest kw) (push kw sent)))
-                ((symbol-function 'read-string)
-                 (lambda (&rest _) "queued one")))
+                 (lambda (&rest kw) (push kw sent))))
         (agent-org-send))
       (should (equal (list "queued one")
                      (plist-get session :pending-prompts)))
       (should (null sent))
       (should (plist-get session :streaming))
+      (should (agent-org-buffer--open-prompt-p)) ; box stays, ready for more
       (should (string-match-p "1 queued"
                               (plist-get agent-org-buffer--status :message))))
     (kill-buffer buf)))
 
-(ert-deftest test-agent-org-send-rejects-blank-queue-input ()
-  "A blank queue read is an error and leaves the queue untouched."
-  (let* ((pair (ao--make-test-session "q-blank"))
-         (buf (car pair))
-         (session (cdr pair)))
-    (setf (plist-get session :streaming) t)
-    (with-current-buffer buf
-      (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "   ")))
-        (should-error (agent-org-send) :type 'user-error)
-        (should-not (plist-get session :pending-prompts))))
-    (kill-buffer buf)))
-
 (ert-deftest test-agent-org-queue-drains-in-order-on-success ()
   "Every successful turn end sends the next queued prompt, FIFO.
-The drained text is rendered as its own frozen `* User' heading before
-it goes on the wire; when the queue runs out, the live prompt opens as
-before."
+The drained text is rendered as its own frozen `* User' heading above
+the still-open type-ahead box before it goes on the wire; the queue
+empties, the box never had to be reopened, and a draft typed while the
+drained turn streams is untouched."
   (let* ((pair (ao--make-test-session "q-drain"))
          (buf (car pair))
          (session (cdr pair))
-         (sent nil)
-         (reads (list "two" "three")))
+         (sent nil))
     (cl-letf (((symbol-function 'acp-send-request)
                (lambda (&rest kw) (push kw sent)))
               ((symbol-function 'acp-make-session-prompt-request)
-               (lambda (&rest a) (plist-get a :prompt)))
-              ((symbol-function 'read-string)
-               (lambda (&rest _) (pop reads))))
+               (lambda (&rest a) (plist-get a :prompt))))
       (with-current-buffer buf
         (agent-org-buffer-insert-prompt buf)
         (ao--type "one")
         (agent-org-send)                       ; real turn
+        (ao--type "two")
         (agent-org-send)                       ; queues "two"
+        (ao--type "three")
         (agent-org-send))                      ; queues "three"
       (should (equal '("two" "three") (plist-get session :pending-prompts)))
       (should (= 1 (length sent)))
@@ -870,23 +906,53 @@ before."
       (should (plist-get session :streaming))
       (with-current-buffer buf
         (should (string-match-p "\\* User\n\ntwo" (buffer-string))))
-      ;; turn "two" succeeds: "three" goes out, count drops in the header
+      ;; turn "two" succeeds: "three" goes out
       (funcall (plist-get (car sent) :on-success) nil)
       (should (equal '("one" "two" "three") (ao--sent-texts sent)))
       (should-not (plist-get session :pending-prompts))
-      ;; turn "three" succeeds: nothing left, so the live prompt opens
+      ;; turn "three" succeeds: nothing left, the one box is still there
       (funcall (plist-get (car sent) :on-success) nil)
       (should (= 3 (length sent)))
       (should-not (plist-get session :streaming))
       (with-current-buffer buf
         (should (agent-org-buffer--open-prompt-p))
+        ;; three frozen echoes plus the single persistent box
+        (should (= 4 (ao--count-substrings "* User")))
         (should (eq 'ready (plist-get agent-org-buffer--status :state)))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-drain-keeps-fresh-draft ()
+  "A draft typed while the drained turn runs is never swallowed by it.
+The drained prompt renders above the box and the box keeps its own text:
+this is where agent-shell sets the draft aside, and here the persistent
+box makes that unnecessary -- but it has to stay true."
+  (let* ((pair (ao--make-test-session "q-draft"))
+         (buf (car pair))
+         (session (cdr pair))
+         (sent nil))
+    (cl-letf (((symbol-function 'acp-send-request)
+               (lambda (&rest kw) (push kw sent)))
+              ((symbol-function 'acp-make-session-prompt-request)
+               (lambda (&rest a) (plist-get a :prompt))))
+      (with-current-buffer buf
+        (agent-org-buffer-insert-prompt buf)
+        (ao--type "one")
+        (agent-org-send)
+        (ao--type "queued")
+        (agent-org-send)                    ; queues "queued"
+        (ao--type "untouched")              ; fresh draft, nothing sent
+        (funcall (plist-get (car sent) :on-success) nil))
+      (should (equal '("one" "queued") (ao--sent-texts sent)))
+      (with-current-buffer buf
+        (should (string-match-p "\\* User\n\nqueued" (buffer-string)))
+        (should (string-suffix-p "untouched" (buffer-string)))))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-queue-survives-failed-turn ()
   "A failed turn does not drain: nothing hammers a dead agent.
 The queue keeps its prompts in order so the user can look at the error
-before deciding; the live prompt still reopens like any failed turn."
+before deciding; the box was never consumed, so there is nothing to
+reopen."
   (let* ((pair (ao--make-test-session "q-fail"))
          (buf (car pair))
          (session (cdr pair))
@@ -894,13 +960,13 @@ before deciding; the live prompt still reopens like any failed turn."
     (cl-letf (((symbol-function 'acp-send-request)
                (lambda (&rest kw) (push kw sent)))
               ((symbol-function 'acp-make-session-prompt-request)
-               (lambda (&rest a) (plist-get a :prompt)))
-              ((symbol-function 'read-string) (lambda (&rest _) "spare")))
+               (lambda (&rest a) (plist-get a :prompt))))
       (with-current-buffer buf
         (agent-org-buffer-insert-prompt buf)
         (ao--type "one")
         (agent-org-send)
-        (agent-org-send))                    ; queues "spare"
+        (ao--type "spare")
+        (agent-org-send))                   ; queues "spare"
       (funcall (plist-get (car sent) :on-failure) nil "boom")
       (should (equal '("spare") (plist-get session :pending-prompts)))
       (should (= 1 (length sent)))
@@ -1010,12 +1076,12 @@ turn that was holding it back is gone."
     (cl-letf (((symbol-function 'acp-send-request)
                (lambda (&rest kw) (push kw sent)))
               ((symbol-function 'acp-make-session-prompt-request)
-               (lambda (&rest a) (plist-get a :prompt)))
-              ((symbol-function 'read-string) (lambda (&rest _) "next")))
+               (lambda (&rest a) (plist-get a :prompt))))
       (with-current-buffer buf
         (agent-org-buffer-insert-prompt buf)
         (ao--type "running")
         (agent-org-send)
+        (ao--type "next")
         (agent-org-send))                  ; queues "next"
       (with-current-buffer buf
         (agent-org-cancel-turn)

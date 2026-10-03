@@ -51,12 +51,15 @@
 ;;     thoughts) is frozen with the `read-only' text property: the
 ;;     cursor may travel over history freely, but editing it signals
 ;;     `text-read-only'.
-;;   - Between turns the buffer ends in a live `* User' prompt: the
-;;     heading is frozen, the body below it stays typeable, so the
-;;     user just types and hits C-c C-c.
+;;   - The buffer always ends in a live `* User' type-ahead box: the
+;;     heading is frozen, the body below it stays typeable at all times,
+;;     mid-turn included — that is where queue input is typed.  Turns
+;;     render above it (see `agent-org-buffer--render-end'), so a
+;;     streaming response never scribbles over a fresh draft.
 ;;   - Status lives in `header-line', never in the buffer body.
-;;   - Font-lock disabled during active streaming for max throughput,
-;;     re-enabled on `agent-org-buffer-end-agent-turn'.
+;;   - Font-lock stays on through streaming; only freshly appended
+;;     regions are re-fontified, never the whole buffer (a bulk paint is
+;;     done once per replay, by `agent-org--render-replay').
 
 ;;; Code:
 
@@ -287,7 +290,17 @@ live prompt at the end is always typeable."
 
 (defvar-local agent-org-buffer--streaming-p nil
   "Non-nil while an agent turn is actively streaming.
-Font-lock is suppressed while this is set.")
+Font-lock stays on the whole time; only the freshly appended region is
+re-fontified, so Org colors never vanish mid-turn.")
+
+(defvar-local agent-org-buffer--prompt-anchor nil
+  "Marker at the start of the trailing live `* User' type-ahead box.
+The box -- its leading separator, its frozen heading and the user's
+unsubmitted draft -- is the last thing in the buffer while a turn
+streams.  Every per-turn render inserts BEFORE this marker (see
+`agent-org-buffer--render-end') rather than at `point-max', so a
+streaming response never scribbles over what the user is typing and the
+box stays typeable.  nil when no box is open.")
 
 (defvar-local agent-org-buffer--stream-start nil
   "Point at the start of the current streaming body.")
@@ -627,14 +640,31 @@ Org tolerates but renders poorly."
           (not (get-text-property (point) 'read-only))))
     (error nil)))
 
+(defun agent-org-buffer--render-end ()
+  "Where the next per-turn block belongs in the current buffer.
+The live type-ahead box's start when one is open -- so a streaming turn
+renders above it and the draft the user is typing survives -- and
+`point-max' otherwise (during a replay, before any box exists).
+Always called with the chat buffer current."
+  (if (and agent-org-buffer--prompt-anchor
+           (marker-buffer agent-org-buffer--prompt-anchor))
+      (marker-position agent-org-buffer--prompt-anchor)
+    (point-max)))
+
 (defun agent-org-buffer-insert-prompt (buffer)
-  "Append a live `* User' prompt to BUFFER unless one is already open.
-Only the heading is frozen; the body stays typeable.  No-op while a
-turn is streaming, so mid-turn session updates never slip a prompt
-into the response."
+  "Ensure BUFFER ends with a live `* User' type-ahead box.
+Only the box's leading separator and its heading are frozen; the body
+stays typeable.  No-op when a box is already open, so every turn
+boundary can call it without stacking boxes.
+
+The box is deliberately never consumed by sending (see
+`agent-org-buffer-take-draft'): it stays at the buffer end while a turn
+streams, which is what lets the user type the next prompt -- or queue
+one -- mid-turn.  Everything the turn renders lands above it, because
+the streaming path appends at `agent-org-buffer--render-end' rather than
+at `point-max'."
   (with-current-buffer buffer
-    (unless (or agent-org-buffer--streaming-p
-                (agent-org-buffer--open-prompt-p))
+    (unless (agent-org-buffer--open-prompt-p)
       (let* ((inhibit-read-only t)
              (orig (point))
              ;; keep point where it was unless it was at the end or
@@ -642,40 +672,55 @@ into the response."
              (stay (or (eq orig (point-max))
                        (get-text-property orig 'read-only))))
         (goto-char (point-max))
-        (let ((beg (point)))
+        (let ((box-beg (point)))
           (agent-org-buffer--separator)
           (insert "* User\n\n")
-          (agent-org-buffer--protect beg (point))
+          (agent-org-buffer--protect box-beg (point))
           ;; typed text after the heading must not inherit the freeze
           (put-text-property (1- (point)) (point)
                              'rear-nonsticky '(read-only))
+          ;; the anchor sits at the box's very start, separator included:
+          ;; rendering above it can never glue text to the heading.
+          ;; Rear-advancing so text inserted AT the anchor position pushes
+          ;; the marker (and the box) down instead of the marker staying
+          ;; behind it, which would make every render land before the last
+          ;; and stream the turn in reverse
+          (let ((anchor (make-marker)))
+            (set-marker-insertion-type anchor t)
+            (move-marker anchor box-beg)
+            (setq-local agent-org-buffer--prompt-anchor anchor))
           (unless stay (goto-char orig)))))))
 
-(defun agent-org-buffer-read-prompt (buffer)
-  "Freeze the live prompt in BUFFER and return its trimmed text.
-Signals a user-error when the buffer does not end in an open prompt
-or when nothing has been typed yet."
+(defun agent-org-buffer-take-draft (buffer)
+  "Return the text typed at BUFFER's live box and empty the box.
+The box itself stays open and last, ready for the next message: this is
+what sending looks like in a chat that keeps a persistent prompt.
+Signals a `user-error' when no box is open or nothing has been typed."
   (with-current-buffer buffer
     (unless (agent-org-buffer--open-prompt-p)
       (user-error "Nothing to send; type your prompt under the User heading"))
-    (save-excursion
-      (goto-char (point-max))
-      (org-back-to-heading t)
-      (let ((beg (point)))
-        (org-end-of-meta-data t)
-        (let ((text (string-trim (buffer-substring-no-properties
-                                  (point) (point-max)))))
-          (when (string-empty-p text)
-            (user-error "Empty prompt"))
-          (agent-org-buffer--protect beg (point-max))
-          text)))))
+    (let ((beg (save-excursion
+                 (goto-char (point-max))
+                 (org-back-to-heading t)
+                 (org-end-of-meta-data t)
+                 (point))))
+      (let ((text (string-trim (buffer-substring-no-properties
+                                beg (point-max)))))
+        (when (string-empty-p text)
+          (user-error "Empty prompt"))
+        (let ((inhibit-read-only t))
+          (delete-region beg (point-max)))
+        (goto-char (point-max))
+        text))))
 
 (defun agent-org-buffer-insert-user (buffer text)
-  "Insert a frozen User heading with TEXT into BUFFER (programmatic use)."
+  "Insert a frozen User heading with TEXT into BUFFER (programmatic use).
+Lands above the live type-ahead box when one is open, so a drained queue
+prompt renders in history order rather than underneath the draft."
   (with-current-buffer buffer
     (let ((inhibit-read-only t))
       (save-excursion
-        (goto-char (point-max))
+        (goto-char (agent-org-buffer--render-end))
         (let ((beg (point)))
           (agent-org-buffer--separator)
           (insert (format "* User\n\n%s\n" text))
@@ -688,40 +733,50 @@ or when nothing has been typed yet."
 Font-lock stays on for the whole turn so Org colors never vanish while
 streaming.  Incremental cost is kept low by the append path, which only
 ever fontifies the freshly inserted chunk (see
-`agent-org-buffer-append-chunk'), not the whole buffer."
+`agent-org-buffer-append-chunk'), not the whole buffer.
+
+The whole mutation runs in `save-excursion': a turn can start while the
+user is mid-sentence in the type-ahead box, and this is one of the
+functions that does so — leaving point on the box's anchor would strand
+it on the heading's leading separator, where the next keystroke inserts
+ABOVE the box instead of inside it."
   (with-current-buffer buffer
-    (let ((inhibit-read-only t))
-      (unless agent-org-buffer--streaming-p
-        (goto-char (point-max))
-        (agent-org-buffer--separator)
-        (let ((beg (point)))
-          (insert "* Agent\n\n")
-          (agent-org-buffer--protect beg (point))
-          (move-marker (setq-local agent-org-buffer--turn-anchor
-                                   (make-marker))
-                       beg))
-        ;; turn-local tool state: drop the previous turn's markers so a
-        ;; reused toolCallId (e.g. after `resume') cannot rewrite its
-        ;; old heading
-        (dolist (e agent-org-buffer--tools)
-          (when-let* ((m (plist-get (cdr e) :marker)))
-            (set-marker m nil)))
-        (setq agent-org-buffer--streaming-p t
-              agent-org-buffer--stream-start (point)
-              agent-org-buffer--tools nil
-              agent-org-buffer--thought nil)))))
+    (save-excursion
+      (let ((inhibit-read-only t))
+        (unless agent-org-buffer--streaming-p
+          (goto-char (agent-org-buffer--render-end))
+          (agent-org-buffer--separator)
+          (let ((beg (point)))
+            (insert "* Agent\n\n")
+            (agent-org-buffer--protect beg (point))
+            (move-marker (setq-local agent-org-buffer--turn-anchor
+                                     (make-marker))
+                         beg))
+          ;; turn-local tool state: drop the previous turn's markers so a
+          ;; reused toolCallId (e.g. after `resume') cannot rewrite its
+          ;; old heading
+          (dolist (e agent-org-buffer--tools)
+            (when-let* ((m (plist-get (cdr e) :marker)))
+              (set-marker m nil)))
+          (setq agent-org-buffer--streaming-p t
+                agent-org-buffer--stream-start (point)
+                agent-org-buffer--tools nil
+                agent-org-buffer--thought nil))))))
 
 (defun agent-org-buffer-end-agent-turn (buffer)
   "Finish the streaming Agent turn in BUFFER.
 Font-lock is left as it was -- streaming never turned it off, so there
-is nothing to re-enable here."
+is nothing to re-enable here.  `save-excursion' for the same reason as
+`agent-org-buffer-start-agent-turn': the turn can end under a live
+draft, and point belongs with the user, not on the box's anchor."
   (with-current-buffer buffer
-    (let ((inhibit-read-only t))
-      (when agent-org-buffer--streaming-p
-        (goto-char (point-max))
-        (unless (bolp) (insert "\n"))
-        (setq agent-org-buffer--streaming-p nil
-              agent-org-buffer--stream-start nil)))))
+    (save-excursion
+      (let ((inhibit-read-only t))
+        (when agent-org-buffer--streaming-p
+          (goto-char (agent-org-buffer--render-end))
+          (unless (bolp) (insert "\n"))
+          (setq agent-org-buffer--streaming-p nil
+                agent-org-buffer--stream-start nil))))))
 
 (defun agent-org-buffer-append-chunk (buffer text session)
   "Append TEXT chunk from agent into BUFFER.
@@ -731,7 +786,7 @@ Starts a new Agent heading if not already streaming."
     (with-current-buffer buffer
       (let ((inhibit-read-only t))
         (save-excursion
-          (goto-char (point-max))
+          (goto-char (agent-org-buffer--render-end))
           (let ((beg (point)))
             (insert text)
             (agent-org-buffer--protect beg (point))))))))
@@ -761,23 +816,22 @@ raises \"Not at a drawer\"."
     (let ((inhibit-read-only t)
           (body (mapconcat #'identity lines "\n")))
       (save-excursion
-        (let* ((region-start (or (agent-org-buffer--live-mark
+        (let* ((turn-end (agent-org-buffer--render-end))
+               (region-start (or (agent-org-buffer--live-mark
                                   agent-org-buffer--turn-anchor)
-                                 (point-max)))
-               ;; While a turn streams it is the last thing in the
-               ;; buffer: `start-agent-turn' appends the `* Agent'
-               ;; heading at point-max and every per-turn insert lands
-               ;; at or after its anchor, so anchor..point-max is
-               ;; exactly this turn — searching forward from the anchor
-               ;; can only hit this turn's drawer.
+                                 turn-end))
+               ;; While a turn streams it runs from its anchor to
+               ;; `turn-end': the live type-ahead box trails it, so the
+               ;; search stops at the box rather than at `point-max'.
+               ;; Without a box (a replay) `turn-end' IS `point-max'.
                (drawer-beg
                 (save-excursion
                   (goto-char region-start)
-                  (when (re-search-forward (format "^:%s:$" name) nil t)
+                  (when (re-search-forward (format "^:%s:$" name) turn-end t)
                     (match-beginning 0)))))
           (if (not drawer-beg)
               (progn
-                (goto-char (point-max))
+                (goto-char turn-end)
                 (agent-org-buffer--separator)
                 (let ((beg (point)))
                   (insert (format ":%s:\n%s\n:end:\n" name body))
@@ -848,10 +902,10 @@ its own — the full detail is the agent's to keep."
   "Point where the next tool heading of the current turn belongs.
 After everything already in the turn, but before the :thinking: drawer
 so tool headings stay grouped above the thought fold.  The turn runs
-from `agent-org-buffer--turn-anchor' to the end of the buffer (while
-streaming it is always the last thing there).  The drawer search runs
-in `save-excursion': a failed `re-search-forward' leaves point
-somewhere in the scanned region, not back at the start.
+from `agent-org-buffer--turn-anchor' to `agent-org-buffer--render-end'
+(the live type-ahead box trails it while a turn streams).  The drawer
+search runs in `save-excursion': a failed `re-search-forward' leaves
+point somewhere in the scanned region, not back at the start.
 
 Take the match's BEGINNING: `re-search-forward' returns its end, which
 for `^:thinking:$' is the newline that ends the marker line — the
@@ -863,13 +917,14 @@ cannot rescue this: it only returns a position, it does not move
 point.)"
   (goto-char (or (agent-org-buffer--live-mark
                   agent-org-buffer--turn-anchor)
-                 (point-max)))
+                 (agent-org-buffer--render-end)))
   (let ((drawer (save-excursion
-                  (when (re-search-forward "^:thinking:$" nil t)
+                  (when (re-search-forward "^:thinking:$"
+                                           (agent-org-buffer--render-end) t)
                     (match-beginning 0)))))
     (if drawer
         (goto-char drawer)
-      (goto-char (point-max)))))
+      (goto-char (agent-org-buffer--render-end)))))
 
 (defun agent-org-buffer-insert-tool (buffer content)
   "Record the tool call or update CONTENT in BUFFER as a `**' subheading.

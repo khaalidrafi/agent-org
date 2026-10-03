@@ -30,6 +30,42 @@ Ported to agent-org as:
 - Header status shows the pending count while busy (convention: header
   line only, never the body, never the mode line).
 
+*** DONE Queue input comes from the buffer, not the minibuffer
+The first port read queue input with =read-string=, because sending froze
+the live =* User= heading and left nowhere to type mid-turn.  That is not
+agent-shell's model: =agent-shell-persistent-prompt-enabled= keeps a
+writable prompt at the buffer end /through/ the turn, so queueing is just
+submitting into a busy shell.
+
+Ported as the persistent type-ahead box:
+- =agent-org-buffer-insert-prompt= opens one =* User= box and sending
+  never consumes it; every turn boundary can call it and the open box
+  makes it a no-op.
+- =agent-org-buffer--prompt-anchor=: a rear-advancing marker at the box's
+  leading separator.  Rear-advancing is the whole trick -- text inserted
+  at the anchor position pushes the marker (and the box) down, so renders
+  keep arriving above it in order instead of stacking in reverse.
+- =agent-org-buffer--render-end=: anchor position, or =point-max= when no
+  box exists (a replay).  Every per-turn render site -- user echo, agent
+  heading, chunks, tool headings, :thinking: drawer -- inserts there
+  instead of =point-max=, so a streaming response never scribbles over a
+  fresh draft.
+- =agent-org-buffer-take-draft= replaces =agent-org-buffer-read-prompt=:
+  read + clear the box, keep it open; a blank draft errors and leaves the
+  typed text in place.
+- =agent-org-send= is now one gesture: idle sends the draft (frozen echo
+  above the box, turn on the wire), streaming queues it.  No minibuffer
+  for new prompts; =agent-org-queue-edit= still uses one (the entry has
+  left the input area).
+- Drained prompts render as frozen echoes above the box, and a draft
+  typed while a drained turn runs is untouched.
+- =start/end-agent-turn= wrapped in =save-excursion=: a render must never
+  park point on the anchor, or the user's next keystroke lands above the
+  box.
+
+Tests: =test-agent-org-draft-survives-streaming-renders= pins the
+invariant; send/queue/cancel suites re-typed for buffer input.
+
 ** DONE Reload --- restart the same session in place
 agent-shell's =agent-shell-reload= (agent-shell.el:1604) is exactly
 "restart with the same =:session-id=": it kills the chat buffer with its

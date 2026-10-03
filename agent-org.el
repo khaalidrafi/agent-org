@@ -1783,11 +1783,13 @@ message is someone else's business again."
                                  session)))))
 
 (defun agent-org--read-queued-prompt (&optional default)
-  "Read a prompt to queue from the minibuffer, defaulting to DEFAULT.
-Mid-turn there is no live `* User' heading to type into: the buffer
-freezes it the moment a send starts, and the next one only appears when
-the turn ends.  The minibuffer is therefore the queue's input line."
-  (let ((text (string-trim (read-string "Queue for agent: " nil nil default))))
+  "Read an EDITED version of a queued prompt from the minibuffer.
+Only `agent-org-queue-edit' uses this any more: new prompts, queued or
+not, are typed into the live `* User' box and taken with
+`agent-org-buffer-take-draft'.  Editing a queue entry is different
+because the entry has left the input area; the old text is the default,
+so RET keeps it and typing replaces it."
+  (let ((text (string-trim (read-string "Edit queued prompt: " nil nil default))))
     (when (string-empty-p text)
       (user-error "Empty prompt"))
     text))
@@ -1805,8 +1807,9 @@ the turn ends.  The minibuffer is therefore the queue's input line."
 Reached only from a successful turn end: `agent-org--send-turn''s
 failure callback never drains, so a broken agent is not hammered and the
 queue survives for the user to inspect.  A drained prompt is rendered as
-its own frozen `* User' heading at the end of BUFFER first, exactly like
-a typed one."
+its own frozen `* User' heading above the live type-ahead box first
+(`agent-org-buffer-insert-user'), exactly like a typed one; the box and
+whatever draft it holds stay untouched."
   (let ((prompts (plist-get session :pending-prompts)))
     (if (null prompts)
         (agent-org-buffer-insert-prompt buffer)
@@ -1856,19 +1859,22 @@ failure is silent: =#+TITLE:= simply keeps the fallback it already had."
 
 (defun agent-org--send-turn (session buffer text)
   "Put TEXT on the wire as the current turn of SESSION.
-The `* User' heading is already in BUFFER (frozen by
-`agent-org-buffer-read-prompt', or written by
-`agent-org-buffer-insert-user' for a drained queue prompt); this only
-does the busy bookkeeping and installs the two callbacks.  Success ends
-the turn, accounts usage and drains the queue
+The frozen `* User' heading for TEXT is already in BUFFER (written above
+the live type-ahead box by `agent-org-send' with
+`agent-org-buffer-insert-user', or by `agent-org--drain-queue' for a
+queued prompt); this only does the busy bookkeeping and installs the two
+callbacks.  Success ends the turn, accounts usage and drains the queue
 (`agent-org--drain-queue'); failure leaves the queue where it is.
 
 Each turn carries an id in SESSION's `:turn'.  `agent-org-cancel-turn'
 retires it locally, and the agent's own (cancelled) answer to the
 request then arrives against a turn id nobody holds — both callbacks
 drop it rather than closing the turn a second time, draining the queue
-twice, or overwriting the buffer's post-cancel state."
-  (with-current-buffer buffer (goto-char (point-max)))
+twice, or overwriting the buffer's post-cancel state.
+
+This function deliberately never moves point: the render primitives
+append at `agent-org-buffer--render-end' themselves, and point must stay
+in the user's type-ahead box across the turn boundary."
   (let* ((client (plist-get session :client))
          (sid (plist-get session :session-id))
          (turn (progn
@@ -1910,10 +1916,14 @@ twice, or overwriting the buffer's post-cancel state."
 
 ;;;###autoload
 (defun agent-org-send ()
-  "Send the typed prompt at the end of the chat buffer to the agent.
-While a turn is streaming, read a prompt from the minibuffer and queue
-it instead — see `agent-org-queue-when-busy' — and it goes out, FIFO,
-when the running turn ends successfully."
+  "Send what is typed in the live `* User' box to the agent.
+Idle, the draft becomes a frozen User heading above the box and goes on
+the wire; the box stays open, so the next prompt can be typed right away.
+While a turn streams the same act merely queues the draft -- see
+`agent-org-queue-when-busy' -- and it goes out, FIFO, when the running
+turn ends successfully.  This type-ahead model is agent-shell's: the
+prompt is always in the buffer, never in the minibuffer, so watching a
+turn and preparing the next message happen in the same window."
   (interactive)
   (let* ((buffer (current-buffer))
          (session (agent-org--session-for-buffer buffer)))
@@ -1924,15 +1934,18 @@ when the running turn ends successfully."
           (unless agent-org-queue-when-busy
             (user-error "Agent is still responding"))
           (agent-org--queue-enqueue session buffer
-            (agent-org--read-queued-prompt)))
+            (agent-org-buffer-take-draft buffer)))
       ;; a replayed session_info_update already fills :session-id, so the
       ;; check below cannot cover an in-flight load
       (when (plist-get session :loading)
         (user-error "Session history is still loading"))
       (unless (plist-get session :session-id)
         (user-error "Session not ready"))
-      (agent-org--send-turn session buffer
-        (agent-org-buffer-read-prompt buffer)))))
+      ;; take-draft first: a user-error from an empty box leaves the
+      ;; buffer untouched, and the checks above ran before anything moved
+      (let ((text (agent-org-buffer-take-draft buffer)))
+        (agent-org-buffer-insert-user buffer text)
+        (agent-org--send-turn session buffer text)))))
 
 ;;;; Queue maintenance commands
 
