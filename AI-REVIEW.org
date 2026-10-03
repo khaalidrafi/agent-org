@@ -264,10 +264,9 @@ real ~qoder~ children, ~100 MB each) on a 4 GB machine at load average 16 — th
 thrash that made the ~session/list~ timeout fire during ordinary use.
 
 Question for you: is ~kill-buffer~ the right place at all, or should the buffer
-/ask/ first ("agent is running, kill it?")?  agent-shell does not ask; it kills
-its bootstrapping shell when you cancel a selection.  Note also that Emacs' own
-confirmation never fires here, because the process is attached to ~acp~'s buffer,
-not the chat buffer.
+/ask/ first ("agent is running, kill it?")?  ANSWERED (2026-10-04): it asks — see
+"A chat buffer asks before it dies" below.  The release path stayed exactly as
+described here; the query sits in front of it and releases nothing.
 
 ** TODO Read the second lock in =agent-org--list-timeout=
 
@@ -388,7 +387,7 @@ window instead is arguably the wrong answer for it.  The counter-argument
 in the code is that a second client on one session id is not a supported
 shape at all, so the explicit request cannot be honoured anyway.
 
-** TODO The switch kills a buffer without asking
+** DONE The switch kills a buffer without asking
 =agent-org--show-open-instead= kills the half-open buffer to release the
 agent process it spawned (the only release path is the kill-hook), then
 pops the target.  That kill is silent.  It destroys no conversation — the
@@ -396,6 +395,20 @@ buffer never got a session — but it does throw away whatever
 =#+TITLE=/drawer block had been painted.  This is the same question the
 kill-buffer TODO above asks; if you add a confirmation, add it to both
 paths, not here alone.
+
+RESOLVED the other way, deliberately: the confirmation went on the USER's
+kill (=kill-buffer~, =C-x k~=), and every kill agent-org performs on its own
+stays silent — =agent-org--show-open-instead=, =agent-org--cancel-open= and
+=agent-org-reload= all call =agent-org--kill-buffer-silently=, which binds
+=agent-org--inhibit-kill-query=.  They run inside acp response callbacks, where
+a prompt is not a question but a second way for the gesture to fail (see
+[[Cancelling the session prompt must not strand a buffer]] for why a callback
+must never block on the user).  Judge whether =agent-org-reload= belongs in that
+list: it is user-initiated, and while the agent is responding it has already
+asked its own question (=Agent is responding.  Reload anyway?=) before the
+silent kill — but when the turn is idle it kills and re-opens with no prompt at
+all, which is arguably the one place a person would want to hear "an agent is
+running behind this buffer".
 
 ** DONE =(open)= lives inside the title column, not after the id
 Marking a row after the id would have broken "the id is always last
@@ -621,6 +634,94 @@ is the release path from the earlier unit doing its job.  Still to see by hand: 
 /title/ rename in a real qoder chat after the first turn, because that title is
 free text and only a live one tests the flattening for real.
 
+* A chat buffer asks before it dies (=agent-org--kill-query=)
+
+** TODO Read the reader: an acp client is an ALIST that looks like a plist
+
+This is the bug the offline suite could not see.  =acp-make-client= returns
+=(list (cons :process nil) (cons :command ...) ...)= (acp.el:90) and fills it
+with =map-put!=, which for a list is the /alist/ operation — so the keys carry
+colons and the container is a list, and it reads exactly like a keyword plist
+until you try to read it as one.  =plist-get= walked it, matched nothing and
+answered nil on a /Ready/ session with a live =goose acp= child sitting in the
+client.  =map-elt= with the same keyword key returned
+=#<process acp-client(goose)-1>=.  acp itself reads it that way
+(=acp--client-started-p=, acp.el:108).
+
+The reason it survived 156 green tests is the /mock/: =tests/acp-mock.el= used
+to hand out =(list :mock-client N)= — a genuine flat plist, so the wrong reader
+worked in the suite and failed in the only environment that matters.  It now
+builds the dotted-pair shape, and a mutation check confirms the line holds: put
+the =plist-get= reader back and three kill tests fail
+(~…kill-of-chat-buffer-with-agent-asks~, ~…kill-query-wording-names-the-process~,
+~…kill-query-yes-kills-and-releases-the-agent~); with =map-elt= the suite is
+156/156.
+
+Worth generalising, because it is the shape of a whole class of stub bugs: a mock
+must mirror the dependency's /data shape/, not merely its key names, or the suite
+is testing the stub.
+
+** TODO Read who asks and who never does
+
+The query is on =kill-buffer-query-functions= /buffer-locally/, installed beside
+the kill-hook by =agent-org--register-session=, so a non-chat buffer is never
+asked and the global hook stays untouched.  Three answers mean /yes/: no session
+registered, no process, or a process that already exited (a crashed agent leaves
+a dead buffer, and consent to kill that is friction).  Everything else that
+kills — =agent-org--cancel-open=, =agent-org--show-open-instead=,
+=agent-org-reload= — goes through =agent-org--kill-buffer-silently=, which binds
+=agent-org--inhibit-kill-query=.  Judge that list, and in particular
+=agent-org-reload=: it is user-initiated, and its kill is silent.
+
+** DONE Read the wording: it is Emacs' own question
+
+=Process %s is running; kill it? = is the string =kill-buffer= uses for a
+=~*shell*~= or compile buffer, so a chat buffer now asks the same question about
+the same kind of object.  Emacs never asks it here by itself: =acp= starts the
+agent with ~:noquery t~ and no process buffer, so
+=process-kill-buffer-query-function= has nothing to find.  The test pins the
+wording with a regexp (including the escaped ~\\?~ — an unescaped ~=?~ is a
+quantifier, and the assertion then matches things it should not) and asserts the
+process /name/ appears, because an unnamed "a process is running" is not
+actionable.
+
+** DONE …and then it was checked live (2026-10-04, by the agent)
+
+A real =goose acp= session at Ready, the first probe's =plist-get= reader
+replaced by =map-elt=:
+
+#+begin_example
+READY    : yes
+MAPELT   : #<process acp-client(goose)-1>
+AO       : #<process acp-client(goose)-1>
+LOCALHOOK: (agent-org--kill-query t)
+REFUSE   : killed=nil live=t
+PROMPTS  : ("Process acp-client(goose)-1 is running; kill it? ")
+ALLOW    : killed=t live=nil
+REGISTRY : 0 session(s)
+SURVIVORS: nil
+#+end_example
+
+Three things that only a live agent can show: the process is really in the
+client (the first probe read =nil= from a Ready session and so asked nothing /and/
+killed nothing — both of its kill branches were skipped, and the chat it opened
+outlived the probe), the question names it, and the =t= in =LOCALHOOK= — that is
+=add-hook='s LOCAL argument leaving the default value in force, so Emacs still
+asks about any other process attached to the buffer.  =SURVIVORS: nil= after the
+YES is the kill-hook's =acp-shutdown= doing its job.  =ps= now shows no
+=goose acp= child at all, from either probe.
+
+Note the /name/: =acp-client(goose)-1=, not =goose acp=.  ~acp~ names the
+process itself, so the question quotes acp's label for the child.  If that ever
+reads badly to you, the fix belongs in =acp=, not here.
+
+** TODO Read what the query deliberately does NOT do
+
+It releases nothing.  A YES lets the kill proceed, and the kill-hook's
+=agent-org--forget-session= does the =acp-shutdown= — one release path, already
+under test by the earlier unit.  A second shutdown here would be a second owner
+of the same process.
+
 * How to check the whole thing
 
 #+begin_src sh
@@ -630,7 +731,7 @@ emacs -Q --batch --eval "(add-to-list 'load-path \"$PWD\")" \
   --eval "(ert-run-tests-batch-and-exit)"
 #+end_src
 
-The suite is 122 tests.  The MiniMax/model ones are
+The suite is 156 tests.  The MiniMax/model ones are
 ~test-agent-org-minimax-provider-present~ (spawns ~mcode acp~, no pin),
 ~test-agent-org-minimax-start-pins-nothing~ (the OpenCode-shaped design may
 not creep back), ~test-agent-org-opencode-provider-present~, the four
@@ -661,11 +762,20 @@ chooser), ~ao--list-pages~ (the cursors actually sent) and ~ao--time-out~
 (fire the ~agent-org--list-timeout~ timer the capture stored).
 
 The kill/release ones are ~test-agent-org-killing-the-chat-buffer-shuts-the-
-agent-down~ and ~…-killing-during-a-listing-cancels-the-timeout~.  They need
-~tests/acp-mock.el~ to hand out a client that can be /identified/
-(~acp-make-client~ returns a counted object, ~acp-shutdown~ records into
-~acp-mock-shutdown-clients~), because "the right client was shut down" is the
-assertion.
+agent-down~ and ~…-killing-during-a-listing-cancels-the-timeout~, plus the eight
+ask-before-you-kill ones (~…-kill-of-chat-buffer-with-agent-asks~,
+~…-kill-query-wording-names-the-process~,
+~…-kill-query-yes-kills-and-releases-the-agent~,
+~…-kill-query-stays-silent-without-a-live-agent~, ~…-ignores-a-dead-process~,
+~…-own-cancels-kill-without-asking~, ~…-kill-query-is-buffer-local~,
+~…-kill-query-is-registered-not-global~).  They need ~tests/acp-mock.el~ to hand
+out a client that can be /identified/ (~acp-make-client~ returns a counted
+object, ~acp-shutdown~ records into ~acp-mock-shutdown-clients~) /and/ shaped
+like the real one — dotted keyword pairs, see the section above — because "the
+right client was shut down" and "there was a live process to ask about" are both
+assertions about that object.  The ask ones attach a real ~sleep~ child to the
+session's client and mock ~yes-or-no-p~ (~ao--answers-kill~ /
+~ao--agrees-to-kill~), so the prompt text is captured rather than displayed.
 
 The loading-report ones are ~test-agent-org-progress-arms-no-timer~,
 ~…-throttles-the-echo-area~ (one hour = exactly one line, 0 = twenty-plus),

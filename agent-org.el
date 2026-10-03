@@ -292,21 +292,26 @@ load it replaces."
 
 (defun agent-org--agent-process (session)
   "The live agent PROCESS behind SESSION, or nil.
-`acp' spawns the agent itself and keeps the process on its client plist
-under `:process'.  It starts it with `:noquery t' and no `:buffer', so
-Emacs' own `process-kill-buffer-query-function' can never find it: as far
-as the editor is concerned a running qoder has no process at all.
+`acp' spawns the agent itself and keeps the process on its client under
+`:process'.  It starts it with `:noquery t' and no `:buffer', so Emacs'
+own `process-kill-buffer-query-function' can never find it: as far as the
+editor is concerned a running qoder has no process at all.
 
 A dead child is nil, not a reason to ask — the agent of a session that
 crashed mid-turn leaves the buffer merely unresponsive, and killing it
 needs no consent.
 
-`:process' is read with `plist-get', not `map-elt': acp's client is a
-KEYWORD plist (it does `(map-put! client :process process)'), and
-`map-elt' with the plain symbol `process' matches nothing there — the
-same trap the wire alists do not have, because those keys come from JSON
-and carry no colon."
-  (when-let* ((proc (and session (plist-get (plist-get session :client) :process))))
+Read it with `map-elt' and the KEYWORD key, exactly as acp's own
+`acp--client-started-p' does (acp.el).  The client LOOKS like a plist and
+is not one: `acp-make-client' returns `(list (cons :process nil) ...)', an
+ALIST of dotted keyword pairs, mutated by `map-put!' which for a list is
+an alist operation.  So `plist-get' walks it as a flat plist, matches
+nothing and answers nil — silently, on a Ready session, with a live
+process sitting right there (measured live against `goose acp': MAP-ELT
+gave `#<process acp-client(goose)-1>', PLIST-GET gave nil).  A fixture
+flat enough for `plist-get' to work hides that, hence `acp-make-client'
+in tests/acp-mock.el builds the same SHAPE, not merely the same keys."
+  (when-let* ((proc (and session (map-elt (plist-get session :client) :process))))
     (and (processp proc) (process-live-p proc) proc)))
 
 (defun agent-org--kill-query ()

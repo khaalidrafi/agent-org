@@ -122,10 +122,13 @@ emacs -Q --batch \
 #   back to the id — a bar that drops the model field reads as "no model",
 #   which is the worse lie.  Every writer goes through
 #   `agent-org--ingest-config', so the pair cannot drift apart.
-# - A chat buffer is named for its session: `*agent-org: <title> [sid]*'
+# - A chat buffer is named for its session: `*agent-org: <project> <title> [sid]*'
 #   (`agent-org-buffer--wanted-name'), applied by `agent-org-buffer-set-status'
-#   ONLY on an update carrying `:title' or `:session-id' — those two facts are all
-#   a name is made of, so a per-chunk usage update builds no string.  The provider
+#   ONLY on an update carrying `:title' or `:session-id' — those are the facts a
+#   name is made of (`:project' is fixed at creation, from the session cwd), so a
+#   per-chunk usage update builds no string.  `agent-org-buffer-create' applies the
+#   name itself, once the status (and therefore the project) exists, so even the
+#   handshake buffer is findable by project.  The provider
 #   stands in for a title that has not arrived (as it does for `#+TITLE') and
 #   qoder's `session_info_update' renames the buffer later.  The equality test in
 #   `agent-org-buffer--apply-name' is not an optimisation: `generate-new-buffer-name'
@@ -133,6 +136,8 @@ emacs -Q --batch \
 #   `T [s]<2><3><4>'.  Titles are agent free text — through `agent-org-buffer--label'
 #   (a newline in a buffer name breaks completion).  `rename-buffer' with
 #   RENAME-ALL-PROCESSES nil keeps the acp process name readable in list-processes.
+#   The id is /also/ an Org `:ID:' property, but never a header-line segment: the
+#   bar carries state, the name carries identity.
 # - User-facing command names follow the agent-shell package (`~/agent-shell`,
 #   same author, same ACP ground): session-level verbs name their object
 #   (`agent-org-resume-session', `agent-org-set-session-model', matching
@@ -196,6 +201,30 @@ emacs -Q --batch \
 #   BEHAVIOUR in tests, not the `cancel-timer' call: `ao--capture-wire' stubs
 #   `cancel-timer', so firing the stored timer is how a test says "the deadline
 #   arrived".
+# - Killing a chat buffer ASKS first while its agent is alive: `agent-org--kill-query'
+#   on `kill-buffer-query-functions' (buffer-local, installed beside the kill-hook by
+#   `agent-org--register-session'), wording copied from Emacs' own `Process %s is
+#   running; kill it? ' — Emacs never asks by itself because acp starts the agent
+#   with `:noquery t' and no buffer, so `process-kill-buffer-query-function' cannot
+#   see it.  A dead child answers YES (crashed agent, no consent needed) and so does
+#   no session at all.  The query releases nothing — the kill-hook above owns the
+#   shutdown.  So every kill agent-org performs ON ITS OWN (`agent-org--cancel-open',
+#   `agent-org--show-open-instead', `agent-org-reload') goes through
+#   `agent-org--kill-buffer-silently', which binds `agent-org--inhibit-kill-query':
+#   a prompt raised inside an acp callback is a trap, not a question (see the ESC
+#   bullet).
+# - An acp client is an ALIST of dotted keyword pairs — `acp-make-client' returns
+#   `(list (cons :process nil) ...)' (acp.el:90) and mutates it with `map-put!',
+#   which for a list is the alist operation.  So read `:process' with `map-elt' (as
+#   acp's own `acp--client-started-p' does); `plist-get' walks it as a flat plist,
+#   matches nothing and answers NIL — silently, on a Ready session with a live
+#   process right there (measured live: MAP-ELT gave `#<process acp-client(goose)-1>',
+#   PLIST-GET nil).  The keys carry colons, which is what makes the flat-plist
+#   reading look right.  Mocks must copy the SHAPE, not just the key names:
+#   `tests/acp-mock.el' builds the dotted-pair alist, and with that fixture the
+#   `plist-get' reader fails 3 kill tests instead of passing 156 and breaking live.
+#   Generalise: when a stub exists to avoid a dependency, mirror the dependency's
+#   data shape, or the suite tests the stub.
 # - ESC at a session prompt is a `quit' that lands INSIDE an acp response
 #   callback, and acp swallows it (`condition-case-unless-debug'): unguarded, the
 #   chat buffer sat on "Starting"/"Restoring" holding a live agent process.  So

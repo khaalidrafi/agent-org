@@ -15,7 +15,13 @@
 (defvar acp-mock--client-id 0
   "Counter behind the fake clients `acp-make-client' hands out.")
 (defun acp-make-client (&rest _args)
-  (list :mock-client (cl-incf acp-mock--client-id)))
+  ;; The real SHAPE, not just the real keys.  `acp-make-client' returns an
+  ;; ALIST of dotted keyword pairs (`(list (cons :process nil) ...)',
+  ;; acp.el:90), which `map-elt' reads and `plist-get' does not.  A flat
+  ;; plist here would let a `plist-get' reader pass the whole suite and
+  ;; answer nil on a live session.
+  (list (cons :mock-client (cl-incf acp-mock--client-id))
+        (cons :process nil)))
 (defvar acp-mock-shutdown-clients nil
   "Clients `acp-shutdown' was called with, most recent first.")
 (cl-defun acp-shutdown (&key client)

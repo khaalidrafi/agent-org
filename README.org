@@ -9,8 +9,8 @@ comint/terminal buffer: it talks to the ~acp~ package directly and
 renders agent output natively as Org headlines.
 
 All status, progress and error feedback appears in the chat buffer's
-*header line* (the top bar, as used by ~gptel~ and ~agent-shell~) —
-never as system messages in the document body.  The body contains the
+own *header line* (the top bar, as used by ~gptel~ and ~agent-shell~) — never
+as system messages in the document body.  The body contains the
 ~* User~ / ~* Agent~ conversation, with each turn's tool calls rendered
 as ~** TODO/DONE~ subheadings and its extended thinking kept in a folded
 ~:thinking:~ drawer under the ~* Agent~ heading, plus one auto-managed
@@ -130,6 +130,15 @@ Killing the chat buffer stops its agent.  The ~qoder --acp~ (or ~goose acp~)
 process belongs to ~acp~, not to the buffer, so ~kill-buffer~ alone would leave
 it running and holding ~100 MB~ — agent-org calls ~acp-shutdown~ from its
 kill-hook, which deletes the process and drops the session from the registry.
+
+While that process is alive, ~kill-buffer~ asks first, in Emacs' own words —
+~Process qoder --acp is running; kill it? ~ — exactly as it asks about a
+~*shell*~ buffer.  Emacs would never notice on its own: ~acp~ starts the agent
+with ~:noquery t~ and no buffer of its own, so the editor sees no process at
+all.  Answering NO leaves the chat open and untouched.  The kills
+agent-org makes on its own (backing out of a session chooser, opening a
+session that is already live elsewhere, ~agent-org-reload~) never ask — a prompt
+raised from inside an agent callback is a trap, not a question.
 
 * Starting: which session you get
 

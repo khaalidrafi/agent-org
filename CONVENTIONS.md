@@ -481,6 +481,34 @@ agent process behind it.
 
 ---
 
+## 12. Killing a chat buffer asks, because an agent is running
+
+`acp` starts the agent with `:noquery t` and attaches no process buffer of its
+own, so Emacs' `process-kill-buffer-query-function` finds nothing to ask about
+and `kill-buffer` on a live chat is silent — on a machine where one stray
+`qoder --acp` child costs ~100 MB.
+
+* `agent-org--kill-query` joins `kill-buffer-query-functions` **buffer-locally**
+  (installed beside the kill-hook by `agent-org--register-session`) and returns
+  nil to abort the kill.  Its wording is Emacs' own, `Process %s is running;
+  kill it? `, because that is the question the editor asks about a `*shell*`
+  buffer and this is the same kind of thing: a child the user did not start by
+  hand.
+* Only a **live** process asks.  A crashed agent leaves a buffer that is merely
+  unresponsive; consent for killing it is friction.  No session at all (a
+  non-chat buffer, or a chat whose hook has already run) also answers yes, which
+  is why the mock `acp-make-client` client carries no live `:process`.
+* The query never releases anything.  A YES lets the kill proceed and
+  `agent-org--forget-session` on `kill-buffer-hook` (§9) does the shutdown: one
+  release path, already under test.
+* Every kill agent-org performs **on its own** goes through
+  `agent-org--kill-buffer-silently`, which binds `agent-org--inhibit-kill-query`:
+  `agent-org--cancel-open`, `agent-org--show-open-instead`, and
+  `agent-org-reload`.  Those run from inside acp response callbacks, where a
+  prompt is a trap rather than a question — see §11.
+
+---
+
 ## Manual nodes referenced
 
 * `(org) Headlines` — §2.1 structure, left margin, separator lines.

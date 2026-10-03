@@ -2975,7 +2975,8 @@ let the test pass on something that cannot be live."
          (session (cdr pair))
          (proc (start-process "ao-test-agent" nil
                              (executable-find "sleep") "120")))
-    (setf (plist-get session :client) (list :mock-client 99 :process proc))
+    (setf (plist-get session :client)
+          (list (cons :mock-client 99) (cons :process proc)))
     (cons buf proc)))
 
 (defmacro ao--answers-kill (&rest body)
