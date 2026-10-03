@@ -349,6 +349,27 @@ on it.
   `createdAt` (live goose omits `updatedAt`), and ISO-8601 sorts correctly as a
   string, so ordering is a `string>` on the stamp.  The id is always last because
   it is the part that actually selects.
+* **The columns line up, and the order is pinned** — both because the list is
+  scanned, not read.  `agent-org--session-candidates` makes a measuring pass
+  (`agent-org--session-columns`) to take each column's widest value, then pads every
+  row to it, so a 60-character qoder prompt does not push the dates out of a
+  vertical line.  Titles are already capped by `agent-org-buffer--label-width`, so
+  padding cannot widen the line beyond label + date + id.  Padding and measuring are
+  both in **display columns** (`string-width`) — `string-pad` pads by character
+  count, which puts a CJK title's date a dozen columns early.  The date and id
+  columns are `shadow`-faced: they are metadata, and dimming them is what makes the
+  title the thing you read.
+* **A plain list collection would be re-sorted.**  `completing-read` accepts a
+  function, and only a function can answer the `metadata` action — which is how
+  `display-sort-function` reaches the UI (`agent-org--completion-collection`, same
+  as agent-shell).  With `identity` the UI shows the list in the order we built it;
+  without it, `New session` can land anywhere and the newest-first rule the pager
+  worked for is lost at the last step.
+* **Look the choice up by property-free text, not `assoc`**
+  (`agent-org--selection-value`).  `assoc` compares with `equal`, `equal` on strings
+  compares text properties, and the displays now carry `face` properties — so a
+  completion framework that hands back a rebuilt string instead of the collection's
+  own member would match nothing and silently resume the wrong chat.
 
 Live against qoder in this directory: 38 sessions in one page (no `nextCursor`),
 titles and `updatedAt`/`createdAt` stamps as the real wire sends them, and the

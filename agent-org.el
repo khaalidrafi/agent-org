@@ -561,39 +561,81 @@ answer for a session with no date at all."
   (let ((stamp (or (map-elt session 'updatedAt) (map-elt session 'createdAt))))
     (if (stringp stamp) stamp "")))
 
-(defun agent-org--session-display (title id stamp)
-  "One-line completion label for a session: TITLE, its date, then ID.
-Providers put the session's first prompt in its title, and a live qoder
-listing was seen returning several thousand characters of it across
-dozens of lines — that would flood the completion list and wrap every
-candidate.  So `agent-org-buffer--label' collapses and shortens it; the
-id always stays last because it is what actually selects the session.
-STAMP is the agent's ISO-8601 recency, and it is the only thing that
-tells two chats with the same opening line apart."
-  (let ((short (agent-org-buffer--label title))
-        (date (agent-org--format-session-date stamp)))
-    (format "%s%s  [%s]"
-            (if (string-empty-p short) "(untitled)" short)
-            (if date (format "  %s" date) "")
-            id)))
+(defun agent-org--pad (string width)
+  "STRING left-aligned in a column WIDTH display columns wide.
+Nil WIDTH is a no-op.  Padded by hand because `string-pad' counts
+characters, so a CJK or emoji title would get half the room it actually
+takes on screen; the measure here is `string-width', the same one
+`agent-org--column-width' reports, so rows are measured and padded
+identically.  An over-long string is left alone, never truncated."
+  (let ((gap (and width (- width (string-width string)))))
+    (if (or (null gap) (<= gap 0))
+        string
+      (concat string (make-string gap ?\s)))))
+
+(defun agent-org--session-columns (title stamp)
+  "The (TITLE . DATE) texts of a listed session, unpadded.
+Providers put the session's first prompt in its `title', and a live qoder
+listing was seen returning several thousand characters of it across dozens
+of lines — verbatim that floods the completion list and wraps every
+candidate, so `agent-org-buffer--label' collapses and shortens it.  An
+empty title becomes \"(untitled)\": a blank column is indistinguishable
+from a formatting bug.  STAMP is the agent's ISO-8601 recency, the only
+thing that tells two chats with the same opening line apart; no stamp
+means no date, not a made-up one.
+
+Split out of `agent-org--session-display' because aligning a batch of
+candidates means measuring every row before painting any of them."
+  (let ((short (agent-org-buffer--label title)))
+    (cons (if (string-empty-p short) "(untitled)" short)
+          (or (agent-org--format-session-date stamp) ""))))
+
+(defun agent-org--column-width (columns which)
+  "The widest of COLUMNs in the column selected by WHICH, in display columns.
+`string-width' and not `length' because `agent-org--pad' aligns on display
+columns too: measuring rows one way and padding them another is how an
+aligned list goes ragged on a title nobody typed in ASCII.  0 for an empty
+listing, so `max' never sees nil."
+  (apply #'max (cons 0 (seq-map (lambda (c) (string-width (funcall which c)))
+                                columns))))
+
+(defun agent-org--session-display (cols id &optional title-width date-width)
+  "One-line completion label for a session: its COLS, then ID.
+TITLE-WIDTH and DATE-WIDTH pad the first two columns so a whole listing
+lines up: recency is what you scan a session list for, and ragged titles
+put every date in a different column.  The date and the id are dimmed, not
+shortened — the title is the thing you read, the rest is metadata.  ID
+stays last and unpadded: it is what actually selects the session, and
+padding it would leave trailing whitespace in a completion candidate."
+  (format "%s  %s  %s"
+          (agent-org--pad (car cols) title-width)
+          (propertize (agent-org--pad (cdr cols) date-width) 'face 'shadow)
+          (propertize (format "[%s]" id) 'face 'shadow)))
 
 (defun agent-org--session-candidates (list-resp)
   "Convert a `session/list' response LIST-RESP into session candidates.
-Returns ((DISPLAY . SESSION-ID) ...) newest first; DISPLAY comes from the
-agent's own title plus its recency, sanitized by
-`agent-org--session-display'.  Ordering is ours: the wire says agents may
-return entries in any order, and an ISO-8601 stamp sorts correctly as a
-string."
-  (let ((sessions (agent-org--wire-list (map-elt list-resp 'sessions))))
-    (seq-map (lambda (s)
-               (let ((id (map-elt s 'sessionId)))
-                 (cons (agent-org--session-display (map-elt s 'title) id
-                           (agent-org--session-stamp s))
-                       id)))
-             (seq-sort (lambda (a b)
-                         (string> (agent-org--session-stamp a)
-                                  (agent-org--session-stamp b)))
-                       sessions))))
+Returns ((DISPLAY . SESSION-ID) ...) newest first; DISPLAY is built by
+`agent-org--session-columns' and `agent-org--session-display'.  Ordering
+is ours: the wire says agents may return entries in any order, and an
+ISO-8601 stamp sorts correctly as a string.
+The columns are padded to the batch's own maxima, so one long title moves
+every other date into its column instead of leaving a ragged list."
+  (let* ((sessions (agent-org--wire-list (map-elt list-resp 'sessions)))
+         (sorted (seq-sort (lambda (a b)
+                             (string> (agent-org--session-stamp a)
+                                      (agent-org--session-stamp b)))
+                           sessions))
+         (columns (seq-map (lambda (s)
+                             (agent-org--session-columns (map-elt s 'title)
+                                                         (agent-org--session-stamp s)))
+                           sorted))
+         (title-width (agent-org--column-width columns #'car))
+         (date-width (agent-org--column-width columns #'cdr)))
+    (seq-mapn (lambda (s cols)
+                (let ((id (map-elt s 'sessionId)))
+                  (cons (agent-org--session-display cols id title-width date-width)
+                        id)))
+              sorted columns)))
 
 (cl-defun agent-org--list-sessions (session
                                     &key cursor seen pages
@@ -688,6 +730,33 @@ chose to say in it."
   (agent-org-buffer-set-status (plist-get session :buffer)
     :note (agent-org-buffer--label (format "new session: %s" reason))))
 
+(defun agent-org--completion-collection (choices)
+  "A `completing-read' collection over CHOICES that keeps our order.
+CHOICES is ((DISPLAY . VALUE) ...); the collection offers the DISPLAYs,
+which are the only thing a human can read.  A plain list would be handed
+over the UI's sort, and the order of this list IS information — newest
+first, `New session' on top — so a two-year-old chat could land first.
+`display-sort-function' only travels on `metadata', and only a function
+collection can answer that action (agent-shell does exactly this).
+`identity' means \"display them in the order you were given\"."
+  (lambda (string pred action)
+    (if (eq action 'metadata)
+        '(metadata (display-sort-function . identity)
+                   (cycle-sort-function . identity))
+      (complete-with-action action (mapcar #'car choices) string pred))))
+
+(defun agent-org--selection-value (choices selection)
+  "The value in CHOICES whose display is SELECTION, or nil.
+Not `assoc': a display carries `face' text properties for the dimmed
+columns, `assoc' compares with `equal' which compares properties too, and
+a completion framework that rebuilds the string rather than returning the
+collection's member would then match nothing.  Each display ends with the
+session id, so property-free text is a unique key."
+  (let ((wanted (substring-no-properties selection)))
+    (cdr (seq-find (lambda (choice)
+                     (equal (substring-no-properties (car choice)) wanted))
+                   choices))))
+
 (defun agent-org--read-start-choice (candidates)
   "Complete over CANDIDATES plus `agent-org-new-session-label'.
 Returns the chosen session id, or :new.  The display is for the human and
@@ -697,8 +766,10 @@ append the collection's default to every candidate, and the list fills
 with noise."
   (let* ((choices (cons (cons agent-org-new-session-label :new) candidates))
          (this-command 'agent-org-start))
-    (cdr (assoc (completing-read "Start or resume: " (seq-map #'car choices) nil t)
-                choices))))
+    (agent-org--selection-value
+     choices
+     (completing-read "Start or resume: "
+                      (agent-org--completion-collection choices) nil t))))
 
 (defun agent-org--choose-start (session list-resp strategy)
   "Open SESSION out of LIST-RESP the way STRATEGY says to.
@@ -756,14 +827,18 @@ in scope when the agent answers, not the one in scope when you asked."
 
 (defun agent-org--read-session-id (list-resp)
   "Pick the session to resume out of a `session/list' response LIST-RESP.
-A single candidate is used without prompting; none is a user-error."
+A single candidate is used without prompting; none is a user-error.
+One prompt, one collection: this shares `agent-org--read-start-choice's
+helpers so the resume list and the start list cannot drift apart."
   (let ((cands (agent-org--session-candidates list-resp)))
     (cond
      ((null cands) (user-error "No sessions to resume in this directory"))
      ((null (cdr cands)) (cdar cands))
-     (t (cdr (assoc (completing-read "Resume session: "
-                                     (seq-map #'car cands) nil t)
-                    cands))))))
+     (t (let ((this-command 'agent-org-resume-session))
+          (agent-org--selection-value
+           cands
+           (completing-read "Resume session: "
+                            (agent-org--completion-collection cands) nil t)))))))
 
 (defcustom agent-org-replay-settle-delay 0.4
   "Seconds of silence that end a `session/load' replay.

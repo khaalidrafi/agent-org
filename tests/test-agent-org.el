@@ -1079,7 +1079,9 @@ the completion list and break the candidate lines.  DISPLAY must be one
 short line that still carries the id, and an ordinary title must
 survive untouched.  The line also spends `agent-org-buffer--label-width'
 on the title and then adds the recency date, so the whole thing is
-bounded by label width + date + id rather than by 80."
+bounded by label width + date + id rather than by 80.  The gaps below are
+` +' not two spaces: columns are padded to the batch's widest row, which
+is what `test-agent-org-session-candidates-align-in-columns' pins."
   (let* ((blob (concat "Resume all sessions paused with errors!\n"
                        (make-string 3000 ?x) "\nlast line"))
          (resp `((sessions . [((sessionId . "big") (title . ,blob)
@@ -1096,7 +1098,7 @@ bounded by label width + date + id rather than by 80."
       (should (string-match-p "\\[big\\]\\'" big))
       (should (string-match-p "Resume all sessions" big))
       (should (string-match-p "…" big)))
-    (should (string-match "\\`Short one  Sep 01, [0-9][0-9]:[0-9][0-9]  \\[small\\]\\'"
+    (should (string-match "\\`Short one +Sep 01, [0-9][0-9]:[0-9][0-9] +\\[small\\]\\'"
                           (funcall display "small")))))
 
 (ert-deftest test-agent-org-read-session-id-single-or-error ()
@@ -1220,6 +1222,18 @@ captures `run-at-time' here and the test decides when quiet has come."
   (when ao--timer
     (apply #'funcall ao--timer)
     (setq ao--timer nil)))
+
+(defun ao--collection (collection)
+  "The plain candidate list behind a `completing-read' COLLECTION.
+agent-org hands `completing-read' a FUNCTION rather than a list so it can
+carry completion metadata (pinned order); a test that wants to look at the
+candidates has to ask the collection for them, which is exactly what the
+completion UI does.  ACTION `t' is the documented \"give me every
+completion\" — `all' is not an action at all (`complete-with-action'
+answers it with nil), which is how this test first went silently green."
+  (if (functionp collection)
+      (funcall collection "" nil t)
+    collection))
 
 (defun ao--time-out ()
   "Fire the pending session/list timeout, as a silent agent would allow."
@@ -1820,7 +1834,7 @@ id, which is the part that actually selects a session."
               (lambda (_prompt collection &rest _)
                 (seq-find (lambda (c)
                             (string-match-p (regexp-quote (format "[%s]" ,id)) c))
-                          collection))))
+                          (ao--collection collection)))))
      ,@body))
 
 (defvar ao--prompted-with nil
@@ -1940,12 +1954,12 @@ reach for."
         (cl-letf (((symbol-function 'completing-read)
                    (lambda (_prompt collection &rest _)
                      (push collection ao--prompted-with)
-                     (car collection))))
+                     (car (ao--collection collection)))))
           (ao--drive
            "session/list"
            (ao--list-resp `(("s1" "One chat" ,(ao--today))
                             ("s2" "Two chat" "2026-09-02T10:00:00+0000")))))
-        (let ((choices (seq-first ao--prompted-with)))
+        (let ((choices (ao--collection (seq-first ao--prompted-with))))
           (should (= 3 (length choices)))
           (should (equal (car choices) agent-org-new-session-label)))
         (should (ao--sent-get "session/new"))
@@ -2239,6 +2253,80 @@ and on one line however much the agent wrote."
           (should (string-match-p "boom" note))
           (should-not (string-match-p "\n" note))))
       (kill-buffer buf))))
+
+(ert-deftest test-agent-org-session-candidates-align-in-columns ()
+  "Two chats whose titles differ wildly in length must still put their
+dates in the same column, or the list reads as a ragged paragraph and the
+one thing you scan for — recency — never lines up.  The id stays at the
+end, because it is what actually selects."
+  (let* ((stamp "2026-09-28T10:22:00+0000")
+         (resp (list (cons 'sessions
+                           (vector (list (cons 'sessionId "s-a")
+                                         (cons 'title "Short")
+                                         (cons 'updatedAt stamp))
+                                   (list (cons 'sessionId "s-b")
+                                         (cons 'title
+                                           "A far longer opening prompt than the other one")
+                                         (cons 'updatedAt stamp))))))
+         (labels (seq-map #'car (agent-org--session-candidates resp))))
+    (should (= 2 (length labels)))
+    ;; titles carry no digits here, so the first digit is the date column
+    (let ((cols (seq-map (lambda (l) (string-match-p "[0-9]" l)) labels)))
+      (should (= 2 (length cols)))
+      (should (apply #'equal cols)))
+    (dolist (label labels)
+      (should (string-match-p "\\[s-[ab]\\]\\'" label)))))
+
+(ert-deftest test-agent-org-candidate-columns-align-by-display-width ()
+  "A CJK title takes two display columns per character, so padding by
+character COUNT leaves its date hanging a dozen columns early — and
+`string-pad' pads by character count, which is how this was first got
+wrong.  What has to be equal across rows is the width of everything
+before the id, because that is what a completion UI lines up."
+  (let* ((resp (list (cons 'sessions
+                           (vector (list (cons 'sessionId "cjk")
+                                         (cons 'title "日本語のタイトルです")
+                                         (cons 'updatedAt "2026-09-28T10:22:00+0000"))
+                                   (list (cons 'sessionId "lat")
+                                         (cons 'title "Reconcile the failing ERT suite")
+                                         (cons 'updatedAt "2026-09-27T10:22:00+0000"))))))
+         (labels (seq-map #'car (agent-org--session-candidates resp))))
+    (should (= 2 (length labels)))
+    (should (apply #'equal
+                   (seq-map (lambda (l)
+                              (string-width (substring l 0 (string-match-p "\\[" l))))
+                            labels)))))
+
+(ert-deftest test-agent-org-prompt-collection-pins-our-order ()
+  "The candidate order IS information (newest first, `New session' on
+top), and a completion UI is free to re-sort a plain list collection.
+Handing over a function with `display-sort-function' set to `identity' is
+how agent-shell keeps its own ordering; without it a two-year-old chat can
+land on top of the list you are about to choose from."
+  (let ((ao--prompted-with nil))
+    (ao--capture-wire
+      (let ((buf (agent-org-start 'qoder)))
+        (ao--drive "initialize" ao--fake-init-resp)
+        (cl-letf (((symbol-function 'completing-read)
+                   (lambda (_prompt collection &rest _)
+                     (push collection ao--prompted-with)
+                     (car (ao--collection collection)))))
+          (ao--drive
+           "session/list"
+           (ao--list-resp `(("s1" "One chat" ,(ao--today))
+                            ("s2" "Two chat" "2026-09-02T10:00:00+0000")))))
+        (let ((collection (seq-first ao--prompted-with)))
+          (should (functionp collection))
+          (let ((metadata (funcall collection "" nil 'metadata)))
+            (should (eq (cdr (assq 'display-sort-function (cdr metadata)))
+                        #'identity)))
+          ;; asking it for everything returns OUR order, `New session' first
+          (let ((choices (ao--collection collection)))
+            (should (= 3 (length choices)))
+            (should (equal (car choices) agent-org-new-session-label))
+            (should (string-match-p "\\[s1\\]\\'" (nth 1 choices)))
+            (should (string-match-p "\\[s2\\]\\'" (nth 2 choices)))))
+        (kill-buffer buf)))))
 
 (ert-deftest test-agent-org-session-label-shows-when-it-last-spoke ()
   "A candidate for an older session is only usable if you can tell its

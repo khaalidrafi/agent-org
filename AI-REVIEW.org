@@ -315,6 +315,66 @@ once, and no ~session/new~/~session/load~ went out.  ~ao--capture-messages~ was
 added for the last assertion, because the cancel note is deliberately echo-area
 only — the buffer it would have lived on is gone.
 
+* A session list you can scan: padded columns, pinned order
+
+** TODO Read =agent-org--session-candidates= as the whole pipeline
+Three passes over the same rows exist for one reason: a column can only be
+padded once you know the batch's widest value, so
+=agent-org--session-columns= (values) → =agent-org--column-width=
+(widths) → =agent-org--session-display= (painted row) cannot collapse
+into one function.  Note what a reviewer should check: the widths are
+computed once, outside the =seq-mapn= — hoisting =agent-org--column-width=
+into the row lambda would make the whole function O(n²) on a 40-session
+listing, which is exactly how it was first written and then fixed.
+Every title is still flattened by =agent-org-buffer--label= twice (once
+for measuring, once for the row); if that bothers you, pass the measured
+=cols= through instead of re-deriving, which the =cols= argument already
+allows.
+
+** DONE Why the date and id are dimmed, and the title is not
+=shadow= is the conventional de-emphasis in a completion list, and the
+title is the only column a human reads.  Padding happens before
+=propertize=, so the spaces belong to the dimmed column — which is why
+the id is NOT padded: a padded tail would be trailing whitespace in the
+candidate the UI echoes back into the minibuffer.
+
+** DONE Columns are measured in display width, not characters
+=agent-org--pad= hand-rolls its padding.  =string-pad= looked like the
+right primitive and is not: it counts characters, so a ten-character
+Japanese title padded to a 31-character column occupied 41 columns on
+screen and its date landed a dozen early.  =agent-org--column-width=
+measures with =string-width= so the measuring pass and the padding agree;
+=test-agent-org-candidate-columns-align-by-display-width= is what would
+fail if anyone swaps =agent-org--pad= back to =string-pad=.
+
+** TODO =display-sort-function= is a claim about the UI, not a guarantee
+=agent-org--completion-collection= hands =completing-read= a function
+carrying =(metadata (display-sort-function . identity))=.  That is what
+agent-shell does, and it is honoured by the built-in =completion--docompose=
+paths, but a framework (vertico, marginalia, consult) is free to ignore
+metadata it does not implement.  So this is "we no longer hand our order
+away", not "the order is enforced" — the pinned test asserts what we
+offer, not what a given UI shows.  Worth checking on your own completion
+stack; =test-agent-org-prompt-collection-pins-our-order= is the one that
+would need extending if you add a =completion-styles= requirement.
+
+** TODO The lookup is property-free now; =assoc= would have been a silent bug
+=agent-org--selection-value= compares =substring-no-properties= because
+=assoc= uses =equal=, and =equal= on strings compares text properties.
+The displays now carry =face=.  A completion UI that returns the
+collection's own member would still have worked, so this bug would only
+have appeared on the machine of whoever uses a framework that rebuilds the
+string — and it would have resumed the WRONG session, not errored.  Read
+it as the reason =agent-org--session-candidates= is allowed to return
+propertized text at all.
+
+** DONE Two tests, and a harness helper for a function collection
+=ao--collection= asks a =completing-read= collection for its candidates
+with action =t=.  (It first used ='all=, which is not an action:
+=complete-with-action= answers it with =nil= and the test would have
+passed on an empty list forever.)  Suite is 99 tests, all green;
+byte-compile warning-free.
+
 * How to check the whole thing
 
 #+begin_src sh
@@ -324,7 +384,7 @@ emacs -Q --batch --eval "(add-to-list 'load-path \"$PWD\")" \
   --eval "(ert-run-tests-batch-and-exit)"
 #+end_src
 
-The suite is 96 tests.  The MiniMax/model ones are
+The suite is 99 tests.  The MiniMax/model ones are
 ~test-agent-org-minimax-provider-present~ (spawns ~mcode acp~, no pin),
 ~test-agent-org-minimax-start-pins-nothing~ (the OpenCode-shaped design may
 not creep back), ~test-agent-org-opencode-provider-present~, the four

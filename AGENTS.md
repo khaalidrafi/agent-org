@@ -144,10 +144,23 @@ emacs -Q --batch \
 #   into a buffer already opening one.  Failure, timeout and an empty listing
 #   all degrade to `session/new' plus an echo-area note: starting a chat must
 #   never be blocked by the feature that shows you the older ones.  Candidates
-#   are `TITLE  DATE  [id]' (`agent-org--session-display' +
+#   are `TITLE  DATE  [id]' (`agent-org--session-columns' +
 #   `agent-org--format-session-date'), sorted by `agent-org--session-stamp'
 #   (`updatedAt' else `createdAt' — live goose omits `updatedAt'), newest first,
 #   with `New session' always first in the list.
+# - The candidate list is scanned, not read, so its SHAPE is the feature:
+#   `agent-org--session-candidates' pads both columns to the batch's widest row
+#   (a measuring pass over `agent-org--session-columns' first), and dims the date
+#   and id with `shadow' so the title is what stands out.  Measured AND padded in
+#   display columns (`string-width'): `string-pad' counts characters, which puts a
+#   CJK title's date a dozen columns early.  And the order is pinned:
+#   `completing-read' must be handed `agent-org--completion-collection',
+#   a FUNCTION, because `display-sort-function' only travels on the `metadata'
+#   action — a plain list is re-sorted by the UI and newest-first is lost at the
+#   last step.  Because the displays now carry text properties, resolve a choice
+#   with `agent-org--selection-value' (property-free `equal'), NEVER `assoc':
+#   `equal' on strings compares properties too, and a framework that rebuilds the
+#   string would match nothing and resume the wrong chat.
 # - Killing the chat buffer MUST release the agent: `acp' owns the process it
 #   spawned, so dropping the registry entry leaves an `qoder --acp' child running
 #   (~100 MB each — measured live: 1 session registered, 16 stray acp processes).
