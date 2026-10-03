@@ -1,0 +1,118 @@
+#+title: agent-org TODOs --- features to port, inspired by agent-shell
+#+options: num:t toc:nil
+
+This is the porting list from `agent-shell' (upstream xenodium/agent-shell,
+source at ~/agent-shell) onto agent-org's Org-native design.  Each item
+names the agent-shell mechanism it comes from and the agent-org functions
+it touches.  Everything marked DONE is on this branch with tests in
+tests/test-agent-org.el.
+
+* Basic chat-loop features (this round)
+** TODO Prompt queue --- submit while the agent is still responding
+agent-shell keeps this in =agent-shell-prompt-queue.el=: the queue lives
+in the session state under =:pending-prompts=; =agent-shell--prompt-queue-enqueue=
+stores a prompt typed while busy, and =--process-next= auto-drains it
+when the turn ends.  Commands: =agent-shell-prompt-queue= (view),
+=-resume=, =-remove=; a defcustom picks the busy-submit policy
+(queue vs error).
+
+Ported to agent-org as:
+- Session key =:pending-prompts= (FIFO list of strings).
+- =agent-org-send= enqueues instead of signalling "Agent is still
+  responding" while =:streaming=; option =agent-org-queue-when-busy=
+  keeps the old hard-error behaviour when nil.
+- Drain only on a *successful* turn end (=agent-org--send-done=); a
+  failed turn leaves the queue intact so nothing hammers a dead agent.
+- =agent-org-queue-view= (transient listing), =agent-org-queue-remove=
+  (drop one, completion), =agent-org-queue-edit= (pull the last queued
+  prompt back into the minibuffer prompt read).
+- Header status shows the pending count while busy (convention: header
+  line only, never the body, never the mode line).
+
+** TODO Reload --- restart the same session in place
+agent-shell's =agent-shell-reload= (agent-shell.el:1604) is exactly
+"restart with the same =:session-id=".  The agent process is restarted,
+the session is re-loaded against the same cwd, the chat buffer survives.
+
+Ported as =agent-org-reload=: shut the current agent down, re-open
+through the existing resume path (=session/load= with the recorded
+=(:cwd . :session-id)=), replay into the SAME buffer, and drain nothing
+while loading.  Kills the half-started buffer if the load fails.
+
+** TODO Interrupt --- cancel a running turn
+agent-shell binds =agent-shell-interrupt= (agent-shell.el:2243) to stop
+the current response; ACP spells this =session/cancel=.
+
+Ported as =agent-org-cancel-turn= (bound in =agent-org-mode-map=): sends
+=session/cancel= for the live turn, marks the in-flight agent heading
+cancelled, clears =:streaming=; does NOT clear the prompt queue.
+
+* Display fixes (the user's live complaints)
+** TODO Buffer name carries the project name and session id
+agent-shell names buffers ="Claude Agent @ project"= via
+=agent-shell-buffer-name-format= and shows the session id separately
+(=agent-shell-show-session-id=).  agent-org renders
+=*agent-org: <title|provider> [sid]*= (agent-org-buffer.el:311-330) but
+omits the project even though =:project= is in the status model.
+Fix: =*agent-org: <project> <title> [sid]*= -- both parts the user asked
+for, still truncating the sid like today.
+
+** TODO Tool call headings must not show raw ids
+agent-shell renders tool calls through =agent-shell-make-tool-call-label=
+and never shows the =toolCallId=; agent-org interpolates it into the
+visible heading text at agent-org-buffer.el:865.  The id stays as the
+hidden marker property (that is how in-place updates find the heading);
+drop it from the heading TEXT.
+
+** TODO Model name everywhere, not just the header
+=:model-name= is preferred by the header and the :Model: property, but
+the CONFIG drawer prints the raw =currentValue= id
+(agent-org-buffer.el:461-464), and =agent-org--model-name= (agent-org.el:397)
+returns nil when the current value has no matching option label.  Fix
+the drawer to render the label with the id in parentheses only as
+fallback, and make the lookup fall back to prettifying the id.
+
+** DONE Never touch the mode line
+CONVENTIONS.md section 6 already mandates header-line-only status with
+=:lighter nil=, and =test-agent-org-leaves-mode-line-alone= guards it.
+Keep it that way: doom-modeline owns the mode line; agent-org renders
+into the header line only.
+
+* TODO Later --- still worth porting, not "basic"
+** TODO Steer --- inject into the live turn
+agent-shell's =agent-shell-prompt-steer= sends a mid-turn message via
+=agent-shell-experimental--send-steering= (agent-shell.el).  Needs ACP
+support for messages during =:streaming=; until then the queue covers
+the need.
+
+** TODO Fork session
+=agent-shell-fork= (agent-shell.el:1621) branches history into a new
+session id.  agent-org would need =session/fork= (or new+replay) plus a
+second buffer.
+
+** TODO Input history ring
+agent-shell reuses comint's =comint-input-ring=
+(agent-shell-prompt-queue.el:188); agent-org reads prompts with
+=read-string=, so a per-session ring with M-p/M-n in the prompt is the
+equivalent.
+
+** TODO Permission prompts without blocking
+=agent-org--prompt-permission= uses =completing-read= inline (blocks the
+process filter).  agent-shell surfaces them in its UI; a deferred,
+buffer-local accept/deny affordance would keep the chat responsive.
+
+** TODO Tool-call grouping
+agent-shell has =--group-tool-calls= (agent-shell.el:2763): consecutive
+calls of one kind fold under a summary heading.  In agent-org the calls
+are headlines already, so =outline-minor-mode= folding plus a count in
+the * Agent* heading gets most of the way.
+
+** TODO Copy session id command
+agent-shell's =agent-shell-copy-session-id= (agent-shell.el:2033):
+kill-ring the current session id.  One-liner for agent-org.
+
+** TODO Model selection menu
+=agent-shell-set-session-model= completion over =agent-shell--get-available-models=.
+agent-org already has =agent-org-set-session-model= (C-c C-m) over
+=:want-model= values; add the model NAMES to the candidates so the
+user never sees bare ids.
