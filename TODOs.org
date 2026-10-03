@@ -30,15 +30,21 @@ Ported to agent-org as:
 - Header status shows the pending count while busy (convention: header
   line only, never the body, never the mode line).
 
-** TODO Reload --- restart the same session in place
+** DONE Reload --- restart the same session in place
 agent-shell's =agent-shell-reload= (agent-shell.el:1604) is exactly
-"restart with the same =:session-id=".  The agent process is restarted,
-the session is re-loaded against the same cwd, the chat buffer survives.
+"restart with the same =:session-id=": it kills the chat buffer with its
+agent and starts a fresh one through the resume path, reusing the old
+windows.  Nothing is re-read from the old transcript — the agent's
+history is the source of truth.
 
-Ported as =agent-org-reload=: shut the current agent down, re-open
-through the existing resume path (=session/load= with the recorded
-=(:cwd . :session-id)=), replay into the SAME buffer, and drain nothing
-while loading.  Kills the half-started buffer if the load fails.
+Ported as =agent-org-reload=: guards on :loading / missing :session-id,
+asks =y-or-n-p= before killing a live turn, then shuts the agent down,
+kills the chat buffer silently (the kill hook owns the process) and
+re-opens through =agent-org-resume-session= with the recorded
+=(:cwd . :session-id)=, replaying into the same windows.  The buffer
+name regenerates from the replayed title and id, so it comes back
+looking like the one that was replaced; queued prompts die with the
+buffer.
 
 ** TODO Interrupt --- cancel a running turn
 agent-shell binds =agent-shell-interrupt= (agent-shell.el:2243) to stop

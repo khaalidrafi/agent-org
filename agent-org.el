@@ -1260,6 +1260,51 @@ also how callers from lisp pin one."
                    (plist-get spec :name))))))
     (plist-get session :buffer)))
 
+;;;; Reload
+
+;;;###autoload
+(defun agent-org-reload ()
+  "Restart this chat's agent and replay the SAME session through resume.
+Port of `agent-shell-reload' (agent-shell.el:1604), which is exactly
+\"restart with the same =:session-id=\" — it does not re-read anything
+from the old buffer.  The chat is killed silently with its agent (the
+kill hook shuts the process down), then the recorded
+\(:cwd . :session-id) pair goes back through `agent-org-resume-session',
+which loads the whole history afresh from the agent and re-renders it in
+the same window.  The buffer name regenerates from the replayed title
+and id, so it comes back looking like the one that was replaced.
+
+The old buffer must be gone before the load: `agent-org--load-session'
+refuses to `session/load' an id a live buffer already holds and would
+switch to it instead.  Queued prompts die with the buffer — they were
+never sent, and a restart is the user's way of saying the agent's
+state is wrong."
+  (interactive)
+  (let* ((buffer (current-buffer))
+         (session (agent-org--session-for-buffer buffer)))
+    (unless session
+      (user-error "Not an agent-org chat buffer"))
+    (unless (plist-get session :session-id)
+      (user-error "Session not ready"))
+    (when (plist-get session :loading)
+      (user-error "Session history is still loading"))
+    (when (and (plist-get session :streaming)
+               (not (y-or-n-p "Agent is responding.  Reload anyway? ")))
+      (user-error "Cancelled"))
+    (let* ((sid (plist-get session :session-id))
+           (cwd (or (plist-get session :cwd) default-directory))
+           (provider (plist-get session :name))
+           (windows (get-buffer-window-list buffer nil t)))
+      (agent-org--kill-buffer-silently buffer)
+      (let ((new (let ((default-directory cwd))
+                   (agent-org-resume-session provider sid))))
+        ;; Reuse the windows the killed chat was shown in, as
+        ;; `agent-shell-restart' does; resume has already switched to the
+        ;; new buffer somewhere, so at least one live window takes it.
+        (dolist (w (seq-filter #'window-live-p windows))
+          (set-window-buffer w new))
+        new))))
+
 ;;;; Model selection
 
 (defun agent-org--read-model ()

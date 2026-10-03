@@ -29,6 +29,22 @@ from the agent's `session/list' for the current directory; two
 also how callers from lisp pin one.
 
 (fn PROVIDER SESSION-ID)" t)
+(autoload 'agent-org-reload "agent-org" "\
+Restart this chat's agent and replay the SAME session through resume.
+Port of `agent-shell-reload' (agent-shell.el:1604), which is exactly
+\"restart with the same =:session-id=\" — it does not re-read anything
+from the old buffer.  The chat is killed silently with its agent (the
+kill hook shuts the process down), then the recorded
+(:cwd . :session-id) pair goes back through `agent-org-resume-session',
+which loads the whole history afresh from the agent and re-renders it in
+the same window.  The buffer name regenerates from the replayed title
+and id, so it comes back looking like the one that was replaced.
+
+The old buffer must be gone before the load: `agent-org--load-session'
+refuses to `session/load' an id a live buffer already holds and would
+switch to it instead.  Queued prompts die with the buffer — they were
+never sent, and a restart is the user's way of saying the agent's
+state is wrong." t)
 (autoload 'agent-org-set-session-model "agent-org" "\
 Switch the current agent-org session to MODEL.
 Interactively, complete over the models the agent advertises.  From lisp

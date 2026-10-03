@@ -883,6 +883,103 @@ as the default, keeping queue order."
                        (list "1. first one" "2. second")))))
     (kill-buffer buf)))
 
+;;;; Reload (restart the same session, agent-shell's `agent-shell-reload')
+
+(ert-deftest test-agent-org-reload-replays-same-session-through-resume ()
+  "Reload kills the chat with its agent and re-loads the same id: the
+transcript is re-rendered from the agent's history, not kept from before.
+The old buffer must be gone first, or `agent-org--session-open-p' would
+redirect the load to it instead of replaying."
+  (ao--capture-wire
+    (let* ((buf (agent-org-resume-session 'qoder "sid-rel"))
+           (session (agent-org--session-for-buffer buf)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (ao--drive "session/load" '((sessionId . "sid-rel")))
+      (ao--settle)
+      (with-current-buffer buf
+        (should (equal "sid-rel"
+                       (plist-get agent-org-buffer--status :session-id))))
+      (let ((new (with-current-buffer buf (agent-org-reload))))
+        (should-not (buffer-live-p buf))
+        (should (buffer-live-p new))
+        (should-not (eq new buf))
+        ;; the resume handshake restarts from scratch on a new client
+        (should (equal (caar ao--sent) "initialize"))
+        (let ((nsession (agent-org--session-for-buffer new)))
+          (should nsession)
+          (should-not (plist-get nsession :session-id)))
+        (ao--drive "initialize" ao--fake-init-resp)
+        (let ((load (ao--sent-get "session/load")))
+          (should load)
+          (should (equal "sid-rel"
+                         (map-elt (map-elt (plist-get load :request)
+                                           ':params)
+                                  'sessionId))))
+        (ao--drive "session/load" '((sessionId . "sid-rel")))
+        (ao--settle)
+        (with-current-buffer new
+          (should (equal "sid-rel"
+                         (plist-get agent-org-buffer--status :session-id)))
+          (should (agent-org-buffer--open-prompt-p)))
+        (kill-buffer new)))))
+
+(ert-deftest test-agent-org-reload-refuses-while-loading ()
+  "A replay in flight owns the buffer; reload waits."
+  (let* ((pair (ao--make-test-session "rel-load"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (setf (plist-get session :loading) t)
+    (with-current-buffer buf
+      (should-error (agent-org-reload) :type 'user-error)
+      (should (buffer-live-p buf)))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-reload-rejects-unopened-session ()
+  "No :session-id yet — there is nothing to reload into."
+  (let* ((pair (ao--make-test-session "rel-none"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (setf (plist-get session :session-id) nil)
+    (with-current-buffer buf
+      (should-error (agent-org-reload) :type 'user-error)
+      (should (buffer-live-p buf)))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-reload-asks-before-killing-a-live-turn ()
+  "Streaming: `y-or-n-p' decides.  \"no\" leaves the chat untouched;
+\"yes\" reloads anyway, and the queue goes with the killed buffer."
+  (let* ((pair (ao--make-test-session "rel-busy"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (setf (plist-get session :streaming) t)
+    ;; reload hands the session's provider to `agent-org-resume-session',
+    ;; which needs a real spec; the fixture's `test' has none
+    (setf (plist-get session :name) 'qoder)
+    (setf (plist-get session :pending-prompts) (list "queued"))
+    (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) nil)))
+      (with-current-buffer buf
+        (should-error (agent-org-reload) :type 'user-error)
+        (should (buffer-live-p buf))
+        (should (equal '("queued") (plist-get session :pending-prompts)))))
+    (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t))
+              ((symbol-function 'acp-send-request) (lambda (&rest _) nil))
+              ((symbol-function 'acp-make-client) (lambda (&rest _) nil))
+              ((symbol-function 'acp-subscribe-to-notifications)
+               (lambda (&rest _) nil))
+              ((symbol-function 'acp-subscribe-to-requests)
+               (lambda (&rest _) nil))
+              ((symbol-function 'acp-subscribe-to-errors)
+               (lambda (&rest _) nil))
+              ((symbol-function 'executable-find) (lambda (&rest _) t)))
+      (with-current-buffer buf
+        (let ((new (agent-org-reload)))
+          (should-not (buffer-live-p buf))
+          (should (buffer-live-p new))
+          ;; the queue lived on the killed session entry; the new one is clean
+          (should-not (plist-get (agent-org--session-for-buffer new)
+                                 :pending-prompts))
+          (kill-buffer new))))))
+
 (ert-deftest test-agent-org-session-ready-inserts-prompt-once ()
   "`agent-org--session-ready' is idempotent across repeated session updates."
   (let* ((pair (ao--make-test-session "ready"))
