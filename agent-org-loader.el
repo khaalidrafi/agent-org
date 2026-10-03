@@ -27,8 +27,14 @@
 ;; Thin bootstrap helpers that drive the chat buffer's header-line
 ;; (top bar) while an ACP session is being established.  Progress and
 ;; errors are surfaced through `agent-org-buffer-set-status'.  Nothing
-;; is written into the buffer body and no minibuffer progress reporter
-;; is used.
+;; is written into the buffer body.
+;;
+;; The handshake this covers gets no progress reporter: it is one round
+;; trip with nothing to count and no events to step on, so the header's
+;; `Connecting…' is the whole story.  The phases that can be slow — a
+;; `session/list' paging for older chats and a `session/load' replay —
+;; are reported in the echo area instead, by `agent-org--progress-start'
+;; in agent-org.el.
 
 ;;; Code:
 

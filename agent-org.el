@@ -159,6 +159,20 @@ or set it to nil, on a machine where you would rather wait."
                  (number :tag "Seconds"))
   :group 'agent-org)
 
+(defcustom agent-org-progress-min-time 0.2
+  "Seconds between echo-area updates of a loading progress report.
+`make-progress-reporter' calls this MIN-TIME and documents it as the
+minimum interval between echo-area updates; 0.2 is that function's own
+default, restated here as a knob because this machine is the reason it
+exists.  What it bounds is a redisplay — the echo area shares one with
+the chat buffer, and the buffer is growing while a session is restored —
+not the call, which is why the code steps the report once per event and
+lets this do the arithmetic.
+Raise it (0.5, 1.0) if the redraw is felt; a test sets it to 0 to watch
+every step, or to an hour to prove the throttle."
+  :type 'number
+  :group 'agent-org)
+
 ;;;; Session registry
 
 (defvar agent-org--sessions nil
@@ -187,6 +201,10 @@ Each entry is a plist:
                  `agent-org--settle-listing')
   :list-timer          - pending `agent-org-session-list-timeout' timer,
                  nil once it has fired or been cancelled
+  :progress            - the echo-area progress reporter of the load
+                 phase in flight (a listing, or a `session/load'
+                 replay), nil while nothing is being loaded.  See
+                 `agent-org--progress-start'.
 
 Every key is installed by `agent-org--open-session', because `setf' on
 `plist-get' can only mutate a property that already exists.")
@@ -215,6 +233,10 @@ the dead buffer, so both are unarmed on the way out too."
         (when-let* ((timer (plist-get session key)))
           (cancel-timer timer)
           (setf (plist-get session key) nil)))
+      ;; The echo area belongs to this session no more than its timers
+      ;; do: a restore abandoned by killing the buffer would otherwise
+      ;; keep redrawing its line under whatever the user opened next.
+      (agent-org--progress-stop session)
       ;; Shutdown first: it clears the client's handlers, so a late process
       ;; event cannot reach a buffer that is already going away.
       (when-let* ((client (plist-get session :client)))
@@ -403,6 +425,69 @@ interactive until the history has been painted."
                 (plist-get session :loading))
       (agent-org-buffer-insert-prompt buffer))))
 
+;;;; Progress reporting while a session loads
+
+(cl-defun agent-org--progress-start (session message &key total)
+  "Give SESSION an echo-area progress report saying MESSAGE.
+TOTAL, when a positive number, makes it a percentage of TOTAL; nil or
+zero leaves the spinning indicator, which is right for a phase with no
+denominator yet — nobody knows how many sessions an agent is going to
+name, and a replay that buffered nothing has nothing to count.
+Replaces any report SESSION already has: one session owns one echo area,
+and two live reports would each step a line the other is waiting to
+close.  `agent-org--open-session' installs `:progress', so the `setf'
+below always has a property to write.  Creating the report is also what
+DISPLAYS the line — `make-progress-reporter' says MESSAGE \"is shown in
+the echo area, with a status indicator appended\" — so a caller that has
+just started a report needs no first step to be seen.
+
+No timer of ours runs here, and that is the whole low-end design.
+`progress-reporter-update' is documented as relatively inexpensive: it
+does nothing unless the change since its last display is big enough or
+`agent-org-progress-min-time' seconds have passed.  So the events that
+actually happen — a replay chunk, one page of a listing — can be the
+clock, and a quiet agent costs nothing.  agent-shell's equivalent,
+`agent-shell-active-message-show', animates its reporter with
+`run-at-time' every 0.1 s instead: ten wakeups a second, of which Emacs
+will display at most five, and which go on waking the machine while the
+agent is saying nothing at all."
+  (agent-org--progress-stop session)
+  (setf (plist-get session :progress)
+        ;; MIN-VALUE and MAX-VALUE together decide spinner versus
+        ;; percentage; 0 is non-nil, so `and count' is what turns the
+        ;; spinner into a fraction.  CURRENT-VALUE starts at the bottom,
+        ;; and MAX-VALUE of 0 would divide by zero — hence `positive'.
+        (let ((positive (and (numberp total) (> total 0) total)))
+          (make-progress-reporter message (and positive 0) positive
+                                  nil nil agent-org-progress-min-time))))
+
+(defun agent-org--progress-step (session &optional value)
+  "Advance SESSION's progress report to VALUE, when there is one to advance.
+VALUE is a number for a report started with a total, and a string for a
+spinner — that is what `progress-reporter-update' accepts, a non-numeric
+report using VALUE as the text after its indicator.  Called with no
+VALUE a spinner still turns.
+
+No report is a no-op rather than an error, and that is the point: a
+`session/update' that arrives after the session went ready, or after its
+buffer was killed, must not take the echo area back."
+  (when-let* ((reporter (plist-get session :progress)))
+    (progress-reporter-update reporter value)))
+
+(defun agent-org--progress-stop (session)
+  "Close SESSION's progress report and clear the echo area.
+Quiet by design.  `progress-reporter-done' prints \"...done\", which is
+for a task whose result you cannot otherwise see; every phase here ends
+in something readable — the chooser opens, the history is in the buffer,
+the header line shows the error.  agent-shell's hide calls done and then
+`(message nil)' back to back, so the word it paid a redisplay for is the
+one thing nobody reads.
+Idempotent: a session with no report clears nothing, because that echo
+area may be showing someone else's message."
+  (when (plist-get session :progress)
+    (setf (plist-get session :progress) nil)
+    (message nil)))
+
 ;;;; Failure reporting
 
 (defun agent-org--failure-text (msg)
@@ -477,7 +562,8 @@ been sent yet, so the caller picks `session/new' or `session/load'."
                           :replay-response nil
                           :replay-deadline nil
                           :list-state nil
-                          :list-timer nil)))
+                          :list-timer nil
+                          :progress nil)))
       (agent-org--register-session session)
       (agent-org--subscribe client session)
       (agent-org-buffer-set-session buffer session)
@@ -701,9 +787,19 @@ the candidates helper does not care how many pages it came from.
 ON-FAILURE gets the ACP error and the raw message.
 
 An agent that hands back the cursor it was just sent would page here
-forever, so a repeated cursor is a failure, not another request."
+forever, so a repeated cursor is a failure, not another request.
+
+The paging owns its progress report end to end — started on the first
+page, stepped once per page, closed on every one of the ways out — so
+neither caller has to know it exists, and a `session/list' cannot end
+with a line still spinning over the chooser."
   (agent-org--validate-page-limit page-limit)
   (let ((buffer (plist-get session :buffer)))
+    (when (null cursor)
+      ;; One report for the whole paging, and creating it already paints
+      ;; the line in the echo area, so the wait before the first page is
+      ;; described too.  The recursion leaves the report alone.
+      (agent-org--progress-start session "Listing sessions"))
     (acp-send-request
      :client (plist-get session :client)
      :request (acp-make-session-list-request
@@ -714,13 +810,21 @@ forever, so a repeated cursor is a failure, not another request."
                    (let ((all (vconcat pages
                                        (or (map-elt resp 'sessions) [])))
                          (next (map-elt resp 'nextCursor)))
+                     ;; A spinner has no denominator, so it gets a number
+                     ;; of its own: how many the agent has named is the
+                     ;; difference between "working" and "hung" while a
+                     ;; silent agent pages.
+                     (agent-org--progress-step session (format "%d so far" (length all)))
                      (cond
                       ((null next)
+                       (agent-org--progress-stop session)
                        (funcall on-success `((sessions . ,all))))
                       ((member next seen)
+                       (agent-org--progress-stop session)
                        (funcall on-failure
                                 nil '((message . "agent repeated the same session/list cursor"))))
                       ((and page-limit (>= (1+ (length seen)) page-limit))
+                       (agent-org--progress-stop session)
                        (funcall on-success `((sessions . ,all))))
                       (t
                        (agent-org--list-sessions
@@ -731,7 +835,9 @@ forever, so a repeated cursor is a failure, not another request."
                         :page-limit page-limit
                         :on-success on-success
                         :on-failure on-failure)))))
-     :on-failure on-failure)))
+     :on-failure (lambda (err msg)
+                   (agent-org--progress-stop session)
+                   (funcall on-failure err msg)))))
 
 (defun agent-org--settle-listing (session)
   "Own SESSION's pending listing outcome, and cancel its timeout.
@@ -760,6 +866,11 @@ nothing."
   (let ((buffer (plist-get session :buffer)))
     (when (and buffer (buffer-live-p buffer)
                (agent-org--settle-listing session))
+      ;; Close the report BEFORE the note: `agent-org--progress-stop'
+      ;; clears the echo area, and the note is about to be written into
+      ;; it.  The pager cannot do this itself — the request it is waiting
+      ;; on is exactly the thing that never answered.
+      (agent-org--progress-stop session)
       (message "agent-org: %s did not answer session/list within %ss; starting a new session"
                (agent-org--provider-name session)
                agent-org-session-list-timeout)
@@ -931,8 +1042,11 @@ in Restoring."
 
 (defun agent-org--cancel-replay (session)
   "Drop SESSION's replay entirely: pending render, buffer, loading flag.
-A failed load leaves nothing worth painting."
+A failed load leaves nothing worth painting — and nothing worth
+reporting, so the echo area is cleared here rather than left with a
+spinner for a restore that is never coming."
   (agent-org--unschedule-replay session)
+  (agent-org--progress-stop session)
   (setf (plist-get session :replay) nil)
   (setf (plist-get session :loading) nil))
 
@@ -970,6 +1084,10 @@ typed id) and however the id was chosen."
         (agent-org--show-open-instead session open)
       (setf (plist-get session :loading) t)
       (agent-org-buffer-set-status buffer :state 'loading :message "Restoring…")
+      ;; The header line says which state the buffer is in; the echo area
+      ;; says how much of it has landed.  Before this, a 200-turn restore
+      ;; and a hung agent were indistinguishable for the whole replay.
+      (agent-org--progress-start session "Restoring session history")
       (acp-send-request
        :client (plist-get session :client)
        :request (acp-make-session-load-request :session-id session-id :cwd cwd)
@@ -1183,14 +1301,27 @@ they become a single turn again."
 One pass over the buffered updates with undo recording off, so restoring
 a long session is a single insertion run rather than thousands of
 undo-worthy edits.  Clears `:replay' and leaves every turn closed, so
-the caller can open the live prompt."
-  (let ((buffer (plist-get session :buffer))
-        (updates (nreverse (plist-get session :replay)))
-        (pending nil))
+the caller can open the live prompt.
+
+This pass is reported as a fraction rather than a spinner, and it is the
+one phase with a denominator: the replay has been buffered and counted
+by now.  It is also where a slow machine spends real seconds — hundreds
+of Org insertions in a synchronous run, during which Emacs can tell the
+user nothing except through the echo area.  Stepping the report once per
+update costs a comparison; the display behind it is bounded by
+`agent-org-progress-min-time', which is why the loop does not also need
+to count down to some stride."
+  (let* ((buffer (plist-get session :buffer))
+         (updates (nreverse (plist-get session :replay)))
+         (total (length updates))
+         (painted 0)
+         (pending nil))
     (setf (plist-get session :replay) nil)
+    (agent-org--progress-start session "Restoring session history" :total total)
     (with-current-buffer buffer
       (let ((buffer-undo-list t))
         (dolist (update updates)
+          (agent-org--progress-step session (cl-incf painted))
           (if (equal (map-elt update 'sessionUpdate) "user_message_chunk")
               (setq pending (concat pending
                                     (agent-org--chunk-text
@@ -1199,7 +1330,8 @@ the caller can open the live prompt."
             (setq pending nil)
             (agent-org--buffer-update buffer update)))
         (agent-org--flush-user buffer pending)
-        (agent-org-buffer-end-agent-turn buffer)))))
+        (agent-org-buffer-end-agent-turn buffer)))
+    (agent-org--progress-stop session)))
 
 (defun agent-org--on-notification (session notification)
   "Dispatch one ACP NOTIFICATION for SESSION into the Org buffer.
@@ -1215,6 +1347,15 @@ kind is handled here and nothing is delegated to another handler."
                (member kind agent-org--replay-kinds))
           (progn
             (push update (plist-get session :replay))
+            ;; The replay is what the wait consists of, so each chunk is
+            ;; the tick: a report stepping here needs no timer of its own
+            ;; to show that history is arriving.  It is passed no number,
+            ;; because counting the buffer (`length' of a growing list,
+            ;; O(n) per chunk) and formatting a string per chunk are two
+            ;; costs this loop buys nothing — the indicator moving already
+            ;; says "arriving", and the count that does pay for itself,
+            ;; the painted fraction, comes from `agent-org--render-replay'.
+            (agent-org--progress-step session)
             ;; A render is armed only after the load response lands, so
             ;; re-arming here is exactly what keeps history that arrives
             ;; *after* that response out of the bit-bucket.

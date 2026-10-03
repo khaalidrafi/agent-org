@@ -1859,7 +1859,11 @@ choice\", which is the case that used to leave a chat buffer stranded."
      ,@body))
 
 (defvar ao--messages nil
-  "Strings `message' was handed inside `ao--capture-messages', newest first.")
+  "What `message' was handed inside `ao--capture-messages', newest first.
+A formatted string, or nil for the echo area being CLEARED — which is
+what closing a progress report leaves behind, and the reason the
+recorder cannot just `format' every call: `format' rejects a nil
+argument, real Emacs accepts `(message nil)'.")
 
 (defmacro ao--capture-messages (&rest body)
   "Run BODY recording every echo-area `message' call into `ao--messages'.
@@ -1871,7 +1875,10 @@ INSIDE BODY: the binding is gone once the macro's last form has run."
   `(let ((ao--messages nil))
      (cl-letf (((symbol-function 'message)
                 (lambda (format-string &rest args)
-                  (push (apply #'format format-string args) ao--messages))))
+                  (push (if format-string
+                            (apply #'format format-string args)
+                          nil)
+                        ao--messages))))
        ,@body)))
 
 (ert-deftest test-agent-org-session-strategy-is-a-named-choice ()
@@ -2427,6 +2434,257 @@ the single-candidate shortcut stays resume's own."
                              ':params)))
         (should (equal (map-elt params 'sessionId) "s-p2")))
       (should (= 2 (ao--sent-count "session/list")))
+      (kill-buffer buf))))
+
+;;;; Progress reporting while a session loads
+;;
+;; Two windows in agent-org are actually slow: fetching the directory's
+;; older chats, and replaying one of them.  Both are now reported with
+;; Emacs's own progress reporter in the echo area, which bounds its own
+;; redisplays; the phase before them (the handshake) stays header-only,
+;; because there is nothing to count and no events to step on.
+
+(ert-deftest test-agent-org-progress-arms-no-timer ()
+  "The report is stepped by the events that happen, never by a clock.
+`agent-shell-active-message-show' animates its reporter with
+`run-at-time' at 0.1s — ten wakeups a second, of which Emacs will
+display at most five (`make-progress-reporter''s own MIN-TIME default is
+0.2s), and which go on firing while the agent says nothing at all.  On a
+Celeron that is the cost of a decoration: here a replay chunk or a
+listing page IS the tick, so an idle agent costs zero."
+  (let ((armings 0)
+        (session (list :buffer nil :progress nil)))
+    (cl-letf (((symbol-function 'run-at-time)
+               (lambda (&rest _) (cl-incf armings) nil)))
+      (agent-org--progress-start session "Restoring session history")
+      (agent-org--progress-step session)
+      (agent-org--progress-step session)
+      (agent-org--progress-stop session))
+    (should (= 0 armings))
+    (should-not (plist-get session :progress))))
+
+(ert-deftest test-agent-org-progress-throttles-the-echo-area ()
+  "Stepping is cheap; displaying is not, so the interval bounds displays.
+`progress-reporter-update' documents itself as relatively inexpensive:
+it does nothing when the change since the last report is too small or
+insufficient time has passed.  `agent-org-progress-min-time' is that
+interval, and these two runs are the difference between a call and a
+redisplay of a growing Org buffer: 20 steps an hour apart cost ONE
+echo-area line — the one the report paints when it is created — while
+the same 20 steps with the interval pinned to 0 show every one of them.
+A slow machine raises the variable; the default is Emacs's own 0.2s."
+  (let ((session (list :buffer nil :progress nil)))
+    (ao--capture-messages
+      (let ((agent-org-progress-min-time 3600))
+        (agent-org--progress-start session "Restoring" :total 100)
+        (dotimes (i 20) (agent-org--progress-step session (* (1+ i) 5))))
+      ;; one line: the one the report painted when it was created
+      (should (= 1 (length (remq nil ao--messages)))))
+    (let ((session (list :buffer nil :progress nil)))
+      (ao--capture-messages
+        (let ((agent-org-progress-min-time 0))
+          (agent-org--progress-start session "Restoring" :total 100)
+          (dotimes (i 20) (agent-org--progress-step session (* (1+ i) 5))))
+        ;; creation plus one per step, i.e. nothing suppressed
+        (should (>= (length (remq nil ao--messages)) 20))))))
+
+(ert-deftest test-agent-org-progress-replaces-the-reporter-it-starts-over ()
+  "One session, one echo-area line: starting closes what was open.
+The listing report and the replay report are consecutive phases of the
+same `agent-org-start', so a second live reporter would mean two owners
+of one line — and the older one would keep stepping a message nobody is
+waiting for.  Only what is displayed AFTER the replacement matters here:
+creating a report paints its line immediately, so the first phase is
+entitled to the echo area while it is the phase you are in."
+  (let ((session (list :buffer nil :progress nil)))
+    (ao--capture-messages
+      (let ((agent-org-progress-min-time 0))
+        (agent-org--progress-start session "Listing sessions")
+        (agent-org--progress-step session "12 so far")
+        (let ((before (length ao--messages)))
+          (agent-org--progress-start session "Restoring session history")
+          (agent-org--progress-step session)
+          ;; `ao--messages' is newest first, so the lines the replacement
+          ;; produced are the ones in front of what was already there.
+          (let ((fresh (seq-take ao--messages (- (length ao--messages) before))))
+            (should fresh)
+            (should-not (seq-filter (lambda (m) (and m (string-match-p "Listing" m)))
+                                    fresh))
+            (should (seq-filter (lambda (m) (and m (string-match-p "Restoring" m)))
+                                fresh))
+            (should (plist-get session :progress))))))))
+
+(ert-deftest test-agent-org-progress-stop-clears-rather-than-says-done ()
+  "Closing a report frees the echo area instead of printing `...done'.
+`progress-reporter-done' exists to announce a task whose result you
+cannot otherwise see; both of our phases produce something visible (the
+chooser opens, the history is in the buffer), and the header line already
+carries the state.  agent-shell calls done and then `(message nil)'
+back-to-back, so its `done' line is a redisplay nobody reads — the one
+cost we can simply not pay."
+  (let ((session (list :buffer nil :progress nil)))
+    (ao--capture-messages
+      (let ((agent-org-progress-min-time 0))
+        (agent-org--progress-start session "Restoring session history")
+        (agent-org--progress-step session)
+        (agent-org--progress-stop session))
+      (should-not (plist-get session :progress))
+      (should (null (car ao--messages)))
+      (should-not (seq-filter (lambda (m) (and m (string-match-p "done" m)))
+                              ao--messages)))))
+
+(ert-deftest test-agent-org-listing-reports-and-clears-before-the-prompt ()
+  "Fetching the older chats is reported, and the report is closed before
+the chooser opens.
+The header says `Connecting…' for the whole window between the handshake
+and a live session — true, but not specific: this wait is the listing.
+After it the user is reading candidates, so a progress line still
+blinking over the minibuffer would be noise at exactly the wrong moment."
+  (ao--capture-wire
+    (let* ((agent-org-progress-min-time 0)
+           (agent-org-session-strategy 'prompt)
+           (at-prompt nil)
+           (buf (agent-org-start 'qoder))
+           (session (agent-org--session-for-buffer buf)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (should (plist-get session :progress))
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (_prompt collection &rest _)
+                   (push (list :live (plist-get session :progress)
+                               :latest (car ao--messages))
+                         at-prompt)
+                   (seq-find (lambda (c) (string-match-p "\\[s-new\\]" c))
+                             (ao--collection collection)))))
+        (ao--capture-messages
+          (ao--drive "session/list"
+                     (ao--list-resp `(("s-new" "Newest chat" ,(ao--today))
+                                      ("s-old" "Older chat"
+                                       "2026-09-01T10:00:00+0000"))))
+          (should (= 1 (length at-prompt)))
+          (should-not (plist-get (car at-prompt) :live))
+          (should (null (plist-get (car at-prompt) :latest)))
+          (should (seq-filter (lambda (m) (and m (string-match-p "Listing sessions" m)))
+                              ao--messages)))
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-listing-pages-step-the-report ()
+  "Every page of a paged listing ticks the report, and says how many it has.
+A directory with hundreds of chats is fetched over several requests; the
+count in the report is the difference between \"working\" and \"hung\" on
+a machine where one agent process already owns the CPU.
+Both counts come from ONE report, because the continuation leaves it
+running: the numbers climb rather than restarting, which is the only way
+a paged listing reads as progress.  The report this test ends with is the
+replay's, not the listing's — `latest' chose a session and
+`agent-org--progress-start' handed the line over."
+  (ao--capture-wire
+    (let* ((agent-org-progress-min-time 0)
+           (agent-org-session-strategy 'latest)
+           (buf (agent-org-start 'qoder))
+           (session (agent-org--session-for-buffer buf)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (ao--capture-messages
+        (ao--drive "session/list"
+                   (ao--list-resp `(("s-p1" "Page one" ,(ao--today))) "cursor-2"))
+        (ao--drive "session/list"
+                   (ao--list-resp `(("s-p2" "Page two"
+                                     "2026-09-01T10:00:00+0000"))))
+        (dolist (count '("1 so far" "2 so far"))
+          (should (seq-filter (lambda (m) (and m (string-match-p count m)))
+                              ao--messages)))
+        (should (plist-get session :progress)))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-replay-reports-as-history-arrives ()
+  "`session/load' is the wait a user feels, so the echo area moves with it.
+While the replay streams the buffer is not interactive and the header
+cannot say how much has landed — a 200-turn restore looked identical to a
+hung one.  Each buffered update steps the report, which is what makes a
+spinner animate without any timer running."
+  (ao--capture-wire
+    (let* ((agent-org-progress-min-time 0)
+           (buf (agent-org-resume-session 'qoder "sid-p"))
+           (session (agent-org--session-for-buffer buf)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (should (plist-get session :progress))
+      (ao--capture-messages
+        (dolist (update (list
+                         '((sessionUpdate . "user_message_chunk")
+                           (content . ((type . "text") (text . "Old question"))))
+                         '((sessionUpdate . "agent_message_chunk")
+                           (content . ((type . "text") (text . "Old answer"))))))
+          (agent-org--on-notification session (ao--update-notif update)))
+        (should (>= (length (seq-filter (lambda (m)
+                                          (and m (string-match-p "Restoring session history" m)))
+                                        ao--messages))
+                    2))
+        (ao--drive "session/load" '((sessionId . "sid-p")))
+        (ao--settle)
+        (should-not (plist-get session :progress))
+        (should (null (car ao--messages))))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-painting-history-reports-a-percentage ()
+  "The paint pass reports a fraction of the buffered updates.
+This is the part that costs the machine real time — hundreds of Org
+insertions in one synchronous run — and it is the only phase with a
+denominator, since the buffered replay is counted by then.  A spinner
+here would say \"busy\"; a percentage says how far to go."
+  (ao--capture-wire
+    (let* ((agent-org-progress-min-time 0)
+           (buf (agent-org-resume-session 'qoder "sid-pct"))
+           (session (agent-org--session-for-buffer buf)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (dolist (n '(1 2 3 4))
+        (agent-org--on-notification
+         session
+         (ao--update-notif
+          `((sessionUpdate . "agent_message_chunk")
+            (content . ((type . "text") (text . ,(format "Turn %s" n))))))))
+      (ao--drive "session/load" '((sessionId . "sid-pct")))
+      (ao--capture-messages
+        (ao--settle)
+        (should (seq-filter (lambda (m)
+                              (and m (string-match-p "[0-9]+%" m)))
+                            ao--messages))
+        (should-not (plist-get session :progress)))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-killing-a-loading-buffer-clears-the-report ()
+  "A restore abandoned by killing the chat buffer leaves no line behind.
+`agent-org--forget-session' already owns every other exit of a loading
+session — its timers, its agent process, its registry entry — and the
+echo area is the fourth: without this the killed buffer's spinner kept
+redrawing a line under whatever the user opened next."
+  (ao--capture-wire
+    (let* ((agent-org-progress-min-time 0)
+           (buf (agent-org-resume-session 'qoder "sid-k"))
+           (session (agent-org--session-for-buffer buf)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (should (plist-get session :progress))
+      (ao--capture-messages
+        (kill-buffer buf)
+        (should-not (plist-get session :progress))
+        (should (null (car ao--messages)))))))
+
+(ert-deftest test-agent-org-failed-load-clears-the-report ()
+  "A `session/load' that fails ends the report silently.
+The header carries the error (`:state 'error' renders its message), so
+the echo area's job is to get out of the way — no `...done', no spinner,
+and nothing left that would cover the diagnostic."
+  (ao--capture-wire
+    (let* ((agent-org-progress-min-time 0)
+           (buf (agent-org-resume-session 'qoder "sid-f"))
+           (session (agent-org--session-for-buffer buf)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (ao--capture-messages
+        (let ((entry (ao--sent-get "session/load")))
+          (should entry)
+          (funcall (plist-get entry :on-failure)
+                   nil '((:object (error (code . -32603)
+                                         (message . "boom"))) (:json . "{}"))))
+        (should-not (plist-get session :progress))
+        (should (null (car ao--messages))))
       (kill-buffer buf))))
 
 (provide 'test-agent-org)

@@ -214,6 +214,31 @@ non-failure note that must not steal the Ready segment — e.g. a provider's
 pinned model not being offered by the agent — goes to the echo area with
 `message` instead.  Never invent a third channel, and never write to the body.
 
+The echo area therefore has two users, and the difference is lifetime.  A *note*
+is one line, left alone to expire on `message-log-max`'s own timer.  A *report*
+is a line that is replaced as work proceeds and cleared when it ends: while a
+session LOADS, `agent-org--progress-start' / `-step' / `-stop' drive a
+`progress-reporter' there for the two phases that can actually be slow —
+`session/list' paging and the `session/load' replay.  It is not a third channel:
+it is the echo area, and it exists because the header line can only ever say
+which *state* the buffer is in, not how much of it has arrived.  Three rules
+keep it from becoming noise:
+
+* **Nothing steps it on a timer.** The events that happen — one replay chunk,
+  one page — are the tick.  `progress-reporter-update' documents itself as doing
+  nothing when the change is too small or too soon, so the redisplay rate is
+  bounded by `agent-org-progress-min-time' (Emacs's own 0.2 s default) while an
+  idle agent costs nothing at all.
+* **Each phase owns its report end to end.** `agent-org--list-sessions' closes
+  its own on every one of its outcomes; `agent-org--list-timeout' closes the one
+  the pager cannot reach; the replay's is closed by the render, the cancel and
+  the kill of the buffer.  `agent-org--progress-start' replaces, so a leak
+  cannot leave two owners of one line.
+* **Closing clears rather than announces** (`(message nil)`, not
+  `progress-reporter-done`), and it happens *before* any note is written into
+  the same area — otherwise the stop erases the explanation that just followed
+  it.
+
 `:note` is not a third channel — it is the header channel, for the one case
 where the echo area demonstrably was not enough.  A `session/list` that timed
 out fell back to `session/new` with nothing on screen but `Ready`, and the user
@@ -289,6 +314,14 @@ The contract that keeps it cheap on a slow machine:
   history still arriving.
 * Killing the buffer cancels the pending render, so no timer ever fires
   against a dead buffer.
+* The two halves of replay report differently, because only one of them has a
+  denominator.  Updates arriving get a spinner (`agent-org--progress-step`
+  with **no value**): nobody knows how many chunks an agent intends to replay,
+  and counting them per chunk would walk a growing list on every one —
+  quadratic on exactly the long session that needs the feedback.  The paint
+  pass knows `total` up front, so it gets a percentage, and it is the only
+  phase that blocks Emacs long enough (one synchronous run) to be worth
+  measuring.
 
 Anything the agent *names* is free text, and it arrives as such.  A live qoder
 session titled its tool calls with the whole shell command (one title was

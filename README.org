@@ -146,7 +146,10 @@ Three details make this bearable on agents that are slow, silent or long:
 
 - The listing follows the agent's ~nextCursor~, so chats older than the
   first page are offered too.  ~agent-org-session-list-page-limit~ caps
-  the requests; nil, the default, reads every page.
+  the requests; nil, the default, reads every page.  Each page ticks a
+  line in the echo area — ~Listing sessions... 38 so far~ — so a
+  directory with hundreds of chats reads as work in progress, not as a
+  hang.
 - goose advertises ~list~ and never answers it, so
   ~agent-org-session-list-timeout~ gives up and opens a new session
   instead, saying so in the echo area /and/ on the header line — the
@@ -186,7 +189,13 @@ Resume is cheap on purpose (this is a 4 GB machine): the replayed
 ~session/update~ notifications are buffered while the load is in
 flight and painted in one pass with undo recording off, so a long
 history costs one insertion run instead of a re-fontification per
-chunk.
+chunk.  The echo area reports both halves: a spinner while the updates
+arrive (~Restoring session history... |~) and then a percentage for the
+single paint pass, because that pass is the one that knows how many
+turns there are (~Restoring session history...42%~).  Nothing runs on a
+timer — the events themselves are the clock — so a quiet agent costs
+nothing, and ~agent-org-progress-min-time~ bounds how often the line is
+redrawn (raise it to 0.5 or 1.0 if the machine is straining).
 
 goose advertises ~session/list~ and never answers it.  Resume therefore
 sits on ~Restoring~ until you cancel with ~C-g~ — it will not guess a
@@ -282,6 +291,10 @@ conversation below it.
 - ~agent-org-replay-settle-delay~ / ~agent-org-replay-settle-cap~ — how
   long a resume waits for the agent to stop streaming history before it
   paints it, and the hard upper bound on that wait.
+- ~agent-org-progress-min-time~ — seconds between redraws of the loading
+  line in the echo area (0.2, Emacs's own default).  Raise it to 0.5 or
+  1.0 on a machine that is struggling; the line then updates less often
+  while the work itself is untouched.
 - ~agent-org-providers~ — list of provider plists (~:id~, ~:name~,
   ~:command~ (binary + args), ~:environment~, optional ~:model~ to pin
   for every session of that provider).  Add more agents by customizing

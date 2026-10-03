@@ -100,7 +100,8 @@ emacs -Q --batch \
 #   session: listing timed out)') because an invisible listing fallback read
 #   as "the prompt never happens".  Set it through `agent-org--note-new-session'
 #   (agent text goes through `agent-org-buffer--label', one line always), never
-#   by reusing `:message'.
+#   by reusing `:message'.  (The echo area has a second, transient user: a
+#   progress report while a session LOADS — see the loading bullet below.)
 # - Two different things named MiniMax: MiniMax CODE (`mcode', its own ACP
 #   server via `mcode acp', provider id `minimax', pins nothing — its default
 #   model is MiniMax already) and MiniMax MODELS served by another agent
@@ -185,3 +186,40 @@ emacs -Q --batch \
 #   agent down) and notes it in the echo area.  A cancelled prompt yields NIL —
 #   both readers complete with REQUIRE-MATCH, so nil is never a real answer, and
 #   the caller must then send neither `session/new' nor `session/load'.
+# - LOADING is reported in the echo area by a progress reporter, and the
+#   events ARE the clock: `agent-org--progress-start' / `-step' / `-stop'
+#   (agent-org.el, `:progress' on the session plist) wrap the two phases that can
+#   actually be slow — `session/list' paging and the `session/load' replay.  NO
+#   TIMER runs for them, deliberately: agent-shell's equivalent,
+#   `agent-shell-active-message-show', animates its reporter with `run-at-time'
+#   every 0.1 s, i.e. ten wakeups a second of which Emacs can display at most
+#   five (`make-progress-reporter''s own MIN-TIME default is 0.2 s), and they go
+#   on firing while the agent says nothing at all.  On this machine that is the
+#   cost of a decoration.  `progress-reporter-update' is documented as doing
+#   nothing when the change is too small or too soon, so stepping once per event
+#   is self-limiting: raise `agent-org-progress-min-time' for less redraw, lower
+#   it (or pin it to 0 in a test) to see every step.  Creating a report already
+#   DISPLAYS its line, so a caller needs no first step to be seen.
+# - Take the reporter's SHAPE from agent-shell, not its exit list.  Its hide is
+#   called from five subscription sites, and a site added later leaks a spinner;
+#   here each phase owns its report end to end — `agent-org--list-sessions' starts
+#   on the first page and closes on every one of its own outcomes (last page,
+#   page limit, repeated cursor, failure), `agent-org--list-timeout' closes the one
+#   the pager cannot reach (the request that never answered), and
+#   `agent-org--render-replay' / `agent-org--cancel-replay' /
+#   `agent-org--forget-session' close the replay's.  Starting REPLACES, so phases
+#   can only hand the line over, never fight over it.
+# - Closing a report is `(message nil)', NOT `progress-reporter-done': every phase
+#   here ends in something visible to read (the chooser, the restored history, the
+#   error on the header), so a `...done' line is a redisplay nobody reads —
+#   agent-shell pays it and then clears the area on the next line anyway.  ORDER
+#   matters: stop BEFORE writing an echo-area note (the stop clears what follows
+#   it), which is why `agent-org--list-timeout' stops first and explains itself
+#   second.
+# - Only the paint pass gets a PERCENTAGE, because it is the only phase with a
+#   denominator (`agent-org--render-replay' knows how many updates it buffered) and
+#   the only one that blocks Emacs in one synchronous run.  A spinner is stepped
+#   with no value while history arrives: counting the buffer (`length' of a growing
+#   list, once per chunk) and formatting a string per chunk are two costs that buy
+#   nothing, because an indicator that moves already says "arriving".  Never step
+#   with a computed count on a per-chunk path.

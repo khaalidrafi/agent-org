@@ -422,6 +422,94 @@ calls: no =session/load=, no =session/new=, our buffer dead, one
 buffer — =pop-to-buffer= really does work in batch, so there is no need
 to stub it and assert a mock was called.  Suite: 99 -> 102 tests, all green.
 
+* Loading is reported in the echo area (=agent-org--progress-*=)
+
+** TODO Read =agent-org--progress-start= / =-step= / =-stop= (agent-org.el)
+
+Question: is one report per *session* (the =:progress= key) the right owner,
+rather than one per buffer?
+
+It is per session because one session owns one echo area: =-start= stops and
+replaces whatever report was there, so a phase that leaked a line cannot leave
+two owners stepping it.  While reading, check the other half of the contract —
+every key any of the three functions =setf=s is installed by
+=agent-org--open-session=, because =setf= on a =plist-get= of a *missing* key
+silently does nothing and the report would then never be seen or cleared.
+
+** TODO Check who closes each report
+
+Three phases, three owners, and the point is that no caller has to remember:
+
+| phase                       | started in                    | closed by                                    |
+|-----------------------------+-------------------------------+----------------------------------------------|
+| =session/list= paging       | =agent-org--list-sessions=    | its three terminal =cond= arms + its =:on-failure= |
+| listing timeout             | (the pager's, still open)     | =agent-org--list-timeout= — the one exit the pager cannot reach |
+| =session/load= replay       | =agent-org--load-session=     | =agent-org--render-replay=, =-cancel-replay=, =-forget-session= |
+
+Read those six sites and answer: can any of them leave a line spinning?  The
+kill path is the safety net (=agent-org--forget-session=), so a phase that only
+closes on success is a bug you can only see by killing a buffer mid-load — which
+is what =test-agent-org-killing-a-loading-buffer-clears-the-report= does.
+
+** TODO Verify the stop-*before*-the-note ordering (=agent-org--list-timeout=)
+
+=-stop= is =(message nil)=, which erases the echo area.  So it must run *before*
+the timeout writes its explanation, or the fallback reason deletes itself.  One
+line of code, easy to invert during a refactor, and inverting it is invisible
+until you read it — hence a test, =test-agent-org-listing-reports-and-clears-before-the-prompt=.
+
+** DONE Why no timer: the =agent-shell-active-message-show= difference
+
+agent-shell animates its reporter with =(run-at-time 0 0.1 …)= — ten wakeups a
+second, of which Emacs displays at most five (its own throttle is 0.2 s), and
+which keep waking the machine while the agent says nothing at all.  Here the
+events *are* the clock: a replay chunk, one page. =progress-reporter-update= is
+documented to do nothing when the change is too small or too soon, so the cost
+that actually needs bounding is the redisplay, and
+=agent-org-progress-min-time= bounds it with Emacs's own default.  Reuse the
+shape (a reporter, =(message nil)= on the way out), not the exit list
+(agent-shell hides from five subscription sites; we own each phase end to end).
+
+** TODO Confirm the percentage appears only where a denominator exists
+
+Only =agent-org--render-replay= passes =:total=, and only its loop steps with a
+computed number (=cl-incf= of =painted=).  Arriving updates step with *no*
+value.  Question to answer: right call?
+
+Yes, and the reason is the cost of the counter, not its meaning: nobody knows
+how many chunks an agent means to replay, and counting them per chunk =length=s
+a growing list once per chunk — quadratic, on the 200-turn session, on the one
+machine that cannot afford it.  The listing count looks similar but is not: =all=
+is a *vector* (=vconcat=), whose =length= is O(1), and it ticks once per page
+rather than once per token.
+
+** TODO Decide whether the handshake should report too
+
+=agent-org-loader.el= deliberately gets no reporter: =initialize= is one round
+trip with nothing to count, and the header line already says *Starting*.  If a
+provider ever takes seconds there, this is the bullet to revisit.
+
+** DONE Ten tests, and the harness bug they exposed
+
+=ao--capture-messages= records the formatted line, so a test can count the
+echo-area writes; =nil= in that list is the area being *cleared*, which is what
+=-stop= does and therefore what four of the ten assert.  Writing the tests
+exposed that the harness itself crashed on =(message nil)= — a nil =format-string=
+passed to =format= is an error, and that crash had been silently swallowing three
+pre-existing tests (the ones that kill a buffer and so release a session).  Fix
+the harness first and those three go green again for the right reason.  Suite:
+102 -> 112 tests, all green, four files byte-compile warning-free.
+
+** TODO What the suite cannot prove
+
+The tests capture =message= and =run-at-time= (=ao--capture-messages=), so they
+prove *what gets said and how often* — and that no timer of ours was armed — but
+not what the line looks like in a real echo area.  Live check: start qoder with
+=agent-org-session-strategy= =prompt= in a directory with several chats and watch
+=Listing sessions…=; then resume a long session and watch it turn into a
+percentage.  On a slow answer, try =M-x customize-variable agent-org-progress-min-time=
+at 1.0 and confirm the line simply updates less often.
+
 * How to check the whole thing
 
 #+begin_src sh
@@ -431,7 +519,7 @@ emacs -Q --batch --eval "(add-to-list 'load-path \"$PWD\")" \
   --eval "(ert-run-tests-batch-and-exit)"
 #+end_src
 
-The suite is 102 tests.  The MiniMax/model ones are
+The suite is 112 tests.  The MiniMax/model ones are
 ~test-agent-org-minimax-provider-present~ (spawns ~mcode acp~, no pin),
 ~test-agent-org-minimax-start-pins-nothing~ (the OpenCode-shaped design may
 not creep back), ~test-agent-org-opencode-provider-present~, the four
@@ -464,3 +552,13 @@ agent-down~ and ~…-killing-during-a-listing-cancels-the-timeout~.  They need
 (~acp-make-client~ returns a counted object, ~acp-shutdown~ records into
 ~acp-mock-shutdown-clients~), because "the right client was shut down" is the
 assertion.
+
+The loading-report ones are ~test-agent-org-progress-arms-no-timer~,
+~…-throttles-the-echo-area~ (one hour = exactly one line, 0 = twenty-plus),
+~…-replaces-the-reporter-it-starts-over~, ~…-stop-clears-rather-than-says-done~,
+~test-agent-org-listing-reports-and-clears-before-the-prompt~,
+~…-listing-pages-step-the-report~, ~…-replay-reports-as-history-arrives~,
+~…-painting-history-reports-a-percentage~, ~…-killing-a-loading-buffer-clears-the-report~
+and ~…-failed-load-clears-the-report~.  They read ~ao--capture-messages~, whose
+elements are the formatted echo-area lines — a ~nil~ element meaning the area was
+/cleared/, which is how a test sees ~agent-org--progress-stop~.
