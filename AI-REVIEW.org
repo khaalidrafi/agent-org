@@ -654,8 +654,8 @@ worked in the suite and failed in the only environment that matters.  It now
 builds the dotted-pair shape, and a mutation check confirms the line holds: put
 the =plist-get= reader back and three kill tests fail
 (~…kill-of-chat-buffer-with-agent-asks~, ~…kill-query-wording-names-the-process~,
-~…kill-query-yes-kills-and-releases-the-agent~); with =map-elt= the suite is
-156/156.
+~…kill-query-yes-kills-and-releases-the-agent~); with =map-elt= the suite has been
+166/166 ever since.
 
 Worth generalising, because it is the shape of a whole class of stub bugs: a mock
 must mirror the dependency's /data shape/, not merely its key names, or the suite
@@ -722,6 +722,98 @@ It releases nothing.  A YES lets the kill proceed, and the kill-hook's
 under test by the earlier unit.  A second shutdown here would be a second owner
 of the same process.
 
+* Switching between open chats (=agent-org-switch-buffer=)
+
+** DONE Reuse the listing's columns, and the one thing that had to change
+
+Rows are =LABEL  STATUS  [id]= — the same measuring pass
+(=agent-org--column-width=), the same hand-rolled padding (=agent-org--pad=, by
+display columns because =string-pad= counts characters) and the same dimming
+(=agent-org--session-display= puts =shadow= on everything after the title) that
+the =agent-org-start= chooser uses, so the two lists cannot drift apart in
+appearance, and =agent-org--completion-collection= /
+=agent-org--selection-value= come along for free: pinned order, and a choice
+resolved by =equal= on a property-free value instead of by =assoc= on a display
+some completion framework may have rebuilt.
+
+What differs is the /value/ of a row.  A listing row carries a session id,
+because nothing is open yet; a switcher row carries the BUFFER object, because
+the agent renames its own chat and =switch-to-buffer= on a name that has just
+been renamed under the registry switches to nothing.  =agent-org--selection-value=
+therefore matches on the display and hands back a buffer, which is what
+=…-switch-buffer-switches-to-the-chosen-chat= asserts by /looking/ for the buffer
+in the chosen window, not by checking that a function was called.
+
+Order is registry order, not the wire's recency: =agent-org--register-session=
+pushes, so the chat you started last is the first candidate — and the
+=session/list= timestamp is not even available for a session that is /open/, which
+is a fact about the row, not a shortcut.
+
+** DONE Two rows that were identical, so the label became the name's label
+
+The first live run of this code printed:
+
+#+begin_example
+"Qoder               Streaming  [b480ebca-6b06-467e-822a-88cf491b75fa]"
+"Qoder               Streaming  [ef80d1b2-de8e-4b76-ad91-24e540fb4b30]"
+#+end_example
+
+Two chats, two projects, one provider, and the only difference a UUID — while
+=C-x b= next to them was happily reading =agent-org Qoder= and =org-docs Qoder=.
+The row was built from =:title= else =:provider=, which is /half/ of what the
+buffer name is built from; the project directory was left out.
+
+So the label is now one function, =agent-org-buffer--chat-label=, called by
+=agent-org-buffer--wanted-name= /and/ by =agent-org--chat-columns=.  Read that as
+the design decision, not the refactor: the alternative was two builders with the
+same three rules written twice, which is how one chat ends up with two names in
+two UIs that are open at the same time.  It takes the status plist as an
+argument rather than reading the buffer-local variable, because the switcher
+labels /other/ buffers and =with-current-buffer= there is a function that can
+move point in a chat you only meant to look at.
+
+** DONE The test was wrong before the code was (=align-their-columns=)
+
+The column assertion failed with =(apply equal (18 47))= while the two rows,
+printed, were byte-for-byte the same 65 columns.  The measure was the bug: it
+looked for the first run of two spaces, but the short title is /padded/ with
+spaces and the separator is spaces, so on a padded row the first double space
+sits somewhere inside the padding and its position records where the padding
+happened to begin.  The fix measures the first character carrying the =shadow=
+face, which is the start of the dimmed column by construction.
+
+Worth keeping in mind for every column assertion in this suite: /never locate a
+column by the whitespace in front of it/.  Two of these tests
+(=…-align-their-columns=, =…-name-the-project-too=) were also mutation-checked —
+replace =agent-org--pad= with identity, or =agent-org-buffer--chat-label= with a
+title-only version, and exactly the tests above go red — so they are holding the
+code and not themselves.
+
+** TODO Read the no-binding call
+
+=agent-org-switch-buffer= is =M-x=-only.  =agent-shell= binds nothing for its
+switcher either, and =C-x b= / does reach every chat (the names are built to be
+read), so this command is a shorter list rather than a new capability — which is
+also why its rows come from the registry and not from a =major-mode= scan of
+=buffer-list()=: the registry is the thing that knows a buffer has an agent
+behind it.  If you want a key, the chat-mode map in =agent-org-buffer.el= is the
+place, but note that it would only be reachable /from/ a chat buffer, which is
+exactly when you might be stranded in the one you are trying to leave.
+
+** DONE Nine tests, and the 166 the suite is at now
+
+=offer-every-open-chat= (rows and their buffer values),
+=wear-the-provider-without-a-title=, =name-the-project-too= (the live bug above),
+=show-the-state-the-bar-shows= (=Streaming= / =Ready=, the header line's own
+vocabulary), =align-their-columns=, =drop-a-killed-chat= (the registry outlives a
+window until the kill-hook runs), =switch-buffer-switches-to-the-chosen-chat=,
+=switch-buffer-with-nothing-open-signals= (=user-error=, and no prompt shown at
+all) and =switch-buffer-pins-registry-order= (the collection is a FUNCTION, and
+its =metadata= carries =display-sort-function . identity=).  Harness:
+=ao--two-chats= (two Ready chats with distinct ids and titles) and
+=ao--isolated-registry= (bind =agent-org--sessions= nil — several earlier suites
+leave chat buffers alive, and a counting test would count them).
+
 * How to check the whole thing
 
 #+begin_src sh
@@ -731,7 +823,7 @@ emacs -Q --batch --eval "(add-to-list 'load-path \"$PWD\")" \
   --eval "(ert-run-tests-batch-and-exit)"
 #+end_src
 
-The suite is 156 tests.  The MiniMax/model ones are
+The suite is 166 tests.  The MiniMax/model ones are
 ~test-agent-org-minimax-provider-present~ (spawns ~mcode acp~, no pin),
 ~test-agent-org-minimax-start-pins-nothing~ (the OpenCode-shaped design may
 not creep back), ~test-agent-org-opencode-provider-present~, the four
@@ -786,3 +878,10 @@ The loading-report ones are ~test-agent-org-progress-arms-no-timer~,
 and ~…-failed-load-clears-the-report~.  They read ~ao--capture-messages~, whose
 elements are the formatted echo-area lines — a ~nil~ element meaning the area was
 /cleared/, which is how a test sees ~agent-org--progress-stop~.
+
+The switcher ones are the nine ~test-agent-org-switch-*~ names listed above.  They
+need no new harness beyond two helpers: ~ao--two-chats~ (two Ready chats with
+distinct ids and titles, because two identical rows /is/ the bug) and
+~ao--isolated-registry~ (a ~let~ binding ~agent-org--sessions~ to nil around the
+whole body — the registry is global and earlier suites leave chat buffers alive,
+so a test that counts rows otherwise counts strangers).

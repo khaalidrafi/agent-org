@@ -353,20 +353,40 @@ does for `#+TITLE:', and the id is left out until the agent has given one
 (the buffer is named this way from the moment `session/new' is answered,
 and qoder titles a session only after the first turn).  Title text is
 agent-supplied free text, hence `agent-org-buffer--label': a buffer name
-with a newline in it breaks the completion UI."
+with a newline in it breaks the completion UI.
+
+The name's middle is `agent-org-buffer--chat-label', which
+`agent-org-switch-buffer' builds its first column from as well: one chat,
+one display label, wherever it is shown."
   (let* ((status agent-org-buffer--status)
-         (sid (plist-get status :session-id))
-         (project (plist-get status :project))
-         (label (agent-org-buffer--label
-                 (or (plist-get status :title)
-                     (plist-get status :provider)
-                     "agent-org"))))
-    (format "*agent-org: %s%s%s*"
-            (if (and project (not (string-empty-p project)))
-                (concat project " ")
-              "")
-            label
+         (sid (plist-get status :session-id)))
+    (format "*agent-org: %s%s*"
+            (agent-org-buffer--chat-label status)
             (if sid (format " [%s]" sid) ""))))
+
+(defun agent-org-buffer--chat-label (status)
+  "The display label of the chat described by the status plist STATUS.
+`<project> <title>': the directory the chat was started in, then the
+harness's own title, the provider standing in before a title arrives, and
+`agent-org' if not even that is known.  The project comes FIRST because it
+is what distinguishes two chats of one provider — measured live, a session
+in this repo and a session in org-docs produced two switcher rows
+identical but for their UUIDs, while `C-x b' was already telling them
+apart.  Flattened by `agent-org-buffer--label' (the title is agent free
+text) and never truncated, so the label can out-grow a column; the
+padding code copes.
+
+STATUS is a parameter, not a read of `agent-org-buffer--status': the
+switcher labels OTHER buffers, and a function that is only correct when
+called in the right buffer is a bug waiting for the next caller."
+  (let ((project (plist-get status :project))
+        (label (agent-org-buffer--label
+                (or (plist-get status :title)
+                    (plist-get status :provider)
+                    "agent-org"))))
+    (if (and project (not (string-empty-p project)))
+        (concat project " " label)
+      label)))
 
 (defun agent-org-buffer--apply-name ()
   "Rename the current buffer to `agent-org-buffer--wanted-name', if needed.

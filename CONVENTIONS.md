@@ -509,6 +509,39 @@ and `kill-buffer` on a live chat is silent — on a machine where one stray
 
 ---
 
+## 13. A chat has one display label, and one row-builder for both lists
+
+Two UIs name the same chats: the `agent-org-start` / `agent-org-resume-session`
+chooser (sessions on the agent's disk) and `agent-org-switch-buffer` (sessions
+with a live buffer).  They must look like one product, so the second reuses the
+first's parts rather than writing its own:
+
+| Job                            | Function                        |
+|--------------------------------|---------------------------------|
+| widest cell in a column        | `agent-org--column-width`       |
+| left-align by DISPLAY columns  | `agent-org--pad`                |
+| one padded, dimmed row         | `agent-org--session-display`    |
+| pinned-order completion        | `agent-org--completion-collection` |
+| resolve a choice safely        | `agent-org--selection-value`    |
+
+* Measure the batch **before** painting any of it: `agent-org--chat-columns`
+  returns unpadded `(LABEL . STATUS)` and only `agent-org--switch-candidates`
+  knows the maxima to pad to.
+* A row's value is the **buffer object**.  A name is what the agent renames, and
+  resolving a row by name after the fact switches to nothing.
+* A column is located by its `shadow` face transition, never by the spaces in
+  front of it — padding and separator are both spaces, so a space search
+  measures where the padding began.
+* `agent-org-buffer--chat-label` (`<project> <title>`, provider standing in for
+  a title that has not arrived) is the label in the buffer name **and** in the
+  switcher's first column.  Adding a naming rule means editing that one
+  function.
+* It takes the status plist as an argument: the switcher labels other buffers,
+  and `with-current-buffer` there is a function that can move point in a chat
+  the user only meant to look at.
+
+---
+
 ## Manual nodes referenced
 
 * `(org) Headlines` — §2.1 structure, left margin, separator lines.

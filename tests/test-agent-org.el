@@ -3432,6 +3432,236 @@ the single-candidate shortcut stays resume's own."
       (should (= 2 (ao--sent-count "session/list")))
       (kill-buffer buf))))
 
+;;;; Switching between open chat buffers (agent-shell's `agent-shell-switch-buffer')
+;;
+;; `C-x b' can already find a chat by name, but a name is one long string:
+;; three qoder chats differ only in a title buried in the middle of it.  The
+;; switcher's job is the ROW — label, live state, id — in columns you can
+;; scan, which is exactly what the session listing already builds, so these
+;; tests pin the reuse rather than a second formatter.
+
+(defun ao--two-chats ()
+  "Two registered chats, both Ready, with distinct ids and titles.
+Returns ((BUFFER-1 . SESSION-1) . (BUFFER-2 . SESSION-2)).  The fixture
+`ao--make-test-session' gives both the same id and leaves the brand-new
+buffer on `starting', so this pins both facts: a switcher that lists two
+identical rows is the bug this section exists to prevent, and the state
+column is what the tests below read.
+
+`agent-org--sessions' is global and other suites leave their chat buffers
+alive, so a caller that counts rows must bind it nil around the whole
+body — that is the test's job, not this helper's, because the binding has
+to outlive the registration."
+  (let ((one (ao--make-test-session "one"))
+        (two (ao--make-test-session "two")))
+    (setf (plist-get (cdr one) :session-id) "sid-one")
+    (setf (plist-get (cdr two) :session-id) "sid-two")
+    (agent-org-buffer-set-status (car one) :title "Fix the login bug"
+                                 :session-id "sid-one" :state 'ready)
+    (agent-org-buffer-set-status (car two) :title "Rewrite the loader"
+                                 :session-id "sid-two" :state 'ready)
+    (cons one two)))
+
+(defun ao--dim-column (row)
+  "The display-column offset of ROW's first DIMMED character, or nil.
+`agent-org--session-display' leaves the title undecorated and puts the
+`shadow' face on everything after it, so the first propertized character
+IS the start of the date/status column — a measure that survives the
+padding, unlike a search for the separator's spaces."
+  (let ((i (next-single-property-change 0 'face row)))
+    (and i (string-width (substring row 0 i)))))
+
+(defmacro ao--isolated-registry (&rest body)
+  "Run BODY with an empty session registry.
+`agent-org--sessions' is global, and several earlier suites leave their
+chat buffers alive, so a test that counts switcher rows would otherwise
+count strangers — and a stranger's title is whatever the last test left
+there, which is how a column assertion goes red for no reason."
+  (declare (indent 0))
+  `(let ((agent-org--sessions nil))
+     ,@body))
+
+(ert-deftest test-agent-org-switch-candidates-offer-every-open-chat ()
+  "Every live chat buffer is a row, and the row's value is the BUFFER.
+The cdr must be the buffer object, not its name: a name is what an agent
+can rename out from under the registry, and choosing a chat by string
+would then switch to nothing."
+  (ao--isolated-registry
+    (let* ((pair (ao--two-chats))
+           (one (car pair))
+           (two (cdr pair))
+           (choices (agent-org--switch-candidates)))
+      (should (= 2 (length choices)))
+      (should (equal (mapcar #'cdr choices) (list (car two) (car one))))
+      (should (string-match-p "Rewrite the loader" (car (nth 0 choices))))
+      (should (string-match-p "\\[sid-two\\]\\'" (car (nth 0 choices))))
+      (should (string-match-p "Fix the login bug" (car (nth 1 choices))))
+      (kill-buffer (car one))
+      (kill-buffer (car two)))))
+
+(ert-deftest test-agent-org-switch-candidates-wear-the-provider-without-a-title ()
+  "An agent that has titled nothing still gets a readable row.
+The provider stands in, exactly as it does in the buffer name and
+`#+TITLE:', so the switcher and `C-x b' never disagree about what a chat
+is called.  The row leads with the project directory, which
+`agent-org-buffer-create' knows from the moment the buffer exists — this
+is the one case where a chat has no title, so the label proves the
+fallback reaches the switcher too."
+  (ao--isolated-registry
+    (let* ((pair (ao--make-test-session "untitled"))
+           (choices (agent-org--switch-candidates))
+           (project (file-name-nondirectory
+                     (directory-file-name default-directory))))
+      (should (= 1 (length choices)))
+      (should (string-prefix-p (format "%s untitled" project)
+                               (car (nth 0 choices))))
+      (should (string-match-p "\\[sid-test\\]\\'" (car (nth 0 choices))))
+      (kill-buffer (car pair)))))
+
+(ert-deftest test-agent-org-switch-candidates-name-the-project-too ()
+  "The row's label is the buffer name's label, project included.
+Live measurement: two qoder chats from one Emacs produced two rows that
+were byte-identical except for a UUID (\"Qoder Streaming [b480…]\" and
+\"Qoder Streaming [ef80…]\"), while `C-x b' was happily showing \"agent-org
+Qoder\" and \"org-docs Qoder\".  The project directory is what distinguishes
+two chats for the same harness, so the row wears it too — and it wears the
+SAME string the buffer name is built from, not a second copy of the rules,
+because two builders drift and one chat then has two names."
+  (ao--isolated-registry
+    (let* ((pair (ao--two-chats))
+           (one (car pair))
+           (two (cdr pair)))
+      (agent-org-buffer-set-status (car one) :project "org-docs")
+      (agent-org-buffer-set-status (car two) :project "agent-org")
+      (let ((choices (agent-org--switch-candidates)))
+        ;; row 0 is `two', row 1 is `one' (registry order)
+        (should (string-match-p "\\`agent-org Rewrite" (car (nth 0 choices))))
+        (should (string-match-p "\\`org-docs Fix" (car (nth 1 choices))))
+        ;; The shared builder, checked against the row rather than trusted:
+        ;; this is what makes the assertion above survive a rename of the
+        ;; buffer-name rules.
+        (dolist (row choices)
+          (should (string-prefix-p
+                   (agent-org-buffer--chat-label
+                    (buffer-local-value 'agent-org-buffer--status (cdr row)))
+                   (car row))))
+        (kill-buffer (car one))
+        (kill-buffer (car two))))))
+
+(ert-deftest test-agent-org-switch-candidates-show-the-state-the-bar-shows ()
+  "The status column is the header line's own vocabulary.
+Two words for one state (\"Ready\" on the bar, \"ready\" in the list) is
+how a UI teaches you not to trust it, so the column comes from
+`agent-org-buffer--state-label'."
+  (ao--isolated-registry
+    (let* ((pair (ao--two-chats))
+           (one (car pair))
+           (two (cdr pair)))
+      (with-current-buffer (car two)
+        (agent-org-buffer-set-status (car two) :state 'streaming))
+      (let ((choices (agent-org--switch-candidates)))
+        (should (string-match-p "Streaming" (car (nth 0 choices))))
+        (should (string-match-p "Ready" (car (nth 1 choices)))))
+      (kill-buffer (car one))
+      (kill-buffer (car two)))))
+
+(ert-deftest test-agent-org-switch-candidates-align-their-columns ()
+  "The status column starts at the same display width in every row.
+Measured the way the session listing measures: `string-width', so a CJK
+title pads like a Latin one.  Ragged rows are the whole reason a chat list
+is read by scanning down one column instead of reading across.
+
+The column's start is ROW's first dimmed character, and NOT its first run
+of two spaces: the short title is padded with spaces and the separator is
+spaces too, so on a padded row the first double space sits somewhere
+INSIDE the padding — counting to it measures where the padding happened to
+begin, which is why this assertion read (18 47) while the rows, printed,
+were identical 65-column strings."
+  (ao--isolated-registry
+    (let* ((pair (ao--two-chats))
+           (one (car pair))
+           (two (cdr pair)))
+      ;; row 0 is `two' (registry order) and keeps its short title, so a
+      ;; shared column start proves the SHORT row was padded to the long one
+      (agent-org-buffer-set-status (car one) :title
+                                   "A chat whose title runs on for very long indeed")
+      (let ((labels (mapcar #'car (agent-org--switch-candidates))))
+        (should (= 2 (length labels)))
+        (should (apply #'equal (seq-map #'ao--dim-column labels)))
+        ;; Equal total width too: the ids are the same length here, so the two
+        ;; rows can only line up if the SHORT title was padded out to the
+        ;; long one rather than the long one being cut down.
+        (should (apply #'equal (seq-map #'string-width labels)))))))
+
+(ert-deftest test-agent-org-switch-candidates-drop-a-killed-chat ()
+  "A buffer that is gone is not offered, even if its entry is still in
+`agent-org--sessions' — the registry is a stack of plists, and a plist
+outlives its window until the kill-hook runs."
+  (ao--isolated-registry
+    (let* ((pair (ao--two-chats))
+           (one (car pair))
+           (two (cdr pair)))
+      (kill-buffer (car two))
+      (let ((choices (agent-org--switch-candidates)))
+        (should (= 1 (length choices)))
+        (should (equal (list (car one)) (mapcar #'cdr choices))))
+      (kill-buffer (car one)))))
+
+(ert-deftest test-agent-org-switch-buffer-switches-to-the-chosen-chat ()
+  "The command reads a row and lands on that buffer, not on the other one."
+  (ao--isolated-registry
+    (let* ((pair (ao--two-chats))
+           (one (car pair))
+           (two (cdr pair)))
+      (with-current-buffer (car one)
+        (ao--pick "sid-two"
+          (agent-org-switch-buffer))
+        (should (eq (car two) (current-buffer))))
+      (kill-buffer (car one))
+      (kill-buffer (car two)))))
+
+(ert-deftest test-agent-org-switch-buffer-with-nothing-open-signals ()
+  "No chats, no minibuffer: a `user-error', not an empty completion.
+Same shape as every other agent-org entry point — the user gets a reason
+in the echo area, and nothing to cancel."
+  (let ((completing-read-called nil))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (&rest _) (setq completing-read-called t) "")))
+      (should-error (agent-org-switch-buffer) :type 'user-error)
+      (should-not completing-read-called))))
+
+(ert-deftest test-agent-org-switch-buffer-pins-registry-order ()
+  "The collection is a function that refuses the UI's re-sorting.
+Registry order is newest-chat-first, which is the order a person switching
+between chats wants; a plain list would be handed back alphabetically by
+title and that information would be lost at the last step.  Same machinery
+as the session chooser, so it must keep behaving the same."
+  (ao--isolated-registry
+    (let* ((pair (ao--two-chats))
+           (one (car pair))
+           (two (cdr pair))
+           (collection nil))
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (_prompt coll &rest _)
+                   (setq collection coll)
+                   (car (ao--collection coll)))))
+        (agent-org-switch-buffer))
+      (should (functionp collection))
+      (let ((metadata (funcall collection "" nil 'metadata)))
+        (should (eq (cdr (assq 'display-sort-function (cdr metadata)))
+                    #'identity)))
+      (should (equal (list (car two) (car one))
+                     (mapcar #'cdr (agent-org--switch-candidates))))
+      (kill-buffer (car one))
+      (kill-buffer (car two)))))
+
+(ert-deftest test-agent-org-switch-buffer-name-matches-agent-shell ()
+  "The switcher borrows agent-shell's command name, not a synonym.
+`agent-shell-switch-buffer' is what its users already type in M-x;
+`agent-org-go-to-session' or `agent-org-select-buffer' would be a second
+vocabulary for one action."
+  (should (commandp 'agent-org-switch-buffer)))
+
 ;;;; Progress reporting while a session loads
 ;;
 ;; Two windows in agent-org are actually slow: fetching the directory's

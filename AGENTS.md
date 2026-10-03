@@ -270,3 +270,30 @@ emacs -Q --batch \
 #   list, once per chunk) and formatting a string per chunk are two costs that buy
 #   nothing, because an indicator that moves already says "arriving".  Never step
 #   with a computed count on a per-chunk path.
+# - `agent-org-switch-buffer' (M-x, agent-shell's name) reuses the CHOOSER's
+#   machinery rather than rebuilding it: `agent-org--column-width' measures,
+#   `agent-org--pad' aligns by DISPLAY columns, `agent-org--session-display'
+#   dims everything after the label, and the collection is
+#   `agent-org--completion-collection' with `agent-org--selection-value'
+#   resolving the choice.  Rows are `LABEL  STATUS  [id]' in REGISTRY order
+#   (`agent-org--register-session' pushes, so the newest chat is first, and an
+#   open session has no `session/list' stamp to sort by anyway).  What differs
+#   from the chooser is the row's VALUE: a BUFFER object, never a name — the
+#   agent renames its own chat, so a name looked up afterwards can match
+#   nothing.  Killed-but-unforgotten entries are dropped with `buffer-live-p'.
+# - One chat, ONE display label: `agent-org-buffer--chat-label' ("<project>
+#   <title>", provider standing in for a title that has not arrived) is called
+#   by `agent-org-buffer--wanted-name' AND by the switcher's first column.  Two
+#   builders writing the same three rules is how one chat ends up called
+#   "org-docs Qoder" in `C-x b' and plain "Qoder" in the switcher — which is
+#   what the first live run printed: two rows identical but for a UUID.  So the
+#   label takes the status PLIST as an argument instead of reading
+#   `agent-org-buffer--status', because the switcher labels OTHER buffers and
+#   a `with-current-buffer' there is a function that can move point in a chat
+#   you only meant to look at.
+# - Never locate an aligned column by the whitespace in front of it: a padded
+#   label and the separator are both spaces, so `(string-match-p "  " row)'
+#   measures where the PADDING began, not where the column starts (it failed a
+#   passing implementation with `(18 47)' on two identical 65-column rows).
+#   Measure the first character carrying the `shadow' face — the dim run IS the
+#   column, by construction.

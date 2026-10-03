@@ -20,6 +20,18 @@ choose from that, or from `New session'.  A prefix argument forces `new'
 for this call, skipping the listing.
 
 (fn PROVIDER)" t)
+(autoload 'agent-org-switch-buffer "agent-org" "\
+Switch to another open `agent-org' chat buffer.
+The name is agent-shell's (`agent-shell-switch-buffer') — one action, one
+name in M-x.  Each row is LABEL  STATUS  [id], the columns padded to the
+batch's widest, so you scan down the state column instead of reading six
+buffer names that differ in the middle.  Choosing gives the BUFFER
+object, not its name: an agent renames its own chat, and a name looked up
+afterwards can match nothing.
+
+`C-x b' already reaches every buffer; this is the short list of the ones
+that have an agent behind them, which is also why it takes its rows from
+the registry rather than from a mode-name scan of the buffer list." t)
 (autoload 'agent-org-resume-session "agent-org" "\
 Resume an existing session with PROVIDER, replaying its history.
 With no prefix argument PROVIDER is `agent-org-default-provider'; one
@@ -70,10 +82,14 @@ MiniMax included; `agent-org-providers' pins one per provider instead.
 
 (fn MODEL)" t)
 (autoload 'agent-org-send "agent-org" "\
-Send the typed prompt at the end of the chat buffer to the agent.
-While a turn is streaming, read a prompt from the minibuffer and queue
-it instead — see `agent-org-queue-when-busy' — and it goes out, FIFO,
-when the running turn ends successfully." t)
+Send what is typed in the live `* User' box to the agent.
+Idle, the draft becomes a frozen User heading above the box and goes on
+the wire; the box stays open, so the next prompt can be typed right away.
+While a turn streams the same act merely queues the draft -- see
+`agent-org-queue-when-busy' -- and it goes out, FIFO, when the running
+turn ends successfully.  This type-ahead model is agent-shell's: the
+prompt is always in the buffer, never in the minibuffer, so watching a
+turn and preparing the next message happen in the same window." t)
 (autoload 'agent-org-queue-view "agent-org" "\
 List the prompts queued for this session, oldest first.
 The listing lives in a read-only ` *agent-org queue*' buffer; the queue

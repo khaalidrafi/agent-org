@@ -189,6 +189,32 @@ Qoder's id is a real UUID, so the transcript is now a genuine
 =agent-org-buffer--todo-setup= moved above =agent-org-buffer-create= —
 using it before the =defconst= byte-compiled as a free variable.)
 
+** DONE Killing a chat buffer asks, because an agent is running
+User order: "When killing agent-org buffer, it should ask that a process is
+running and should that be killed mirrorring Emacs process buffers."
+=acp= spawns the agent with ~:noquery t~ and no process buffer, so Emacs' own
+query finds nothing and the kill was silent — on a machine where a stray
+=qoder --acp= child costs ~100 MB.  Shipped: =agent-org--kill-query= on
+=kill-buffer-query-functions= (buffer-local, installed by
+=agent-org--register-session=), asking Emacs' own question — =Process %s is
+running; kill it? = — and only for a /live/ child.  The first version read the
+client with =plist-get= and so asked nothing at all: acp's client is an /alist/
+of dotted keyword pairs, see AI-REVIEW.org.  Verified live against
+=goose acp=: NO keeps buffer and agent, YES kills and the kill-hook's
+=acp-shutdown= leaves no child.
+
+** DONE A switcher for open chats
+User order: "A buffer switcher is needed, too."  Shipped:
+=agent-org-switch-buffer= (M-x, agent-shell's name — it binds nothing either,
+and =C-x b= already reaches every chat).  Rows are =LABEL  STATUS  [id]= built
+by the same column machinery the session chooser uses, ordered as the registry
+is (newest chat first), and their value is the BUFFER object rather than a
+name an agent can rename.  It found one real bug on the way: two =Qoder= chats
+in two projects printed identical rows but for their UUIDs, so the label is now
+=agent-org-buffer--chat-label= — the same function the buffer name is built
+from, project directory first.  Nine tests in /tests, both column assertions
+mutation-checked.
+
 ** TODO Model-name turn headings (design settled, no code written)
 User order: "Use model name instead of 'Agent' by default. You will have
 to maintain a map for each agent response's model in a session for it."

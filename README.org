@@ -232,6 +232,27 @@ session for you — which is why ~agent-org-default-provider~ is qoder, and
 why ~agent-org-start~ has a timeout where resume has none (starting must
 not be blocked by the listing; resuming is one you asked for).
 
+* Switching between open chats
+
+~M-x agent-org-switch-buffer~ lists the chats that have a live buffer right
+now, in the order you opened them (newest first), and switches to the one you
+pick.  Each row is ~LABEL  STATUS  [id]~, with the columns padded to the
+widest row in the batch, so you scan down the state column instead of reading
+six names that differ in the middle.  Verbatim from a real session:
+
+#+begin_example
+llmfisher LLMFisher               Streaming  [qoder_95c3f532-3fdc-42e7-e19b-db1a2a36c146]
+agent-org Qoder                   Streaming  [b480ebca-6b06-467e-822a-88cf491b75fa]
+org-docs Qoder                    Streaming  [ef80d1b2-de8e-4b76-ad91-24e540fb4b30]
+#+end_example
+
+The project directory leads the label for the reason those three rows show:
+two ~Qoder~ chats in two checkouts are otherwise identical but for a UUID.
+~STATUS~ is the header line's own word (~Ready~, ~Streaming~, ~Restoring~…),
+and ~C-x b~ says the same thing, because a chat has one display name wherever
+it is listed.  There is no key binding: ~C-x b~ already reaches every chat,
+and this is the short list of the ones with an agent behind them.
+
 * MiniMax Code
 
 MiniMax Code is its own terminal coding agent: ~mcode~, whose ~mcode acp~

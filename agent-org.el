@@ -891,6 +891,86 @@ instead of loading (see `agent-org--load-session')."
                         id)))
               sorted columns)))
 
+;;;; Switching between open chats
+
+(defun agent-org--chat-columns (buffer)
+  "The (LABEL . STATUS) texts of BUFFER's switcher row, unpadded.
+LABEL is the chat's own display label — project directory and title, the
+provider standing in before a title arrives — from
+`agent-org-buffer--chat-label', the very function the buffer name is built
+from, so `C-x b' and this list can never call one chat two things.  It goes
+through `agent-org-buffer--label', because a title is agent free text and a
+newline in a completion candidate breaks the UI.  STATUS is the header
+line's OWN state word (`agent-org-buffer--state-label'): two vocabularies
+for one state is how a person stops trusting either, and the bar and this
+list are read in the same minute.
+
+Reads the buffer-local status directly rather than through
+`with-current-buffer': nothing here needs the buffer's other state, and a
+switcher that widens a chat's buffer for no reason is a switcher that can
+move point."
+  (let ((status (buffer-local-value 'agent-org-buffer--status buffer)))
+    (cons (agent-org-buffer--chat-label status)
+          (agent-org-buffer--state-label (plist-get status :state)))))
+
+(defun agent-org--switch-candidates ()
+  "((DISPLAY . BUFFER) ...) for every live chat, in registry order.
+Registry order is newest-chat-first, because `agent-org--register-session'
+pushes — the chat you just started is the one you are most likely leaving
+or returning to, and the wire's recency has nothing to say about a
+session no agent has titled yet.
+
+Killed buffers are dropped: the registry is a stack of plists, and an
+entry outlives its window until the kill-hook runs, so \"live\" is what
+makes a row switchable rather than merely listed.
+
+The id column is what makes two rows from one provider distinguishable;
+before the agent answers there is no id, so the buffer name stands in —
+names are unique by construction (`generate-new-buffer-name'), which is
+what `agent-org--selection-value' needs to hand back the right buffer."
+  (let* ((buffers (seq-filter #'buffer-live-p
+                              (delq nil (seq-map (lambda (session)
+                                                  (plist-get session :buffer))
+                                                agent-org--sessions))))
+         (columns (seq-map #'agent-org--chat-columns buffers))
+         (label-width (agent-org--column-width columns #'car))
+         (status-width (agent-org--column-width columns #'cdr)))
+    (seq-mapn (lambda (buffer cols)
+                (cons (agent-org--session-display
+                       cols
+                       (or (plist-get (agent-org--session-for-buffer buffer)
+                                      :session-id)
+                           (buffer-name buffer))
+                       label-width status-width)
+                      buffer))
+              buffers columns)))
+
+;;;###autoload
+(defun agent-org-switch-buffer ()
+  "Switch to another open `agent-org' chat buffer.
+The name is agent-shell's (`agent-shell-switch-buffer') — one action, one
+name in M-x.  Each row is LABEL  STATUS  [id], the columns padded to the
+batch's widest, so you scan down the state column instead of reading six
+buffer names that differ in the middle.  Choosing gives the BUFFER
+object, not its name: an agent renames its own chat, and a name looked up
+afterwards can match nothing.
+
+`C-x b' already reaches every buffer; this is the short list of the ones
+that have an agent behind them, which is also why it takes its rows from
+the registry rather than from a mode-name scan of the buffer list."
+  (interactive)
+  (let ((choices (agent-org--switch-candidates)))
+    (unless choices
+      (user-error "No agent-org chats are open"))
+    (let ((buffer (agent-org--selection-value
+                   choices
+                   (completing-read "agent-org buffer: "
+                                    (agent-org--completion-collection choices)
+                                    nil t))))
+      (unless buffer
+        (user-error "Nothing selected"))
+      (switch-to-buffer buffer))))
+
 (cl-defun agent-org--list-sessions (session
                                     &key cursor seen pages
                                     (page-limit agent-org-session-list-page-limit)
