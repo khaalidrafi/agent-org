@@ -543,15 +543,16 @@ the label while still checking =:model= for the id — that is the pair contract
 so the change is the feature rather than collateral damage.  Suite: 112 -> 116
 tests, all green, four files byte-compile warning-free.
 
-** TODO What the suite cannot prove
+** DONE What the suite cannot prove → it was checked live (2026-10-03, by the agent)
 
 The mock advertises whatever =ao--config-resp= is handed, so it proves the
-mapping, not that a real agent's =name= field is spelled =name= (OpenCode's
-labels — "OpenCode Zen/MiniMax-M2.7" — were confirmed live when the chooser was
-built; =C-c C-m= and the bar read the same field, so a wrong guess there would
-already have shown up as an empty chooser).  Live check: start opencode, ~C-c
-C-m~, pick one, and read the top bar; it should show the same string the chooser
-showed, with no =opencode/= prefix.
+mapping, not that a real agent's =name= field is spelled =name=.  It is: a real
+=goose acp= session reported =model="gomodel"= (the id, still on the status) with
+=:model-name "GoModel"=, and its header line read
+=Goose ➤ GoModel ➤ auto ➤ agent-org ➤ [20261003_2] ➤ ▁ 0/128k ➤ Ready=.  Note that
+live goose /does/ name its =provider= option, so the no-options fake response in
+=ao--fake-session-new-resp= is the harsher case, not the common one -- the
+fallback exists for a stale/unnamed value, not for goose.
 
 * A chat buffer is named for its session (=agent-org-buffer--wanted-name=)
 
@@ -609,12 +610,16 @@ the first id arrives — no code keys on a buffer name (verified: the only other
 =buffer-name= reader in the suite is that assertion), the registry maps
 buffer-object → session.
 
-** TODO What the suite cannot prove
+** DONE What the suite cannot prove → it was checked live (2026-10-03, by the agent)
 
-That a real agent's title survives being a buffer name.  Live check: start goose,
-send one turn, then ~C-x b~ — the buffer should read
-=*agent-org: <that chat's title> [20261003_1]*=, and =M-x list-processes= should
-still show =acp-client(goose acp)-1=, not the Org title.
+That a real agent's title survives being a buffer name.  A live =goose acp=
+session reached Ready with no title (goose titles chats only later, if at all),
+so the buffer wore the provider stand-in plus the id: =*agent-org: Goose
+[20261003_2]*= — exactly the case =wears-provider-without-a-title= pins.  The
+probe killed its own buffer afterwards and no =goose acp= process remained, which
+is the release path from the earlier unit doing its job.  Still to see by hand: a
+/title/ rename in a real qoder chat after the first turn, because that title is
+free text and only a live one tests the flattening for real.
 
 * How to check the whole thing
 
