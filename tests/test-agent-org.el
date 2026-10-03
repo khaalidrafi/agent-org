@@ -21,6 +21,9 @@
 ;;; Code:
 
 (require 'ert)
+;; `ert-with-temp-directory' — the transcript tests are the first here to
+;; touch the disk, and that macro lives in ert-x, not ert.
+(require 'ert-x)
 (load (expand-file-name "acp-mock.el" (file-name-directory load-file-name)))
 (require 'agent-org)
 (require 'agent-org-buffer)
@@ -2555,23 +2558,26 @@ label is re-read from it rather than remembered from the choice."
                                     (agent-org-buffer--render-header-line))))
       (kill-buffer buf))))
 
-(defun ao--chat-on-model (id name)
+(defun ao--chat-on-model (id name &optional session-id)
   "A Ready chat buffer whose agent advertises model ID, labelled NAME.
 Built through the real `agent-org-start' path inside `ao--capture-wire', so
 the status a turn heading reads is the status a live session has — the
 point of this helper is that no test hand-writes `:model-name'.  NAME nil
 is an agent reporting a value it never named, which is the id-fallback case.
 ID nil is an agent advertising no model option at all (Goose answers with
-no `configOptions' of this shape), which is the no-model case.  Caller
-kills the buffer."
+no `configOptions' of this shape), which is the no-model case.  SESSION-ID
+defaults to the wire's own \"sid-new\"; the transcript tests pass their
+own, because the id is what names their file.  Caller kills the buffer."
   (let ((agent-org-session-strategy 'new)
         (agent-org-use-model-headings t))
     (let ((buf (agent-org-start 'qoder)))
       (ao--drive "initialize" ao--fake-init-resp)
       (ao--drive "session/new"
                  (if id
-                     (ao--config-resp id (and name (list (cons id name))))
-                   '((sessionId . "sid-new") (configOptions . []))))
+                     (ao--config-resp id (and name (list (cons id name)))
+                                      session-id)
+                   `((sessionId . ,(or session-id "sid-new"))
+                     (configOptions . []))))
       buf)))
 
 (ert-deftest test-agent-org-turn-heading-wears-the-model-name ()
@@ -4069,5 +4075,409 @@ and nothing left that would cover the diagnostic."
         (should (null (car ao--messages))))
       (kill-buffer buf))))
 
+;;;; One Org transcript file per session
+;;
+;; User order (TODOs.org): "By default, keep a single Org transcript file to map
+;; to a session and regularly update it."  agent-shell appends each arriving
+;; chunk to a markdown file; here the chat body IS already an Org document, so
+;; the file is a MIRROR of its frozen part, rewritten at the turn boundaries.
+;; Three consequences, and each has a test below:
+;;  - one renderer, not two (a second paint path always drifts from the first);
+;;  - a tool heading that went TODO -> DONE appears ONCE, as DONE, which an
+;;    append log cannot express;
+;;  - the cost is a couple of whole-file writes per TURN, never one per chunk.
+
+(defmacro ao--transcript-in (dir &rest body)
+  "Run BODY with transcription ON, writing into DIR.
+The feature has exactly two knobs and every writer test wants both:
+`agent-org-transcribe' on, and a directory that is not the real one under
+`user-emacs-directory' where the user's own transcripts live."
+  (declare (indent 1))
+  `(let ((agent-org-transcribe t)
+         (agent-org-transcript-directory ,dir))
+     ,@body))
+
+(defun ao--transcript-files (dir)
+  "Every `.org' name in DIR, sorted.  How these tests count files.
+`directory-files' answers \".\" and \"..\" too, and a transcript directory
+holds nothing else, so the suffix filter is the whole assertion."
+  (sort (seq-filter (lambda (f) (string-suffix-p ".org" f))
+                    (directory-files dir))
+        #'string<))
+
+(defun ao--transcript-text (dir session-id)
+  "The text SESSION-ID's transcript holds in DIR.
+The path is built with `agent-org-buffer--transcript-name' as plumbing; the
+name's SHAPE is pinned against a literal string by
+`test-agent-org-transcript-file-is-named-for-the-session-id', so nothing
+here is circular."
+  (with-temp-buffer
+    (insert-file-contents
+     (expand-file-name (agent-org-buffer--transcript-name session-id) dir))
+    (buffer-string)))
+
+(defvar ao--writes nil
+  "How many `.org' writes `ao--counting-writes' has swallowed.")
+
+(defmacro ao--counting-writes (&rest body)
+  "Run BODY with `write-region' swallowed and counted in `ao--writes'.
+Only a `.org' target counts: `write-region' has other callers, and what is
+being measured here is what the transcript writer does."
+  (declare (indent 0))
+  `(let ((ao--writes 0))
+     (cl-letf (((symbol-function 'write-region)
+                (lambda (start end filename &optional append visit &rest _)
+                  (when (and (stringp filename) (string-suffix-p ".org" filename))
+                    (cl-incf ao--writes)))))
+       ,@body)))
+
+(ert-deftest test-agent-org-transcript-file-is-named-for-the-session-id ()
+  "A session's transcript is one file, named by its ACP id.
+The id is the only fact that survives a rename, a title change and a
+restart, so it is what maps a file to a session.  A chat with no turn yet
+still gets the file: it carries the =:PROPERTIES:= drawer — including that
+same id as Org's =:ID:=, which is what makes the transcript an
+=id:=-linkable document — and the first thing in it is the header, not a
+conversation."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in temp-dir
+      (ao--capture-wire
+        (let ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-42")))
+          (should (equal '("sid-42.org") (ao--transcript-files temp-dir)))
+          (let ((text (ao--transcript-text temp-dir "sid-42")))
+            (should (string-match-p "^:ID: sid-42$" text))
+            (should (string-match-p "^#\\+TITLE: " text))
+            ;; the live type-ahead box is not conversation yet
+            (should-not (string-match-p "^\\* User$" text)))
+          (kill-buffer buf))))))
+
+(ert-deftest test-agent-org-transcript-holds-a-completed-turn ()
+  "One turn, on disk, in the order it happened: prompt, answer, tool, thought.
+Twenty chunks stream an answer and the file holds one copy of it — the
+transcript is written from the buffer at the turn boundary, so however the
+agent split its reply, the document is the reply."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in temp-dir
+      (ao--capture-wire
+        (let* ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-turn"))
+               (session (agent-org--session-for-buffer buf))
+               (sent nil))
+          (cl-letf (((symbol-function 'acp-send-request)
+                     (lambda (&rest kw) (push kw sent)))
+                    ((symbol-function 'acp-make-session-prompt-request)
+                     (lambda (&rest a) (plist-get a :prompt))))
+            (with-current-buffer buf
+              (ao--type "align the columns")
+              (agent-org-send))
+            (dotimes (_ 20)
+              (agent-org--on-notification
+               session (ao--update-notif
+                        '((sessionUpdate . "agent_message_chunk")
+                          (content . ((type . "text") (text . "tok ")))))))
+            (agent-org--on-notification
+             session (ao--update-notif
+                      '((sessionUpdate . "agent_thought_chunk")
+                        (content . ((type . "text") (text . "reasoning here"))))))
+            (agent-org--on-notification
+             session (ao--update-notif
+                      '((sessionUpdate . "tool_call")
+                        (toolCallId . "t1") (title . "grep -rn foo")
+                        (status . "pending"))))
+            (funcall (plist-get (car sent) :on-success) nil)
+            (let ((text (ao--transcript-text temp-dir "sid-turn")))
+              (should (apply #'ao--ordered text
+                             (list "^:ID: sid-turn$"
+                                   "^\\* User$" "align the columns"
+                                   "^\\* QModel Large$" "tok tok"
+                                   "^\\*\\* TODO grep -rn foo$"
+                                   "^:thinking:$" "reasoning here")))
+              (kill-buffer buf))))))))
+
+(ert-deftest test-agent-org-transcript-rewrites-a-tool-heading-instead-of-logging-it ()
+  "A tool that finished appears as DONE once — no TODO line above it.
+This is the test that says \"mirror, not append log\": a per-chunk append can
+only add, so an in-place state change would leave the superseded line in the
+file forever.  Here the buffer already rewrote the heading and the file
+simply agrees with the buffer."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in temp-dir
+      (ao--capture-wire
+        (let* ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-tool"))
+               (session (agent-org--session-for-buffer buf))
+               (sent nil))
+          (cl-letf (((symbol-function 'acp-send-request)
+                     (lambda (&rest kw) (push kw sent)))
+                    ((symbol-function 'acp-make-session-prompt-request)
+                     (lambda (&rest a) (plist-get a :prompt))))
+            (with-current-buffer buf
+              (ao--type "run it")
+              (agent-org-send))
+            (dolist (status '("pending" "in_progress" "completed"))
+              (agent-org--on-notification
+               session (ao--update-notif
+                        `((sessionUpdate . "tool_call_update")
+                          (toolCallId . "t1") (title . "run tests")
+                          (status . ,status)))))
+            (funcall (plist-get (car sent) :on-success) nil)
+            (let ((text (ao--transcript-text temp-dir "sid-tool")))
+              (should (= 1 (ao--count-occurrences text "^\\*\\* DONE run tests$")))
+              (should (= 0 (ao--count-occurrences text "^\\*\\* \\(TODO\\|DOING\\) run tests$")))
+              (kill-buffer buf))))))))
+
+(ert-deftest test-agent-org-transcript-is-one-file-for-the-whole-session ()
+  "Three turns, one file: the transcript maps to the SESSION, not to a turn.
+A chat that spawned a file per answer would be a pile of fragments nobody
+reads again, and `agent-org-reload' — which replays the same id through a
+new buffer — lands on the same file for the same reason."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in temp-dir
+      (ao--capture-wire
+        (let* ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-multi"))
+               (sent nil))
+          (cl-letf (((symbol-function 'acp-send-request)
+                     (lambda (&rest kw) (push kw sent)))
+                    ((symbol-function 'acp-make-session-prompt-request)
+                     (lambda (&rest a) (plist-get a :prompt))))
+            (dolist (prompt '("first" "second" "third"))
+              (with-current-buffer buf
+                (ao--type prompt)
+                (agent-org-send)
+                (agent-org-buffer-append-chunk
+                 buf (format "answer to %s" prompt)
+                 (agent-org--session-for-buffer buf))
+                (funcall (plist-get (car sent) :on-success) nil)))
+            (should (equal '("sid-multi.org") (ao--transcript-files temp-dir)))
+            (let ((text (ao--transcript-text temp-dir "sid-multi")))
+              (should (apply #'ao--ordered text
+                             (list "first" "answer to first"
+                                   "second" "answer to second"
+                                   "third" "answer to third")))
+              (should (= 3 (ao--count-occurrences text "^\\* User$")))
+              (kill-buffer buf))))))))
+
+(ert-deftest test-agent-org-transcript-leaves-the-unsent-draft-out ()
+  "What the user has typed but not sent never reaches the file.
+The boundary between the two is `agent-org-buffer--render-end' — the same
+marker that keeps a streaming turn from scribbling over a draft — so the
+transcript is the conversation and a half-written thought stays in the
+buffer.  A late title push is the boundary here: it re-marks the session
+ready while a draft is live, which is exactly when the two could mix."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in temp-dir
+      (ao--capture-wire
+        (let* ((sid "sid-draft")
+               (buf (ao--chat-on-model "qmodel-large" "QModel Large" sid))
+               (session (agent-org--session-for-buffer buf))
+               (sent nil))
+          (cl-letf (((symbol-function 'acp-send-request)
+                     (lambda (&rest kw) (push kw sent)))
+                    ((symbol-function 'acp-make-session-prompt-request)
+                     (lambda (&rest a) (plist-get a :prompt))))
+            (with-current-buffer buf
+              (ao--type "sent prompt")
+              (agent-org-send)
+              (funcall (plist-get (car sent) :on-success) nil)
+              (ao--type "half a thought, still typing"))
+            ;; a params-level sessionId is what the handler gates on: no
+            ;; id, no ready pass, no boundary to test
+            (agent-org--on-notification
+             session
+             `((method . "session/update")
+               (params . ((sessionId . ,sid)
+                          (update . ((sessionUpdate . "session_info_update")
+                                     (title . "Renamed by the agent")))))))
+            (let ((text (ao--transcript-text temp-dir "sid-draft")))
+              (should (string-match-p "sent prompt" text))
+              (should-not (string-match-p "half a thought" text))
+              ;; and the metadata did catch up, in the same pass
+              (should (string-match-p "^#\\+TITLE: Renamed by the agent$" text))
+              (kill-buffer buf))))))))
+
+(ert-deftest test-agent-org-transcript-paints-a-restored-session ()
+  "A resumed chat is on disk without anyone sending a prompt into it.
+Restoring is the case where a per-turn write would never fire: the history
+arrives in one replay pass and the user may read it and close Emacs.
+`agent-org--finish-replay' ends in `agent-org--session-ready', which is a
+boundary, so the mirror is written once the history has landed."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in temp-dir
+      (ao--capture-wire
+        (let ((buf (agent-org-resume-session 'qoder "sid-restored")))
+          (let ((session (agent-org--session-for-buffer buf)))
+            (ao--drive "initialize" ao--fake-init-resp)
+            (dolist (update (list
+                             '((sessionUpdate . "user_message_chunk")
+                               (content . ((type . "text") (text . "Old question"))))
+                             '((sessionUpdate . "agent_message_chunk")
+                               (content . ((type . "text") (text . "Old answer"))))))
+              (agent-org--on-notification session (ao--update-notif update)))
+            (ao--drive "session/load" '((sessionId . "sid-restored")))
+            (ao--settle)
+            (should (equal '("sid-restored.org") (ao--transcript-files temp-dir)))
+            (let ((text (ao--transcript-text temp-dir "sid-restored")))
+              (should (apply #'ao--ordered text (list "Old question" "Old answer"))))
+            (kill-buffer buf)))))))
+
+(ert-deftest test-agent-org-transcript-writes-nothing-when-turned-off ()
+  "`agent-org-transcribe' nil means no file appears, at all.
+The default is on, so this is the opt-out the user's wording asks for
+(\"BY DEFAULT, keep a single Org transcript file\") honoured in the other
+direction: someone whose transcripts are their own org files under version
+control must be able to turn the writer off without patching it out."
+  (ert-with-temp-directory temp-dir
+    (let ((agent-org-transcribe nil)
+          (agent-org-transcript-directory temp-dir))
+      (ao--capture-wire
+        (let* ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-off"))
+               (sent nil))
+          (cl-letf (((symbol-function 'acp-send-request)
+                     (lambda (&rest kw) (push kw sent)))
+                    ((symbol-function 'acp-make-session-prompt-request)
+                     (lambda (&rest a) (plist-get a :prompt))))
+            (with-current-buffer buf
+              (ao--type "quiet")
+              (agent-org-send)
+              (funcall (plist-get (car sent) :on-success) nil))
+          (should (null (ao--transcript-files temp-dir)))
+          ;; the chat itself works exactly the same way
+          (with-current-buffer buf
+            (should (string-match-p "quiet" (buffer-string))))
+          (kill-buffer buf)))))))
+
+(ert-deftest test-agent-org-transcript-costs-writes-per-turn-not-per-chunk ()
+  "One turn costs two whole-file writes: the send and the turn end.
+This is the overhead claim on a 4 GB machine.  Twenty streaming chunks and a
+thought add NOTHING, because the writer is called at boundaries and not from
+the render path — which is also why a slow disk cannot stall a stream."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in temp-dir
+      (ao--capture-wire
+        (let* ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-cost"))
+               (session (agent-org--session-for-buffer buf))
+               (sent nil))
+          (cl-letf (((symbol-function 'acp-send-request)
+                     (lambda (&rest kw) (push kw sent)))
+                    ((symbol-function 'acp-make-session-prompt-request)
+                     (lambda (&rest a) (plist-get a :prompt))))
+            ;; the fixture's own ready boundary already wrote once; count
+            ;; the turn from here
+            (ao--counting-writes
+              (with-current-buffer buf
+                (ao--type "cost me nothing")
+                (agent-org-send))
+              (dotimes (_ 20)
+                (agent-org--on-notification
+                 session (ao--update-notif
+                          '((sessionUpdate . "agent_message_chunk")
+                            (content . ((type . "text") (text . "chunk ")))))))
+              (agent-org--on-notification
+               session (ao--update-notif
+                        '((sessionUpdate . "agent_thought_chunk")
+                          (content . ((type . "text") (text . "think"))))))
+              (funcall (plist-get (car sent) :on-success) nil)
+              (should (= 2 ao--writes)))
+          (kill-buffer buf)))))))
+
+(ert-deftest test-agent-org-transcript-skips-an-unchanged-body ()
+  "The same text is never written twice.
+A boundary can fire with nothing new — a repeated title, a second ready
+call — and the write is a whole-file `write-region', so the cheap guard is
+to compare against what was last put there.  It also keeps the file's mtime
+honest: an untouched transcript must not look like it was edited."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in temp-dir
+      (let* ((pair (ao--make-test-session "unchanged"))
+             (buf (car pair)))
+        (agent-org-buffer-set-status buf :session-id "sid-same" :state 'ready)
+        (agent-org-buffer-refresh-metadata buf)
+        (ao--counting-writes
+          (agent-org-buffer-transcribe buf)
+          (should (= 1 ao--writes))
+          (agent-org-buffer-transcribe buf)
+          (should (= 1 ao--writes))
+          ;; and one change is enough to make the next boundary real
+          (agent-org-buffer-insert-user buf "a new turn")
+          (agent-org-buffer-transcribe buf)
+          (should (= 2 ao--writes)))
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-transcript-sanitizes-an-id-that-looks-like-a-path ()
+  "A session id is agent text, and it never gets to choose where a file lands.
+Qoder issues UUIDs and Goose issues timestamps, but the id arrives over the
+wire and becomes a file name, so every separator becomes a dash:
+\"../../etc/passwd\" writes INSIDE the transcript directory, not outside it.
+Without this the writer is a path-traversal primitive handed to whatever
+server the user pointed Emacs at."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in temp-dir
+      (ao--capture-wire
+        (let ((buf (ao--chat-on-model "qmodel-large" "QModel Large"
+                                      "../../evil")))
+          (should (= 1 (length (ao--transcript-files temp-dir))))
+          (should-not (string-match-p "/" (car (ao--transcript-files temp-dir))))
+          ;; nothing escaped the directory
+          (should-not (file-exists-p (expand-file-name "evil.org"
+                                                       (file-name-directory
+                                                        (directory-file-name temp-dir)))))
+          (kill-buffer buf))))))
+
+(ert-deftest test-agent-org-transcript-failure-never-breaks-a-turn ()
+  "An unwritable directory is a note in the echo area, not a broken chat.
+The transcript is a convenience; the conversation is the feature.  Here the
+path is under a regular FILE, so no directory can be created at all and
+every write fails — and the turn must still stream, close and go Ready
+exactly as it would with transcription off."
+  (ert-with-temp-directory temp-dir
+    (let ((blocker (expand-file-name "blocker" temp-dir)))
+      (write-region "not a directory\n" nil blocker)
+      (ao--transcript-in (expand-file-name "transcripts" blocker)
+        (ao--capture-wire
+          (let* ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-fail"))
+                 (session (agent-org--session-for-buffer buf))
+                 (sent nil))
+            (cl-letf (((symbol-function 'acp-send-request)
+                       (lambda (&rest kw) (push kw sent)))
+                      ((symbol-function 'acp-make-session-prompt-request)
+                       (lambda (&rest a) (plist-get a :prompt))))
+              (with-current-buffer buf
+                (ao--type "still works")
+                (agent-org-send)
+                (agent-org-buffer-append-chunk buf "the answer arrived" session)
+                (funcall (plist-get (car sent) :on-success) nil))
+            (should-not (plist-get session :streaming))
+            (with-current-buffer buf
+              (should (eq 'ready (plist-get agent-org-buffer--status :state)))
+              (should (string-match-p "the answer arrived" (buffer-string))))
+            (kill-buffer buf))))))))
+
+(ert-deftest test-agent-org-transcript-flushes-when-the-buffer-is-killed ()
+  "Killing a chat mid-turn still puts that turn on disk.
+The turn end is a boundary and a kill is not, so without the kill hook the
+last answer of every session — the one the user stopped reading — would be
+the one missing from the file.  `agent-org--forget-session' writes before it
+releases the agent."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in temp-dir
+      (ao--capture-wire
+        (let* ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-kill"))
+               (session (agent-org--session-for-buffer buf))
+               (sent nil))
+          (cl-letf (((symbol-function 'acp-send-request)
+                     (lambda (&rest kw) (push kw sent)))
+                    ((symbol-function 'acp-make-session-prompt-request)
+                     (lambda (&rest a) (plist-get a :prompt))))
+            (with-current-buffer buf
+              (ao--type "interrupted chat")
+              (agent-org-send)
+              (agent-org-buffer-append-chunk buf "partial answer" session))
+            ;; no on-success: the buffer dies with the turn still open
+            (should-not (string-match-p "partial answer"
+                                        (ao--transcript-text temp-dir "sid-kill")))
+            (kill-buffer buf)
+            (should (string-match-p "partial answer"
+                                    (ao--transcript-text temp-dir "sid-kill")))
+            (should-not (agent-org--session-for-buffer buf))))))))
+
 (provide 'test-agent-org)
+;;; test-agent-org.el ends here
 

@@ -16,7 +16,9 @@ answered it (~* MiniMax M3~; see ~agent-org-use-model-headings~), with that
 turn's tool calls rendered as level-2 ~TODO/DONE~ subheadings and its
 extended thinking kept in a folded ~:thinking:~ drawer under the same
 heading, plus one auto-managed metadata block at the very top (see
-[[#session-metadata][Session metadata]]).
+[[#session-metadata][Session metadata]]) — and, by default, that whole body is mirrored to one
+Org file per session, so a chat leaves you a document rather than a
+buffer you had to remember to save (see [[#transcript-file][Transcript file]]).
 
 * Prerequisites
 
@@ -332,6 +334,39 @@ a drawer line opens or closes it.  The block is deleted and re-inserted
 on every update, so it never duplicates and never disturbs the
 conversation below it.
 
+* Transcript file
+:PROPERTIES:
+:CUSTOM_ID: transcript-file
+:END:
+
+By default every session also has an Org file of its own, in
+~agent-org-transcript-directory~ (~/.emacs.d/agent-org/transcripts/~),
+named for its ACP session id: ~7c1f….org~.  The file is a mirror of the
+chat buffer — the same headings, the same tool-call keywords, the same
+~:PROPERTIES:~ drawer, whose ~:ID:~ is the id in the file name, so a
+transcript is an ~id:~-linkable document you can reference from any org
+file.
+
+It is written at turn boundaries (when a prompt goes out, when the turn
+ends, when a session is restored, and once more when the buffer is
+killed), never per chunk: a twenty-chunk answer costs two whole-file
+writes, so a slow disk cannot stall a stream.  Measured on this machine
+(a spinning disk, 4 GB RAM), one boundary write is ~3 ms~ for a short
+chat, ~6 ms~ at 20 turns (~21 KB~), ~15 ms~ at 100 turns (~407 KB~);
+the identical body is skipped in under ~0.1 ms~.  agent-shell's per-chunk
+append, which is what this replaced, costs ~90-170 ms~ for the same 20
+turns — and spends it inside the stream.
+
+Mirroring rather than appending is also why the file is never wrong about
+a tool call: a heading that moved TODO→DOING→DONE in the buffer moves it
+in the file too, where an append log would keep three lines for one call.
+A prompt that is typed but not sent never reaches the file, and a failed
+write is a note in the echo area, never a broken turn.
+
+Turn it off with ~agent-org-transcribe~ nil — a chat whose transcript is
+a real org file under version control does not want a second copy
+appearing behind it.
+
 * Configuration
 
 - ~agent-org-use-header-line~ — when nil, status messages go to the
@@ -346,6 +381,11 @@ conversation below it.
 - ~agent-org-default-provider~ — provider ~agent-org-resume-session~ uses when
   you call it with no prefix argument (qoder by default: it answers
   ~session/list~, goose does not).
+- ~agent-org-transcribe~ — when non-nil (the default) each session is mirrored
+  to its own Org file, see [[*Transcript file]].
+- ~agent-org-transcript-directory~ — where those files live
+  (~/.emacs.d/agent-org/transcripts/~ by default; it is created on the
+  first write).
 - ~agent-org-session-strategy~ — what starting means: ~new~, ~latest~ or
   ~prompt~ (the default), see [[*Starting: which session you get]].
 - ~agent-org-session-list-page-limit~ — how many ~session/list~ pages to

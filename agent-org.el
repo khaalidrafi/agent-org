@@ -262,6 +262,11 @@ the dead buffer, so both are unarmed on the way out too."
       ;; do: a restore abandoned by killing the buffer would otherwise
       ;; keep redrawing its line under whatever the user opened next.
       (agent-org--progress-stop session)
+      ;; A kill is not a turn boundary, and the turn in flight has no
+      ;; end coming: without this the last answer of every session — the
+      ;; one the user stopped reading — is the one missing from the file.
+      ;; The buffer is still whole here, so the mirror is its real state.
+      (agent-org-buffer-transcribe buf)
       ;; Shutdown first: it clears the client's handlers, so a late process
       ;; event cannot reach a buffer that is already going away.
       (when-let* ((client (plist-get session :client)))
@@ -524,6 +529,9 @@ interactive until the history has been painted."
       (agent-org--ingest-config buffer config))
     (agent-org-loader-finish buffer :session-id sid)
     (agent-org-buffer-refresh-metadata buffer)
+    ;; a boundary: the transcript mirrors the buffer, so it is written
+    ;; after the metadata pass put the id and title in it
+    (agent-org-buffer-transcribe buffer)
     ;; after `agent-org-loader-finish': it writes the Ready message, and a
     ;; hint about the pinned model has to outlive it
     (agent-org--apply-pinned-model session)
@@ -1422,7 +1430,8 @@ because the turn that was holding it is gone."
     ;; that outlives the message): "Ready (turn cancelled)".
     (agent-org-buffer-set-status buffer :state 'ready :note "turn cancelled")
     (agent-org--drain-queue session buffer)
-    (agent-org-buffer-refresh-metadata buffer)))
+    (agent-org-buffer-refresh-metadata buffer)
+    (agent-org-buffer-transcribe buffer)))
 
 ;;;; Reload
 
@@ -1939,7 +1948,11 @@ failure is silent: =#+TITLE:= simply keeps the fallback it already had."
                        ;; set-status renames the buffer; the metadata
                        ;; pass is what rewrites the `#+TITLE:' line
                        (agent-org-buffer-set-status buffer :title title)
-                       (agent-org-buffer-refresh-metadata buffer)))
+                       (agent-org-buffer-refresh-metadata buffer)
+                       ;; and the file catches up with it now, not at the
+                       ;; next turn — a chat the user closes after one
+                       ;; answer should not be filed under the fallback
+                       (agent-org-buffer-transcribe buffer)))
        :on-failure (lambda (_err _msg) nil)))))
 
 (defun agent-org--send-turn (session buffer text)
@@ -1969,6 +1982,10 @@ in the user's type-ahead box across the turn boundary."
     (setf (plist-get session :streaming) t)
     (agent-org-buffer-set-status buffer :state 'streaming
       :message (agent-org--queue-message "Sending…" session))
+    ;; the turn's first boundary: the prompt the user just sent is frozen
+    ;; in the buffer, and a session that dies mid-answer should still have
+    ;; the question on disk
+    (agent-org-buffer-transcribe buffer)
     (acp-send-request
      :client client
      :request (acp-make-session-prompt-request
@@ -1984,6 +2001,11 @@ in the user's type-ahead box across the turn boundary."
                      (agent-org-buffer-set-status buffer :state 'ready)
                      (agent-org--drain-queue session buffer)
                      (agent-org-buffer-refresh-metadata buffer)
+                     ;; the turn's second and last boundary: the answer,
+                     ;; its tool headings and its thought are all frozen
+                     ;; into the buffer by now, so one mirror call puts
+                     ;; the whole turn on disk
+                     (agent-org-buffer-transcribe buffer)
                      ;; first turn done: the conversation now has a
                      ;; title worth reading, for agents that only
                      ;; reveal it through session/list
@@ -1997,7 +2019,8 @@ in the user's type-ahead box across the turn boundary."
                       buffer :state 'error
                       :message (format "prompt failed: %s"
                                        (agent-org--failure-text msg)))
-                     (agent-org-buffer-insert-prompt buffer))))))
+                     (agent-org-buffer-insert-prompt buffer)
+                     (agent-org-buffer-transcribe buffer))))))
 
 ;;;###autoload
 (defun agent-org-send ()

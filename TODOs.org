@@ -235,9 +235,11 @@ map: a model switch renames the turns after it (pinned by
 =two-turn-headings-keep-their-own-models=), and a resume cannot supply
 per-turn models anyway because =session/load= attaches no model to a chunk.
 Build it if a transcript file or a per-turn report actually asks for it —
-that needs a reader, not a writer.
+that needs a reader, not a writer.  (Settled: the transcript file shipped
+below does not ask.  It mirrors the buffer, so the heading text is its
+record too, and nothing reads a map.)
 
-** TODO One Org transcript file per session, kept updated
+** DONE One Org transcript file per session, kept updated
 "By default, keep a single Org transcript file to map to a session and
 regularly update it."  agent-shell's model: a buffer-local file path and
 =write-region ... t 'no-message= appending each chunk — no full rewrite,
@@ -245,6 +247,45 @@ so cost is one disk append per update.  Defcustom for on/off and the
 directory; the =:ID:= drawer line names the file and makes the
 transcript an =id:=-linkable document.  Overhead must be measured on
 this 4 GB machine before declaring it cheap (see next item).
+
+Shipped, but NOT as an append log: the file is a MIRROR of the buffer's
+frozen body (=point-min= to =agent-org-buffer--render-end=) rewritten at
+turn boundaries.  An append log cannot hold agent-org's tool headings —
+one line rewritten TODO→DOING→DONE — without keeping every superseded
+state of every call, and it would be a second renderer (CONVENTIONS.md
+§9: never add one).  Mirror also means the unsent draft is excluded by
+the same marker that protects it from a streaming turn.
+
+- =agent-org-transcribe= (default t) and =agent-org-transcript-directory=
+  (=~/.emacs.d/agent-org/transcripts/=), created on the first write.
+- One file per session, named =<id>.org= by
+  =agent-org-buffer--transcript-name=, which replaces every character
+  outside =[A-Za-z0-9._-]= with a dash: the id comes off the wire and
+  becomes a path, so =../../etc/passwd= must not be a file name the agent
+  chose.  The =:ID:= property the metadata block already writes makes it
+  an =id:=-linkable document, exactly as this item asked.
+- Boundaries: =agent-org--session-ready= (so a restored session is on disk
+  with no prompt sent), =agent-org--send-turn= before the request and in
+  both callbacks, =agent-org-cancel-turn=, =agent-org--sync-title= and
+  =agent-org--forget-session= — a kill is not a turn boundary and the turn
+  in flight has no end coming, so without that last one the final answer
+  of every chat is the one missing from the file.
+- =agent-org-buffer--transcript-cache= skips a body that has not changed,
+  so a repeated title or a second Ready touches no disk and leaves the
+  file's mtime honest.
+- A =file-error= is a =message= in the echo area, never a broken turn;
+  =write-region='s VISIT stays nil or the chat buffer would start
+  /visiting/ its own transcript and =C-x s= would save the draft into it.
+
+Overhead, measured on this machine (spinning =sda=, 4 GB, =emacs -Q
+--batch=, one whole-file write per boundary): 3 ms for a short chat, 6 ms
+at 20 turns (21 KB), 9 ms at 50 turns (103 KB), 15 ms at 100 turns
+(407 KB); an unchanged body is skipped in 0.02–3.4 ms.  Two boundaries per
+turn, twenty chunks of an answer cost nothing — versus 90–170 ms per turn
+for the per-chunk append model, spent inside the stream.  Twelve tests
+=file-is-named…= through =flushes-when-the-buffer-is-killed=; they are the
+suite's first to touch a filesystem, so =tests/test-agent-org.el= now
+requires =ert-x= for =ert-with-temp-directory=.
 
 ** TODO Markdown → Org for user and agent replies (default on, off-able)
 agent-shell only renders markdown to /faces/, never to Org, so this is

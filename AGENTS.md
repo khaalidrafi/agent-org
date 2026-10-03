@@ -317,3 +317,15 @@ emacs -Q --batch \
 #   argument: the two callers that start a turn without one (a thought chunk or a
 #   tool update arriving before any chunk) must get the same heading, and the fact
 #   lives with the buffer, not the session.
+# - The per-session transcript is a MIRROR of the buffer, not an append log, and
+#   it is written only at turn boundaries (`agent-org-buffer-transcribe`: ready,
+#   send, both send callbacks, cancel, late title, kill).  Never call it from a
+#   render site: an append log could not show a tool heading as DONE without
+#   keeping its TODO line (CONVENTIONS.md §3, §14), and a per-chunk write spends
+#   its cost inside the stream — measured 90-170 ms per turn here versus 2 whole-file
+#   writes of 3-15 ms.  The mirror spans `point-min' to
+#   `agent-org-buffer--render-end', so the live draft is never filed; the id in the
+#   file name is sanitized to `[A-Za-z0-9._-]' because it arrives over the wire and
+#   becomes a path; a `file-error' is a `message', never a broken turn; and
+#   `write-region' VISIT stays nil or the chat buffer would start `visiting' its own
+#   transcript and `C-x s' would save the draft into it.

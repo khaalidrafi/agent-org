@@ -60,6 +60,11 @@
 ;;   - Font-lock stays on through streaming; only freshly appended
 ;;     regions are re-fontified, never the whole buffer (a bulk paint is
 ;;     done once per replay, by `agent-org--render-replay').
+;;   - The session's Org file (see `agent-org-transcribe') is a MIRROR of
+;;     this buffer's frozen body, rewritten at turn boundaries — not an
+;;     append log.  One renderer, so the file can never disagree with the
+;;     chat: a tool heading that changed TODO→DONE in place is DONE in the
+;;     file, and twenty chunks of an answer cost no writes at all.
 
 ;;; Code:
 
@@ -1051,6 +1056,102 @@ TAB like any heading."
                     (agent-org-buffer--protect beg (point))
                     (set-marker marker beg)
                     (plist-put entry :marker marker)))))))))))
+
+;;;; Transcript file
+
+(defcustom agent-org-transcribe t
+  "When non-nil, each chat session is mirrored to its own Org file.
+One file per session, named for its ACP session id, rewritten at every
+turn boundary.  Off, no file is created and no disk is touched: a chat
+whose transcript is a real org file under version control does not want
+a second copy appearing behind it.
+
+The file is a MIRROR of the buffer, not an append log.  That choice is
+forced by the tool headings: they are one line rewritten in place
+TODO→DOING→DONE, so an append-only log would keep every superseded
+state of every call in the file, and the transcript would be a
+different document from the chat that produced it.  Mirroring means one
+renderer — the buffer — and the file simply agrees with it."
+  :type 'boolean
+  :group 'agent-org-buffer)
+
+(defcustom agent-org-transcript-directory
+  (locate-user-emacs-file "agent-org/transcripts/")
+  "Directory holding the per-session Org transcripts.
+Kept under `~/.emacs.d' rather than the user's project because a
+transcript is Emacs' record of a chat, not a file the repo asked for;
+`agent-org-reload' and a resume both land on the same path for the same
+id, so the directory is the only thing that decides where a session's
+history lives."
+  :type 'directory
+  :group 'agent-org-buffer)
+
+(defun agent-org-buffer--transcript-name (session-id)
+  "File name of SESSION-ID's transcript: the sanitized id, then `.org'.
+The id is the only fact about a chat that survives a rename, a title
+change and a restart, so it is what maps a file to a session — and it
+doubles as the Org `:ID:' the metadata block already puts in the same
+file, which makes every transcript an `id:=-linkable document.
+
+The id arrives over the wire, so it is not a file name yet: every
+character outside `A-Za-z0-9._-' becomes a dash.  Qoder sends UUIDs and
+Goose timestamps, but nothing in the ACP spec says the next server will
+not send `../../etc/passwd' — without this the writer is a
+path-traversal primitive handed to whatever agent the user connects to."
+  (concat (replace-regexp-in-string "[^A-Za-z0-9._-]" "-" session-id t t)
+          ".org"))
+
+(defvar-local agent-org-buffer--transcript-cache nil
+  "The exact text last written to this buffer's transcript file.
+A boundary can fire with nothing new — a repeated title push, a second
+Ready, a usage update that changed the header but not the conversation —
+and the write is a whole-file `write-region'.  Comparing against what was
+last put there skips those, and keeps the file's mtime honest: an
+untouched transcript does not look like it was edited.")
+
+(defun agent-org-buffer-transcribe (buffer)
+  "Mirror BUFFER's conversation to its transcript file, when it changed.
+The mirror is the frozen body — `point-min' to
+`agent-org-buffer--render-end' — which is exactly the conversation and
+nothing else: the same marker that keeps a streaming turn from
+scribbling over the user's draft separates \"sent\" from \"still
+typing\", so an unsent prompt never reaches the file.
+
+Called from turn boundaries only (see agent-org.el), never from a render
+site: twenty chunks of an answer cost no writes, so a slow disk cannot
+stall a stream.  No-op with `agent-org-transcribe' nil, or before the
+agent has given the session an id."
+  (when (and agent-org-transcribe (buffer-live-p buffer))
+    (with-current-buffer buffer
+      (let ((session-id (plist-get agent-org-buffer--status :session-id)))
+        (when session-id
+          (let ((text (buffer-substring-no-properties
+                       (point-min) (agent-org-buffer--render-end))))
+            (unless (equal text agent-org-buffer--transcript-cache)
+              (agent-org-buffer--write-transcript session-id text))))))))
+
+(defun agent-org-buffer--write-transcript (session-id text)
+  "Replace this buffer's transcript file with TEXT.
+VISIT is nil on purpose: a non-nil one would make the chat buffer
+`visit' the transcript, and then `C-x s' would save the live draft into
+it and auto-save would follow.  `buffer-substring-no-properties' already
+stripped the faces, so what lands is plain Org.
+
+A failure is a note in the echo area and nothing more.  The transcript is
+a convenience; the conversation is the feature — a full disk or a
+`~/.emacs.d' that is not writable must not break a turn.  The cache is
+left untouched, so the next boundary tries again."
+  (let* ((directory (file-name-as-directory agent-org-transcript-directory))
+         (file (expand-file-name (agent-org-buffer--transcript-name session-id)
+                                 directory)))
+    (condition-case err
+        (progn
+          (make-directory directory t)
+          (write-region text nil file nil)
+          (setq agent-org-buffer--transcript-cache text))
+      (file-error
+       (message "agent-org: transcript not written (%s): %s"
+                file (error-message-string err))))))
 
 (provide 'agent-org-buffer)
 ;;; agent-org-buffer.el ends here

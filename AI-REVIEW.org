@@ -893,6 +893,84 @@ hand-writes =:model-name=.  Mutation-checked three ways: a heading function that
 always answers "Agent" fails 4 of them, one that ignores the option fails 2, one
 that drops =agent-org-buffer--label= fails the multiline test.
 
+* One Org file per session
+
+** TODO Judge the shape: a mirror, not an append log  (agent-org-buffer.el)
+
+TODOs.org asked for agent-shell's mechanism, which is an append log —
+=agent-shell--append-transcript= does =write-region text nil file-path t
+'no-message= per chunk.  What shipped is the opposite: the file is
+=write-region= of the buffer's frozen body, rewritten whole at each boundary.
+Two reasons, and the second is the one that would have cost a review to catch:
+
+- an append log cannot hold agent-org's tool headings.  A call is ONE line
+  rewritten TODO→DOING→DONE (CONVENTIONS.md §3); appending can only add, so the
+  file would carry every superseded state of every call and stop being the
+  document the chat made.  =test-agent-org-transcript-rewrites-a-tool-heading-instead-of-logging-it=
+  is that argument, stated as an assertion: the call's heading reads DONE
+  once, and no TODO or DOING copy of it survives in the file.
+- a per-chunk write spends its cost inside the stream.  Measured here
+  (spinning disk, 4 GB): the append model costs 90–170 ms per 200-chunk turn,
+  the mirror costs 2 boundary writes of 3–15 ms, and the chunks themselves cost
+  nothing.
+
+The judgement left to you: the mirror rewrites the whole file (up to 407 KB
+measured) where an append would write only the delta.  On this machine the
+whole-file write wins because it happens ~twice per turn, not twice per second.
+
+** TODO Read the /un/listed call sites — that list is the feature
+
+=agent-org-buffer-transcribe= is called from =agent-org--session-ready= (so a
+restored session is on disk without anyone sending a prompt), =agent-org--send-turn=
+before the request and in both callbacks, =agent-org-cancel-turn=,
+=agent-org--sync-title= and =agent-org--forget-session=.  It is deliberately /not/
+called from =agent-org-buffer-append-chunk=, =agent-org-buffer--redraw-drawer= or
+=agent-org-buffer-insert-tool=.  A later "make it more responsive" change that puts
+a transcribe on the render path passes every functional test and breaks only
+=test-agent-org-transcript-costs-writes-per-turn-not-per-chunk= — which is the
+reason that test counts writes rather than checking the file's contents.
+
+** TODO Read the two lines that are security, not tidiness
+
+- =agent-org-buffer--transcript-name= replaces every character outside
+  =[A-Za-z0-9._-]= with a dash.  The session id arrives over the wire and becomes
+  a path component; unsanitized, =../../etc/passwd= is a file name the agent
+  chose.  =test-…-sanitizes-an-id-that-looks-like-a-path= asserts the file stays
+  inside the directory /and/ that nothing escaped it.
+- =write-region='s VISIT argument is nil, and =buffer-substring-no-properties= is
+  what makes the text.  A non-nil VISIT would make the chat buffer /visit/ its
+  transcript: =C-x s= would then save the live draft into the file, auto-save
+  would follow it, and the transcript would stop being the conversation.
+
+** DONE Read what the mirror spans, and why =point-max= was wrong
+
+=(point-min)= to =agent-org-buffer--render-end= — the same rear-advancing marker
+that keeps a streaming turn off the user's type-ahead box.  =point-max= would file
+a half-typed prompt the moment any boundary fired (a title push mid-typing is
+exactly that), so the boundary that separates "sent" from "still typing" is also
+the one that separates conversation from draft, for free.
+=test-…-leaves-the-unsent-draft-out= pushes a =session_info_update= /while/ a draft
+is live to test precisely that coincidence.
+
+** DONE Twelve tests (173 -> 185), and the suite's first disk writes
+
+=file-is-named-for-the-session-id=, =holds-a-completed-turn=,
+=rewrites-a-tool-heading…=, =is-one-file-for-the-whole-session=,
+=leaves-the-unsent-draft-out=, =paints-a-restored-session=,
+=writes-nothing-when-turned-off=, =costs-writes-per-turn…=,
+=skips-an-unchanged-body=, =sanitizes-an-id-that-looks-like-a-path=,
+=failure-never-breaks-a-turn= (the transcript directory is a path under a regular
+FILE, so every write fails and the turn must still reach Ready), and
+=flushes-when-the-buffer-is-killed=.
+
+These are the first tests here to touch the filesystem, so the file now
+=require='s =ert-x= for =ert-with-temp-directory=.  Two fixtures carry the new shape:
+=ao--transcript-in= binds the directory and the switch, and =ao--counting-writes=
+swallows =write-region= for =.org= targets only, so a count measures the writer and
+not something else in Emacs.  Mutation-checked: dropping the sanitizer fails 2,
+dropping the kill-hook write fails 1, moving the writer onto the chunk path fails
+the cost test, and pointing it at =point-max= fails the draft test.
+
 * How to check the whole thing
 
 #+begin_src sh
@@ -902,7 +980,11 @@ emacs -Q --batch --eval "(add-to-list 'load-path \"$PWD\")" \
   --eval "(ert-run-tests-batch-and-exit)"
 #+end_src
 
-The suite is 173 tests.  The MiniMax/model ones are
+The suite is 185 tests.  The transcript ones are the
+~test-agent-org-transcript-*~ family (select them with
+~ert-run-tests-batch-and-exit "transcript"~); they are the only tests that
+write to a filesystem, each inside its own ~ert-with-temp-directory~, which is
+why the file now requires ~ert-x~.  The MiniMax/model ones are
 ~test-agent-org-minimax-provider-present~ (spawns ~mcode acp~, no pin),
 ~test-agent-org-minimax-start-pins-nothing~ (the OpenCode-shaped design may
 not creep back), ~test-agent-org-opencode-provider-present~, the four

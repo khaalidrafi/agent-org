@@ -560,6 +560,54 @@ first's parts rather than writing its own:
 
 ---
 
+## 14. The session's Org file is a mirror, written at boundaries
+
+`agent-org-transcribe` (default on) keeps one file per session in
+`agent-org-transcript-directory`, named `<sanitized session id>.org`.  Its body
+is the chat buffer's frozen body — `point-min` to `agent-org-buffer--render-end`
+— so the transcript is the same document the user is reading, and the same
+`:ID:` in its `PROPERTIES` drawer makes it an `id:`-linkable target.
+
+* **Mirror, never append log.** A tool heading is one line rewritten in place
+  TODO→DOING→DONE (§3).  An append-only log can only add, so the file would
+  keep every superseded state of every call — a different document from the
+  chat that produced it.  Mirroring keeps one renderer, which is the same rule
+  §9 states for replay: never add a second paint path.
+* **Boundaries only, never the render path.** `agent-org-buffer-transcribe` is
+  called by `agent-org--session-ready`, `agent-org--send-turn` (before the
+  request, and in both callbacks), `agent-org-cancel-turn`,
+  `agent-org--sync-title` and `agent-org--forget-session`.  It is *not* called
+  by `agent-org-buffer-append-chunk`, `--redraw-drawer` or `insert-tool`, so
+  twenty chunks of an answer cost zero writes and a slow disk cannot stall a
+  stream.  `test-agent-org-transcript-costs-writes-per-turn-not-per-chunk`
+  pins that count at exactly 2.
+* **A kill is a boundary too.** A turn in flight has no end coming, so
+  `agent-org--forget-session` writes before `acp-shutdown`: without it the last
+  answer of every session — the one the user stopped reading — is the one
+  missing from the file.
+* **The draft is not conversation.** `point-max` would include the live
+  `* User` box and whatever is half-typed in it; `agent-org-buffer--render-end`
+  excludes both, which is the same marker that keeps a streaming turn off the
+  user's text (§11 of the buffer design).
+* **The id is agent text, so it is sanitized.** Every character outside
+  `[A-Za-z0-9._-]` becomes a dash (`agent-org-buffer--transcript-name`).  The
+  id arrives over the wire and becomes a path; without this the writer is a
+  path-traversal primitive handed to whatever server the user connects to.
+* **A failed write is a note, not a broken turn.** `condition-case` on
+  `file-error` → `message`, and the dedupe cache is left alone so the next
+  boundary retries.
+* `write-region`'s VISIT argument stays nil: a non-nil one would make the chat
+  buffer *visit* its transcript, and then `C-x s` would save the live draft
+  into it and auto-save would follow.
+
+Measured on this machine (spinning disk, 4 GB RAM, `emacs -Q --batch`, one
+boundary write of the whole mirror): 3 ms for a short chat, 6 ms at 20 turns
+(21 KB), 9 ms at 50 turns (103 KB), 15 ms at 100 turns (407 KB); an unchanged
+body is skipped in 0.02–3.4 ms.  The per-chunk append model this replaced costs
+90–170 ms for the same 20 turns, spent inside the stream.
+
+---
+
 ## Manual nodes referenced
 
 * `(org) Headlines` — §2.1 structure, left margin, separator lines.
