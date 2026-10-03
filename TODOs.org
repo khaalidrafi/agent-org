@@ -189,6 +189,51 @@ Qoder's id is a real UUID, so the transcript is now a genuine
 =agent-org-buffer--todo-setup= moved above =agent-org-buffer-create= —
 using it before the =defconst= byte-compiled as a free variable.)
 
+** TODO Model-name turn headings (design settled, no code written)
+User order: "Use model name instead of 'Agent' by default. You will have
+to maintain a map for each agent response's model in a session for it."
+Delivered from the wrong project session (org-docs) on 2026-10-03; the
+design below is all that survived the hand-off.
+
+- defcustom =agent-org-use-model-headings= (default t) beside
+  =agent-org-use-header-line= in agent-org-buffer.el; nil keeps =* Agent=.
+- Heading text comes from the buffer-local status:
+  =agent-org-buffer--model-display= (= :model-name, falling back to
+  :model), flattened with =agent-org-buffer--label=; nil model → plain
+  =* Agent=.  That fallback keeps every existing =\\* Agent= test green,
+  because the fixtures' statuses carry no model.
+- Exactly one site writes the heading — the =insert "* Agent\n\n"= in
+  =agent-org-buffer-start-agent-turn= — every placement goes through
+  =agent-org-buffer--turn-anchor=/render-end markers, so the rename is
+  safe.  The function already receives SESSION (as =_session=; nil on
+  the insert-tool path).
+- The map: session key =:turn-models=, an alist (turn-number . model),
+  recorded in start-agent-turn from =(plist-get session :turn)=.  It
+  MUST be pre-installed in =agent-org--open-session='s key list
+  (agent-org.el, next to =:pending-prompts=): =setf= on =plist-get=
+  cannot create an absent key.  Add it to the test fixture
+  =ao--make-test-session= too.
+- Tests first: model known → =* <name>= heading + map entry; no model →
+  =* Agent=; option nil → =* Agent= despite a model; two turns with a
+  model change → two map entries and the older heading untouched.
+
+** TODO One Org transcript file per session, kept updated
+"By default, keep a single Org transcript file to map to a session and
+regularly update it."  agent-shell's model: a buffer-local file path and
+=write-region ... t 'no-message= appending each chunk — no full rewrite,
+so cost is one disk append per update.  Defcustom for on/off and the
+directory; the =:ID:= drawer line names the file and makes the
+transcript an =id:=-linkable document.  Overhead must be measured on
+this 4 GB machine before declaring it cheap (see next item).
+
+** TODO Markdown → Org for user and agent replies (default on, off-able)
+agent-shell only renders markdown to /faces/, never to Org, so this is
+beyond parity: convert headings, emphasis, lists, fences and tables of
+each reply into real Org markup, defcustom-gated.  Keep it a cheap
+in-buffer transform on the hot path (no pandoc per chunk).  Per the
+user: compute the overhead and report it, asking for a switch if the
+cost says so.
+
 * TODO Later --- still worth porting, not "basic"
 ** TODO Steer --- inject into the live turn
 agent-shell's =agent-shell-prompt-steer= sends a mid-turn message via
