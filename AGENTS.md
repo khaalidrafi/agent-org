@@ -297,3 +297,23 @@ emacs -Q --batch \
 #   passing implementation with `(18 47)' on two identical 65-column rows).
 #   Measure the first character carrying the `shadow' face — the dim run IS the
 #   column, by construction.
+# - An Agent turn's heading is the MODEL that answered: `agent-org-buffer--turn-heading'
+#   reads the buffer-local status (`agent-org-buffer--model-display' — the agent's
+#   label, else its id) and flattens it with `agent-org-buffer--label', because a
+#   config option's `name' is agent text and a newline on a heading line is a
+#   broken headline.  No model at all (Goose advertises none of this shape), or
+#   `agent-org-use-model-headings' nil, gives the word "Agent": `* ' alone is a
+#   malformed headline.  The text is written ONCE at turn start and never derived
+#   again, so a later `C-c C-m' renames the turns after it and the transcript
+#   carries per-turn provenance for free — which is why the settled design's
+#   `:turn-models' map was NOT built: nothing could read it (the heading is the
+#   record), and a resume cannot know per-turn models anyway, since
+#   `session/load' attaches no model to a chunk.
+# - Never locate a turn by heading TEXT: placement is `agent-org-buffer--turn-anchor'
+#   and `agent-org-buffer--render-end', which is what makes renaming the heading a
+#   cosmetic change (5 pre-existing ~^\\* Agent$~ assertions stayed green — they run
+#   on fixtures whose status carries no model, so they ARE the fallback path).
+#   Same reason `agent-org-buffer-start-agent-turn' still ignores its SESSION
+#   argument: the two callers that start a turn without one (a thought chunk or a
+#   tool update arriving before any chunk) must get the same heading, and the fact
+#   lives with the buffer, not the session.

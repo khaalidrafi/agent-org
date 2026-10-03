@@ -654,8 +654,8 @@ worked in the suite and failed in the only environment that matters.  It now
 builds the dotted-pair shape, and a mutation check confirms the line holds: put
 the =plist-get= reader back and three kill tests fail
 (~…kill-of-chat-buffer-with-agent-asks~, ~…kill-query-wording-names-the-process~,
-~…kill-query-yes-kills-and-releases-the-agent~); with =map-elt= the suite has been
-166/166 ever since.
+~…kill-query-yes-kills-and-releases-the-agent~); with =map-elt= the whole suite has been
+green ever since.
 
 Worth generalising, because it is the shape of a whole class of stub bugs: a mock
 must mirror the dependency's /data shape/, not merely its key names, or the suite
@@ -800,7 +800,7 @@ behind it.  If you want a key, the chat-mode map in =agent-org-buffer.el= is the
 place, but note that it would only be reachable /from/ a chat buffer, which is
 exactly when you might be stranded in the one you are trying to leave.
 
-** DONE Nine tests, and the 166 the suite is at now
+** DONE Nine tests (156 -> 166)
 
 =offer-every-open-chat= (rows and their buffer values),
 =wear-the-provider-without-a-title=, =name-the-project-too= (the live bug above),
@@ -814,6 +814,85 @@ its =metadata= carries =display-sort-function . identity=).  Harness:
 =ao--isolated-registry= (bind =agent-org--sessions= nil — several earlier suites
 leave chat buffers alive, and a counting test would count them).
 
+* An agent turn is headed by the model that answered it
+
+** TODO Judge the design change: the /turn-models/ map was NOT built
+
+TODOs.org's settled design for this feature carried a session key
+=:turn-models= — an alist =(turn-number . model)= recorded in
+=agent-org-buffer-start-agent-turn=, pre-installed in =agent-org--open-session=
+'s key list (because =setf= on =plist-get= cannot create an absent key) and
+mirrored in the test fixture.  It is not there.  Writing it made the design's
+own list of readers empty: the heading is inserted /once/, at turn start, from
+the model known then, so the transcript already records the fact in the place a
+person reads it; and a resume cannot supply it per turn anyway, because
+=session/load= attaches no model to any chunk.  A key that nothing reads is
+state that can drift, on a code path (every turn) that would have had to keep it
+in step.
+
+So: the heading text IS the map.  If you want the map back — for a future
+transcript file or a per-turn model report — say so, and note that its real
+requirement is a /reader/, not a writer.  =test-agent-org-two-turn-headings-keep-their-own-models=
+is the assertion that the visible behaviour does not need it: change the model
+between two turns and the older heading is untouched.
+
+** DONE Read what makes renaming a heading safe
+
+Nothing may locate a turn by its heading /text/.  Placement is
+=agent-org-buffer--turn-anchor= and =agent-org-buffer--render-end=, so the heading
+string is decoration — which is why five pre-existing =~^\\* Agent$= assertions in
+the suite stayed green without editing them: they all run on fixtures whose
+status carries no model, and "no model" is the documented fallback path, not a
+test artifact.  The same reason =agent-org-buffer-start-agent-turn= still ignores
+its SESSION argument: two callers (a thought chunk or a tool update arriving
+before any chunk did) start a turn with no session in hand, and reading the
+model from the buffer-local status is what lets those three paths print one
+heading.
+
+** DONE Read the three headings an agent can earn
+
+| agent reports                     | heading             | why                          |
+|-----------------------------------+---------------------+------------------------------|
+| ~name~ + id                       | =* Qwen3.8-Flash=   | the agent's own label, first |
+| an id outside its advertised list | =* ghost-model=     | an id beats a generic word   |
+| no model option at all (Goose)    | =* Agent=           | =* '= would be malformed     |
+
+Middle row is not a hypothetical: =agent-org--ingest-config= stores
+=:model-name= as "advertised ~name~ else the value", and OpenCode renames its
+catalog between releases, so a current value can be unnamed.  Every one of them
+goes through =agent-org-buffer--label=, because a config option's ~name~ is agent
+text — the multiline case asserts one heading line, not a heading plus a
+paragraph Org would have to guess about.
+
+** DONE Live check (2026-10-04, by the agent)
+
+Read from the running Emacs, no turn sent — the probe called
+=agent-org-buffer--turn-heading= in each open chat buffer, which is the whole
+decision:
+
+#+begin_example
+"*agent-org: agent-org Qoder [b480ebca-...]" model=qfmodel name=Qwen3.8-Flash option=t => Qwen3.8-Flash
+"*agent-org: org-docs Qoder [ef80d1b2-...]"  model=qfmodel name=Qwen3.8-Flash option=t => Qwen3.8-Flash
+#+end_example
+
+So the next turn in those buffers is headed =* Qwen3.8-Flash=.  Note that the
+agent reports the label itself — nothing in agent-org guessed it — and that
+=:model= (the wire id) stayed =qfmodel=, which is what
+=session/set_config_option= must be sent.
+
+** DONE Seven tests (166 -> 173)
+
+=wears-the-model-name=, =wears-the-id-when-nothing-names-it=,
+=falls-back-to-agent-without-a-model=, =option-off-keeps-agent=,
+=flattens-a-multiline-model-name=, =two-turn-headings-keep-their-own-models= and
+=replay-paints-the-model-it-was-told= (a restored transcript is headed by the
+model known /now/, because that is all the wire says — see the map question
+above).  New fixture =ao--chat-on-model=: it drives the real
+=agent-org-start= handshake and =session/new= config response, so no test
+hand-writes =:model-name=.  Mutation-checked three ways: a heading function that
+always answers "Agent" fails 4 of them, one that ignores the option fails 2, one
+that drops =agent-org-buffer--label= fails the multiline test.
+
 * How to check the whole thing
 
 #+begin_src sh
@@ -823,7 +902,7 @@ emacs -Q --batch --eval "(add-to-list 'load-path \"$PWD\")" \
   --eval "(ert-run-tests-batch-and-exit)"
 #+end_src
 
-The suite is 166 tests.  The MiniMax/model ones are
+The suite is 173 tests.  The MiniMax/model ones are
 ~test-agent-org-minimax-provider-present~ (spawns ~mcode acp~, no pin),
 ~test-agent-org-minimax-start-pins-nothing~ (the OpenCode-shaped design may
 not creep back), ~test-agent-org-opencode-provider-present~, the four

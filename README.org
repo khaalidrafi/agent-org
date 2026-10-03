@@ -11,10 +11,12 @@ renders agent output natively as Org headlines.
 All status, progress and error feedback appears in the chat buffer's
 own *header line* (the top bar, as used by ~gptel~ and ~agent-shell~) — never
 as system messages in the document body.  The body contains the
-~* User~ / ~* Agent~ conversation, with each turn's tool calls rendered
-as ~** TODO/DONE~ subheadings and its extended thinking kept in a folded
-~:thinking:~ drawer under the ~* Agent~ heading, plus one auto-managed
-metadata block at the very top (see [[#session-metadata][Session metadata]]).
+~* User~ / agent-turn conversation, each agent turn headed by the model that
+answered it (~* MiniMax M3~; see ~agent-org-use-model-headings~), with that
+turn's tool calls rendered as level-2 ~TODO/DONE~ subheadings and its
+extended thinking kept in a folded ~:thinking:~ drawer under the same
+heading, plus one auto-managed metadata block at the very top (see
+[[#session-metadata][Session metadata]]).
 
 * Prerequisites
 
@@ -111,7 +113,9 @@ NonGNU ELPA.
    and a streaming reply never scribbles over what you are typing.  The
    cursor still travels freely over history — you can browse and copy
    it; typing into frozen text is refused.
-3. Watch the reply stream under a ~* Agent~ heading; each tool call is
+3. Watch the reply stream under the agent-turn heading — the model that
+   answered it (~* MiniMax M3~), or ~* Agent~ with
+   ~agent-org-use-model-headings~ nil; each tool call is
    a ~**~ subheading whose TODO keyword tracks its state (~TODO~ pending
    → ~DOING~ running → ~DONE~ completed / ~CANCELLED~ failed), updated
    in place, while extended thinking accumulates in one folded
@@ -332,6 +336,13 @@ conversation below it.
 
 - ~agent-org-use-header-line~ — when nil, status messages go to the
   echo area via ~message~ instead of the top bar.
+- ~agent-org-use-model-headings~ — when non-nil (the default) an agent turn
+  is headed by the model that answered it (~* MiniMax M3~) rather than the
+  word ~* Agent~.  Which model produced an answer is a fact about the
+  transcript, and the top bar that says so is gone the moment the buffer is
+  buried or the file is re-read.  Nil keeps the stable heading for anyone
+  who would rather a provider's catalog naming not appear in their notes;
+  an agent that advertises no model gets ~* Agent~ either way.
 - ~agent-org-default-provider~ — provider ~agent-org-resume-session~ uses when
   you call it with no prefix argument (qoder by default: it answers
   ~session/list~, goose does not).

@@ -19,14 +19,15 @@ Top to bottom, a session buffer is exactly:
 2. A blank line separating it from the conversation.
 3. The conversation: alternating `* User` and `* Agent` level-1 headings,
    each Agent turn optionally carrying `**` tool headings and one
-   `:thinking:` drawer.
+   `:thinking:` drawer.  By default the Agent heading is not the word
+   `Agent` but the model that answered — `* MiniMax M3` (see below).
 
 ```org
 :PROPERTIES:
 :Provider: goose
 :ID:       01J...
 :Mode:     auto
-:Model:    claude-...
+:Model:    Claude Sonnet
 :Context:  12k/200k (6%)
 :Cost:     $0.00
 :END:
@@ -42,7 +43,7 @@ Top to bottom, a session buffer is exactly:
 
 What does agent-org-buffer.el do?
 
-* Agent
+* Claude Sonnet
 ** TODO read_file [tc1]
 ** DONE write_file [tc2]
 :thinking:
@@ -53,6 +54,20 @@ Let me look at the buffer first…
 Nothing else may live in the body.  Status, progress and errors never
 become text — see §6.
 
+**The Agent heading names the model that answered** (`agent-org-use-model-headings`,
+default on): `* Claude Sonnet`, not `* Agent`.  Which model produced an answer is
+a fact about the transcript, and the header line that says so is gone as soon as
+the buffer is buried or the file is re-read.  The text comes from
+`agent-org-buffer--turn-heading` — the buffer status's model label, else its id,
+else the word `Agent` — flattened by `agent-org-buffer--label` because a config
+option's `name` is agent text and a newline on a heading line is a broken
+headline.  Two rules keep this cosmetic: the heading is written **once**, at turn
+start, so it records the model in force then and a later `C-c C-m` renames only
+the turns after it; and nothing ever finds a turn by its heading text — placement
+goes through the turn anchor and `agent-org-buffer--render-end`, which is why the
+two callers that start a turn with no session (a thought chunk or a tool update
+arriving first) get the same heading as the streaming path.
+
 **The buffer is named for its session**: `*agent-org: <project> <title> [<session id>]*`.
 `C-x b` and any switcher list names, and `*agent-org: qoder*` tells someone with
 three qoder chats open nothing — nor does `*agent-org: Fix the login bug [sid]*`
@@ -61,7 +76,10 @@ has not arrived, exactly as it does for `#+TITLE:`, and the id is omitted until
 the agent gives one; the project — the last directory component of the session
 cwd — is there from creation, so even the handshake name
 (`*agent-org: myproj goose*`) places the buffer.  All three facts come from
-`agent-org-buffer--wanted-name`; after creation it is applied by
+`agent-org-buffer--wanted-name`, whose `<project> <label>` middle is
+`agent-org-buffer--chat-label` — the same function `agent-org-switch-buffer`
+builds its first column from, so one chat has one name in every list (§13);
+after creation the name is applied by
 `agent-org-buffer-set-status`, on the updates that carry `:title` or
 `:session-id`: those and the creation-time `:project` are all a name is made
 of, so a per-chunk usage update builds no string and renames nothing.  Two
@@ -114,7 +132,7 @@ rename from the agent therefore flows straight through on the next
 ## 3. Tool calls are `** TODO` subheadings
 
 Each ACP tool call renders as **one headline per `toolCallId`**, directly
-under the current `* Agent` heading:
+under the current agent-turn heading (named for the model, see §1):
 
 ```org
 ** KEYWORD title
@@ -322,8 +340,8 @@ From `info "(org) Headlines` (§2.1):
 ## 9. Resume replay — buffer it, then paint once
 
 `agent-org-resume-session` replays a session's history into a fresh buffer.  Restored
-turns are laid out **exactly** like typed ones (`* User`, `* Agent`, `**` tool
-headings, `:thinking:` drawer), because the replay feeds the same
+turns are laid out **exactly** like typed ones (`* User`, the model-named agent
+heading, `**` tool headings, `:thinking:` drawer), because the replay feeds the same
 `agent-org-buffer-*` primitives through `agent-org--buffer-update`.  Nothing
 about resume gets a private renderer.
 

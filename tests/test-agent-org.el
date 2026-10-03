@@ -2555,6 +2555,162 @@ label is re-read from it rather than remembered from the choice."
                                     (agent-org-buffer--render-header-line))))
       (kill-buffer buf))))
 
+(defun ao--chat-on-model (id name)
+  "A Ready chat buffer whose agent advertises model ID, labelled NAME.
+Built through the real `agent-org-start' path inside `ao--capture-wire', so
+the status a turn heading reads is the status a live session has — the
+point of this helper is that no test hand-writes `:model-name'.  NAME nil
+is an agent reporting a value it never named, which is the id-fallback case.
+ID nil is an agent advertising no model option at all (Goose answers with
+no `configOptions' of this shape), which is the no-model case.  Caller
+kills the buffer."
+  (let ((agent-org-session-strategy 'new)
+        (agent-org-use-model-headings t))
+    (let ((buf (agent-org-start 'qoder)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (ao--drive "session/new"
+                 (if id
+                     (ao--config-resp id (and name (list (cons id name))))
+                   '((sessionId . "sid-new") (configOptions . []))))
+      buf)))
+
+(ert-deftest test-agent-org-turn-heading-wears-the-model-name ()
+  "An agent turn is headed by the model that answered, not by \"Agent\".
+User order: \"Use model name instead of 'Agent' by default.\"  One qoder
+answer and one MiniMax answer are the same shape of heading while the bar
+two lines up says something different, and a transcript read a week later
+has no bar at all.  The heading is written once, at the moment the turn
+begins, so it records the model IN FORCE THEN and no later switch can
+rewrite it."
+  (ao--capture-wire
+    (let ((buf (ao--chat-on-model "qmodel-large" "QModel Large")))
+      (with-current-buffer buf
+        (agent-org-buffer-start-agent-turn buf (agent-org-buffer--session))
+        (goto-char (point-min))
+        (should (re-search-forward "^\\* QModel Large$" nil t))
+        (should-not (re-search-forward "^\\* Agent$" nil t)))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-turn-heading-falls-back-to-agent-without-a-model ()
+  "No model reported is not a heading that says nothing.
+Goose can answer with no `model' config option in its response at all, and
+`* ' alone is a broken headline — so the word stays \"Agent\", which is what
+it was before this feature."
+  (ao--capture-wire
+    (let ((buf (ao--chat-on-model nil nil)))
+      (with-current-buffer buf
+        (should-not (plist-get agent-org-buffer--status :model))
+        (agent-org-buffer-start-agent-turn buf (agent-org-buffer--session))
+        (goto-char (point-min))
+        (should (re-search-forward "^\\* Agent$" nil t)))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-turn-heading-wears-the-id-when-nothing-names-it ()
+  "An agent that reports a value but no label gets the value in the heading.
+`agent-org--ingest-config' stores the advertised `name' in `:model-name' and
+falls back to the wire id when the agent names nothing, so a heading built
+from the display shows an id there — the same rule the header line follows (a
+bar that drops the model field reads as \"no model\"), and an id is a clue
+where the generic word is not.  Agents rename their catalog between
+releases, so this is the case that keeps a transcript honest when the label
+disappears."
+  (ao--capture-wire
+    (let ((buf (ao--chat-on-model "ghost-model" nil)))
+      (with-current-buffer buf
+        (should (equal "ghost-model"
+                       (plist-get agent-org-buffer--status :model)))
+        (agent-org-buffer-start-agent-turn buf (agent-org-buffer--session))
+        (goto-char (point-min))
+        (should (re-search-forward "^\\* ghost-model$" nil t)))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-turn-heading-option-off-keeps-agent ()
+  "`agent-org-use-model-headings' nil is the old document.
+A model name in a heading is a claim about the agent's catalog in the
+middle of the user's notes; someone keeping transcripts across a provider
+switch will want the stable word instead, and that preference must be
+reachable without patching."
+  (ao--capture-wire
+    (let ((agent-org-use-model-headings nil)
+          (buf (ao--chat-on-model "qmodel-large" "QModel Large")))
+      (with-current-buffer buf
+        (agent-org-buffer-start-agent-turn buf (agent-org-buffer--session))
+        (goto-char (point-min))
+        (should (re-search-forward "^\\* Agent$" nil t))
+        (should-not (re-search-forward "^\\* QModel Large$" nil t)))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-turn-heading-flattens-a-multiline-model-name ()
+  "A model label is agent free text, so it cannot break the headline.
+`agent-org-buffer--label' is the gate every agent-supplied string passes
+before it lands on a one-line context; a config option named \"A\\nB\" must
+produce ONE heading line, not a heading and a stray paragraph that Org
+would read as body text with a lost structure."
+  (ao--capture-wire
+    (let ((buf (ao--chat-on-model "qmodel-large" "QModel\nLarge  with\n\n  spaces")))
+      (with-current-buffer buf
+        (agent-org-buffer-start-agent-turn buf (agent-org-buffer--session))
+        (goto-char (point-min))
+        (should (re-search-forward
+                 (concat "^\\* "
+                         (agent-org-buffer--label "QModel\nLarge  with\n\n  spaces")
+                         "$")
+                 nil t))
+        (should-not (re-search-forward "^[ \t]*Large" nil t)))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-two-turn-headings-keep-their-own-models ()
+  "A model switch renames the NEXT turn's heading, never the last one.
+The heading is baked at turn start, so two answers from two models stand in
+the transcript as two different headings — this is what the per-turn map in
+the original design was for, and it needs no map: the text of the heading
+IS the record.  Asserting the older heading survives unchanged is the
+regression this feature could otherwise introduce, because a later render
+pass that re-derived the label from the CURRENT status would silently
+rewrite history."
+  (ao--capture-wire
+    (let* ((buf (ao--chat-on-model "qmodel" "QModel"))
+           (session (with-current-buffer buf (agent-org-buffer--session))))
+      (agent-org-buffer-append-chunk buf "First answer.\n" session)
+      (agent-org-buffer-end-agent-turn buf)
+      (agent-org-buffer-set-status buf :model "qmodel-large"
+                                   :model-name "QModel Large")
+      (agent-org-buffer-append-chunk buf "Second answer.\n" session)
+      (agent-org-buffer-end-agent-turn buf)
+      (with-current-buffer buf
+        (goto-char (point-min))
+        (should (re-search-forward "^\\* QModel$" nil t))
+        (should (re-search-forward "^\\* QModel Large$" nil t))
+        (should-not (re-search-forward "^\\* QModel$" nil t)))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-replay-paints-the-model-it-was-told ()
+  "Restored history is headed by the model known NOW, which is all the wire says.
+`session/load' replays chunks with no model attached to any of them, so a
+resumed transcript cannot claim per-turn models it never learned — this test
+states what the replay really does, through the same primitive a live turn
+uses, instead of pretending it remembers.  It is also the guard that naming
+the heading did not break the restored-history path, which paints hundreds of
+chunks in one synchronous run."
+  (let* ((pair (ao--make-test-session "replay-model"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (agent-org-buffer-set-status buf :model "qfmodel" :model-name "Qwen3.8-Flash")
+    (setf (plist-get session :loading) t)
+    (dolist (update (list
+                     '((sessionUpdate . "agent_message_chunk")
+                       (content . ((type . "text")
+                                   (text . "Answered before the restart"))))
+                     '((sessionUpdate . "agent_message_chunk")
+                       (content . ((type . "text") (text . " and after."))))))
+      (agent-org--on-notification session (ao--update-notif update)))
+    (agent-org--render-replay session)
+    (with-current-buffer buf
+      (let ((s (buffer-string)))
+        (should (= 1 (ao--count-occurrences s "^\\* Qwen3\\.8-Flash$")))
+        (should (= 0 (ao--count-occurrences s "^\\* Agent$")))))
+    (kill-buffer buf)))
+
 ;;;; Command names, following agent-shell
 
 (ert-deftest test-agent-org-session-command-names-match-agent-shell ()

@@ -97,6 +97,20 @@ Either way, status text is never written into the chat buffer body."
   :type 'boolean
   :group 'agent-org-buffer)
 
+(defcustom agent-org-use-model-headings t
+  "When non-nil, an agent turn is headed by the model that answered it.
+So a turn reads \"* MiniMax M3\" instead of \"* Agent\": which model produced
+an answer is a fact about the transcript, and the header line that says so is
+gone the moment the buffer is buried or the file is re-read a week later.
+Nil keeps the stable word for anyone who wants headings not to carry a
+provider's catalog naming into their notes.
+
+Only the heading TEXT changes: every placement still goes through the
+turn anchor and `agent-org-buffer--render-end', so no code finds a turn by
+its heading."
+  :type 'boolean
+  :group 'agent-org-buffer)
+
 (defvar-local agent-org-buffer--status
   (list :provider "agent-org" :state 'idle :message nil :session-id nil)
   "Status plist backing this buffer's header line and metadata block.
@@ -757,12 +771,37 @@ prompt renders in history order rather than underneath the draft."
 
 ;;;; Streaming (the hot path)
 
+(defun agent-org-buffer--turn-heading ()
+  "The heading text of the Agent turn about to start in this buffer.
+With `agent-org-use-model-headings' (the default) that is the model in
+force — `agent-org-buffer--model-display', which is the agent's own label
+else its id — flattened by `agent-org-buffer--label', because a config
+option's `name' is agent text and a newline on a heading line is a broken
+headline.  With no model at all (Goose advertises none of this shape) or the
+option off, the word is \"Agent\": `* ' alone would be a malformed headline.
+
+Written ONCE, at turn start, and never derived again — which is why no
+per-turn model map is needed: the heading text IS the record of which model
+answered, and a later `C-c C-m' renames the turns after it and leaves the
+older ones alone."
+  (or (and agent-org-use-model-headings
+           (when-let* ((model (agent-org-buffer--model-display
+                               agent-org-buffer--status)))
+             (agent-org-buffer--label model)))
+      "Agent"))
+
 (defun agent-org-buffer-start-agent-turn (buffer _session)
   "Begin a new Agent heading in BUFFER if one isn't already streaming.
 Font-lock stays on for the whole turn so Org colors never vanish while
 streaming.  Incremental cost is kept low by the append path, which only
 ever fontifies the freshly inserted chunk (see
 `agent-org-buffer-append-chunk'), not the whole buffer.
+
+The heading names the model answering, and it reads that from the
+buffer-local status — hence the unused SESSION: the two callers that start a
+turn without a session in hand (a thought chunk or a tool update arriving
+before any chunk did) get the same heading as the streaming path, because
+the fact lives with the buffer.
 
 The whole mutation runs in `save-excursion': a turn can start while the
 user is mid-sentence in the type-ahead box, and this is one of the
@@ -776,7 +815,7 @@ ABOVE the box instead of inside it."
           (goto-char (agent-org-buffer--render-end))
           (agent-org-buffer--separator)
           (let ((beg (point)))
-            (insert "* Agent\n\n")
+            (insert (format "* %s\n\n" (agent-org-buffer--turn-heading)))
             (agent-org-buffer--protect beg (point))
             (move-marker (setq-local agent-org-buffer--turn-anchor
                                      (make-marker))

@@ -215,33 +215,27 @@ in two projects printed identical rows but for their UUIDs, so the label is now
 from, project directory first.  Nine tests in /tests, both column assertions
 mutation-checked.
 
-** TODO Model-name turn headings (design settled, no code written)
+** DONE Model-name turn headings
 User order: "Use model name instead of 'Agent' by default. You will have
 to maintain a map for each agent response's model in a session for it."
-Delivered from the wrong project session (org-docs) on 2026-10-03; the
-design below is all that survived the hand-off.
+Shipped: =agent-org-use-model-headings= (default t) in agent-org-buffer.el,
+and =agent-org-buffer--turn-heading=, which reads the buffer-local status —
+the model's advertised label, else its id, flattened by
+=agent-org-buffer--label= because a config option's =name= is agent text —
+and answers ="Agent"= when the agent reports no model at all (Goose), since
+="* "= alone is a malformed headline.  A turn is headed =* Qwen3.8-Flash=,
+so the transcript says which model answered even after the header line is
+buried.  Live-verified against the running Emacs: both open qoder chats
+report =model=qfmodel name=Qwen3.8-Flash=.
 
-- defcustom =agent-org-use-model-headings= (default t) beside
-  =agent-org-use-header-line= in agent-org-buffer.el; nil keeps =* Agent=.
-- Heading text comes from the buffer-local status:
-  =agent-org-buffer--model-display= (= :model-name, falling back to
-  :model), flattened with =agent-org-buffer--label=; nil model → plain
-  =* Agent=.  That fallback keeps every existing =\\* Agent= test green,
-  because the fixtures' statuses carry no model.
-- Exactly one site writes the heading — the =insert "* Agent\n\n"= in
-  =agent-org-buffer-start-agent-turn= — every placement goes through
-  =agent-org-buffer--turn-anchor=/render-end markers, so the rename is
-  safe.  The function already receives SESSION (as =_session=; nil on
-  the insert-tool path).
-- The map: session key =:turn-models=, an alist (turn-number . model),
-  recorded in start-agent-turn from =(plist-get session :turn)=.  It
-  MUST be pre-installed in =agent-org--open-session='s key list
-  (agent-org.el, next to =:pending-prompts=): =setf= on =plist-get=
-  cannot create an absent key.  Add it to the test fixture
-  =ao--make-test-session= too.
-- Tests first: model known → =* <name>= heading + map entry; no model →
-  =* Agent=; option nil → =* Agent= despite a model; two turns with a
-  model change → two map entries and the older heading untouched.
+The one thing NOT built is the =:turn-models= map from the hand-off design.
+The heading is inserted once, at turn start, from the model in force then,
+so /the heading text is the per-turn record/ and nothing else could read the
+map: a model switch renames the turns after it (pinned by
+=two-turn-headings-keep-their-own-models=), and a resume cannot supply
+per-turn models anyway because =session/load= attaches no model to a chunk.
+Build it if a transcript file or a per-turn report actually asks for it —
+that needs a reader, not a writer.
 
 ** TODO One Org transcript file per session, kept updated
 "By default, keep a single Org transcript file to map to a session and
