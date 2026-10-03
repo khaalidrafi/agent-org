@@ -553,6 +553,69 @@ already have shown up as an empty chooser).  Live check: start opencode, ~C-c
 C-m~, pick one, and read the top bar; it should show the same string the chooser
 showed, with no =opencode/= prefix.
 
+* A chat buffer is named for its session (=agent-org-buffer--wanted-name=)
+
+** TODO Read the choke point: =agent-org-buffer-set-status= renames (agent-org-buffer.el)
+
+The rename hangs off the one function that already receives every status fact,
+guarded by =(or (plist-member status :title) (plist-member status :session-id))=.
+Worth judging, because the cheap-looking alternative — rename inside
+=agent-org--session-ready= and again in =session_info_update= — is two call sites
+that a third title-carrying path can forget.  A =usage_update= does not reach the
+string building at all, which is the whole low-end argument for the guard.
+
+** TODO Read =agent-org-buffer--apply-name='s equality test
+
+Not an optimisation: =generate-new-buffer-name= counts *this* buffer among the
+holders of the name, so renaming on every update of a Ready session walks it
+through =*agent-org: T [s]*<2><3><4>= — one more suffix than the buffer has
+status updates, which for a long turn is dozens.  The test
+=…-does-not-accumulate-suffixes= is that sentence made executable; delete the
+=(unless (equal …))= and it fails on the sixth iteration.
+
+=RENAME-ALL-PROCESSES= is deliberately nil: =rename-buffer= with =t= would also
+rename the agent process, and =M-x list-processes= is where a stray =qoder --acp=
+child gets found (see the 16-process measurement above).
+
+** TODO Judge what the name does /not/ include
+
+Provider is dropped once a title exists (it is the first segment of the header
+line and the process name), and the project directory is left out because one
+directory is one Emacs project and every chat already shares it.  The id is
+included verbatim, brackets and all, mirroring the header line's =[sid]= segment —
+that is the string a user pastes into =agent-org-resume-session= when the chooser
+is not available.
+
+** TODO Decide whether resume should name the buffer /before/ the replay
+
+=agent-org-start='s chooser knows the title (it just displayed it, with the date
+and id) and =session/load'='s response does not carry one, so a resumed buffer is
+named =*agent-org: goose [sid]*= until the replay's =session_info_update= arrives —
+and an agent that never re-sends its title keeps the provider's name for the life
+of the chat.  Threading the chosen title from =agent-org--selection-value= down
+through =agent-org--load-session= would fix that, but it means a third field on
+the =agent-org-resume-session= call chain that nothing else reads.  Left alone for
+now; say so if you want it.
+
+** DONE Six tests (116 -> 122)
+
+=gains-title-and-id= (the full ready path, via =ao--fake-session-new-resp=),
+=wears-provider-without-a-title=, =follows-a-late-title= (qoder's real timing),
+=flattens-a-multiline-title= (200-char, 3-line agent text),
+=does-not-accumulate-suffixes= and =names-stay-unique-per-session= (same title,
+two ids, then the no-id case).  =test-agent-org-buffer-create='s
+=string-prefix-p "*agent-org: test"= still holds, because nothing renames before
+the first id arrives — no code keys on a buffer name (verified: the only other
+=buffer-name= reader in the suite is that assertion), the registry maps
+buffer-object → session.
+
+** TODO What the suite cannot prove
+
+That a real agent's title survives being a buffer name.  Live check: start goose,
+send one turn, then ~C-x b~ — the buffer should read
+=*agent-org: <that chat's title> [20261003_1]*=, and =M-x list-processes= should
+still show =acp-client(goose acp)-1=, not the Org title.
+
 * How to check the whole thing
 
 #+begin_src sh
@@ -562,7 +625,7 @@ emacs -Q --batch --eval "(add-to-list 'load-path \"$PWD\")" \
   --eval "(ert-run-tests-batch-and-exit)"
 #+end_src
 
-The suite is 116 tests.  The MiniMax/model ones are
+The suite is 122 tests.  The MiniMax/model ones are
 ~test-agent-org-minimax-provider-present~ (spawns ~mcode acp~, no pin),
 ~test-agent-org-minimax-start-pins-nothing~ (the OpenCode-shaped design may
 not creep back), ~test-agent-org-opencode-provider-present~, the four

@@ -82,6 +82,91 @@ model is already a MiniMax model."
       (should header-line-format))
     (kill-buffer buf)))
 
+;;;; Buffer names carry the session title and id
+
+(ert-deftest test-agent-org-buffer-name-gains-title-and-id ()
+  "Once the agent names the session, its buffer is that session.
+`*agent-org: qoder*' tells a user with three chats open nothing; the
+title the harness reports and the id the wire addresses are the two facts
+that make a buffer distinguishable in `C-x b' and in the switcher."
+  (let* ((pair (ao--make-test-session "nametest"))
+         (buf (car pair))
+         (session (cdr pair)))
+    (setf (plist-get session :session-id) nil)
+    (agent-org--session-ready session "sid-x" (ao--fake-session-new-resp))
+    (should (equal "*agent-org: Initial Session Title [sid-x]*"
+                   (buffer-name buf)))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-buffer-name-wears-provider-without-a-title ()
+  "A session with no title yet is still findable by id.
+The provider name stands in exactly as it does for `#+TITLE:', so the
+buffer is never left with the pre-handshake name once an id exists."
+  (let ((buf (agent-org-buffer-create "standin")))
+    (agent-org-buffer-set-status buf :session-id "sid-9")
+    (should (equal "*agent-org: standin [sid-9]*" (buffer-name buf)))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-buffer-name-follows-a-late-title ()
+  "A title that arrives mid-conversation renames the buffer.
+qoder titles a session after the first turn (`session_info_update'), so
+naming only at readiness would freeze every one of its buffers at the
+provider's name."
+  (let* ((pair (ao--make-test-session "latetitle"))
+         (buf (car pair)))
+    (agent-org-buffer-set-status buf :session-id "sid-l")
+    (should (equal "*agent-org: latetitle [sid-l]*" (buffer-name buf)))
+    (agent-org-buffer-set-status buf :title "Refactor the parser")
+    (should (equal "*agent-org: Refactor the parser [sid-l]*"
+                   (buffer-name buf)))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-buffer-name-flattens-a-multiline-title ()
+  "Agent-supplied titles go through the same one-line filter headings do.
+A title is free text; a newline in a buffer name would break `C-x b'
+rendering, so the label rule applies here too."
+  (let ((buf (agent-org-buffer-create "multiline"))
+        (long (concat "First line\n" (make-string 200 ?x) "\ntrailing")))
+    (agent-org-buffer-set-status buf :session-id "sid-m" :title long)
+    (with-current-buffer buf
+      (should-not (string-match-p "\n" (buffer-name)))
+      (should (string-prefix-p "*agent-org: First line " (buffer-name))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-buffer-name-does-not-accumulate-suffixes ()
+  "Re-announcing the same title and id is not a rename.
+`generate-new-buffer-name' counts OUR OWN buffer when it already wears
+that name, so an unconditional rename would walk
+`*agent-org: T [s]*<2><3><4>' over a session's lifetime — every status
+update, of which a turn sends dozens."
+  (let* ((pair (ao--make-test-session "churn"))
+         (buf (car pair)))
+    (dotimes (_ 5)
+      (agent-org-buffer-set-status buf :session-id "sid-c"
+        :title "Same Title")
+      (agent-org-buffer-set-status buf :used 100 :size 200 :state 'streaming)
+      (agent-org-buffer-set-status buf :state 'ready))
+    (should (equal "*agent-org: Same Title [sid-c]*" (buffer-name buf)))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-buffer-names-stay-unique-per-session ()
+  "Two sessions, two buffers, one name each.
+Ids differ, so the names differ; and a name that is already taken must
+still produce a live, distinct buffer rather than clobbering the other."
+  (let* ((a (ao--make-test-session "twin-a"))
+         (b (ao--make-test-session "twin-b"))
+         (bufa (car a))
+         (bufb (car b)))
+    (agent-org-buffer-set-status bufa :session-id "sid-1" :title "Twin")
+    (agent-org-buffer-set-status bufb :session-id "sid-2" :title "Twin")
+    (should (equal "*agent-org: Twin [sid-1]*" (buffer-name bufa)))
+    (should (equal "*agent-org: Twin [sid-2]*" (buffer-name bufb)))
+    ;; the same id twice cannot happen; the same title with no id can
+    (agent-org-buffer-set-status bufb :session-id nil :title "Twin")
+    (should (equal "*agent-org: Twin*" (buffer-name bufb)))
+    (kill-buffer bufa)
+    (kill-buffer bufb)))
+
 ;;;; Session registry
 
 (ert-deftest test-agent-org--session-for-buffer ()

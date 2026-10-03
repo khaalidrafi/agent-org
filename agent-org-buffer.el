@@ -308,13 +308,52 @@ the per-turn :thinking: drawer by `agent-org-buffer-append-thought'.")
 
 ;;;; Status updates
 
+(defun agent-org-buffer--wanted-name ()
+  "The buffer name this buffer's session facts call for.
+A chat buffer is the session: `C-x b' and the switcher list its name, and
+`*agent-org: qoder*' says nothing at all to someone with three qoder
+chats open.  So the name carries the harness's own title and the ACP
+session id — the two things that make one buffer different from the next.
+
+The provider stands in for a title that has not arrived, exactly as it
+does for `#+TITLE:', and the id is left out until the agent has given one
+(the buffer is named this way from the moment `session/new' is answered,
+and qoder titles a session only after the first turn).  Title text is
+agent-supplied free text, hence `agent-org-buffer--label': a buffer name
+with a newline in it breaks the completion UI."
+  (let* ((status agent-org-buffer--status)
+         (sid (plist-get status :session-id))
+         (label (agent-org-buffer--label
+                 (or (plist-get status :title)
+                     (plist-get status :provider)
+                     "agent-org"))))
+    (format "*agent-org: %s%s*" label (if sid (format " [%s]" sid) ""))))
+
+(defun agent-org-buffer--apply-name ()
+  "Rename the current buffer to `agent-org-buffer--wanted-name', if needed.
+The equality test is not an optimisation.  `generate-new-buffer-name'
+counts this very buffer when it already wears the name, so renaming on
+every status update would walk a session through
+`*agent-org: T [s]*<2><3><4>' — a turn sends dozens of updates.
+Renaming with `rename-buffer' rather than `rename-uniquely' because the
+name is the point, not a fresh one: RENAME-ALL-PROCESSES stays nil so
+the agent process keeps the name `acp' gave it, which is what
+`M-x list-processes' is read by."
+  (let ((want (agent-org-buffer--wanted-name)))
+    (unless (equal (buffer-name) want)
+      (rename-buffer (generate-new-buffer-name want)))))
+
 (defun agent-org-buffer-set-status (buffer &rest status)
   "Update BUFFER's header-line status from plist STATUS.
 Recognised keys are those of `agent-org-buffer--status'.
 Only keys present in STATUS are changed, so passing
 `:message nil` clears the message while leaving other fields intact.
 With `agent-org-use-header-line' nil, the rendered status is shown via
-`message' instead.  Status never touches the buffer body."
+`message' instead.  Status never touches the buffer body.
+
+A `:title' or `:session-id' in STATUS also re-names the buffer, because
+those two facts and only those two are what a name is made of: a usage or
+state update does no string building and no rename."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (dolist (key '(:provider :state :message :note :session-id :model :model-name
@@ -323,6 +362,9 @@ With `agent-org-use-header-line' nil, the rendered status is shown via
         (when (plist-member status key)
           (setq agent-org-buffer--status
                 (plist-put agent-org-buffer--status key (plist-get status key)))))
+      (when (or (plist-member status :title)
+               (plist-member status :session-id))
+        (agent-org-buffer--apply-name))
       (if agent-org-use-header-line
           (force-mode-line-update)
         (message "%s" (string-trim (agent-org-buffer--render-header-line))))

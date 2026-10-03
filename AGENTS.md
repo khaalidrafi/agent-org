@@ -122,6 +122,17 @@ emacs -Q --batch \
 #   back to the id — a bar that drops the model field reads as "no model",
 #   which is the worse lie.  Every writer goes through
 #   `agent-org--ingest-config', so the pair cannot drift apart.
+# - A chat buffer is named for its session: `*agent-org: <title> [sid]*'
+#   (`agent-org-buffer--wanted-name'), applied by `agent-org-buffer-set-status'
+#   ONLY on an update carrying `:title' or `:session-id' — those two facts are all
+#   a name is made of, so a per-chunk usage update builds no string.  The provider
+#   stands in for a title that has not arrived (as it does for `#+TITLE') and
+#   qoder's `session_info_update' renames the buffer later.  The equality test in
+#   `agent-org-buffer--apply-name' is not an optimisation: `generate-new-buffer-name'
+#   counts this very buffer, so renaming per update walks the session through
+#   `T [s]<2><3><4>'.  Titles are agent free text — through `agent-org-buffer--label'
+#   (a newline in a buffer name breaks completion).  `rename-buffer' with
+#   RENAME-ALL-PROCESSES nil keeps the acp process name readable in list-processes.
 # - User-facing command names follow the agent-shell package (`~/agent-shell`,
 #   same author, same ACP ground): session-level verbs name their object
 #   (`agent-org-resume-session', `agent-org-set-session-model', matching
