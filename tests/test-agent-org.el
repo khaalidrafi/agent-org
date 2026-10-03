@@ -720,7 +720,8 @@ place only when the key already exists, so a session missing
                         :session-id "sid-test" :streaming nil :turn nil
                         :loading nil :replay nil :replay-timer nil
                         :replay-session-id nil :replay-response nil
-                        :replay-deadline nil :pending-prompts nil)))
+                        :replay-deadline nil :pending-prompts nil
+                        :lists-sessions nil :title-seeked nil)))
     (agent-org--register-session session)
     (agent-org-buffer-set-session buf session)
     (cons buf session)))
@@ -1357,6 +1358,110 @@ and keep the buffer consistent (one title line, no duplicates)."
       (should (string-match-p "^#\\+TITLE: Params title$" (buffer-string)))
       (should (= 1 (ao--count-occurrences (buffer-string) "#\\+TITLE:"))))
     (kill-buffer buf)))
+
+;;;; Title sync from session/list (agents that never push it)
+
+(ert-deftest test-agent-org-title-fetched-from-list-after-first-turn ()
+  "Qoder never sends `session_info_update', but it does list titles in
+`session/list'.  After the first successful turn -- the turn is what
+gives a fresh session a title worth reading -- agent-org asks the
+directory once and lands the title in `#+TITLE:'."
+  (ao--capture-wire
+   (let* ((pair (ao--make-test-session "tsync"))
+          (buf (car pair))
+          (session (cdr pair)))
+     ;; the stock mock hands back nil for a prompt request, which would
+     ;; land in the wire capture under method nil; give it the real shape
+     (cl-letf (((symbol-function 'acp-make-session-prompt-request)
+                (lambda (&rest a)
+                  `((:method . "session/prompt")
+                    (:params . ((sessionId . ,(plist-get a :session-id))
+                                (prompt . ,(plist-get a :prompt))))))))
+     (setf (plist-get session :lists-sessions) t)
+     (with-current-buffer buf
+       (agent-org-buffer-insert-prompt buf)
+       (ao--type "Review the request")
+       (agent-org-send)
+       (ao--drive "session/prompt" nil)
+       (should (ao--sent-get "session/list"))
+       (ao--drive "session/list"
+                  (ao--list-resp (list (list "sid-other" "Other" (ao--today))
+                                       (list "sid-test" "Review request"
+                                             (ao--today)))))
+       (should (equal "Review request"
+                      (plist-get agent-org-buffer--status :title)))
+       (should (string-match-p "^#\\+TITLE: Review request$"
+                               (buffer-string)))))
+     (kill-buffer buf))))
+
+(ert-deftest test-agent-org-title-not-sought-without-list-capability ()
+  "An agent that does not advertise `list' is never asked for a title:
+Goose hangs on `session/list', so the lookup is capability-gated."
+  (ao--capture-wire
+   (let* ((pair (ao--make-test-session "tnolist"))
+          (buf (car pair)))
+     (cl-letf (((symbol-function 'acp-make-session-prompt-request)
+                (lambda (&rest a)
+                  `((:method . "session/prompt")
+                    (:params . ((sessionId . ,(plist-get a :session-id))
+                                (prompt . ,(plist-get a :prompt))))))))
+       (with-current-buffer buf
+         (agent-org-buffer-insert-prompt buf)
+         (ao--type "hi")
+         (agent-org-send)
+         (ao--drive "session/prompt" nil)
+         (should-not (ao--sent-get "session/list"))))
+     (kill-buffer buf))))
+
+(ert-deftest test-agent-org-title-not-sought-when-already-known ()
+  "A title that arrived by itself (session/new response or a pushed
+`session_info_update') wins: no list request, no clobbering."
+  (ao--capture-wire
+   (let* ((pair (ao--make-test-session "tknown"))
+          (buf (car pair))
+          (session (cdr pair)))
+     (cl-letf (((symbol-function 'acp-make-session-prompt-request)
+                (lambda (&rest a)
+                  `((:method . "session/prompt")
+                    (:params . ((sessionId . ,(plist-get a :session-id))
+                                (prompt . ,(plist-get a :prompt))))))))
+       (setf (plist-get session :lists-sessions) t)
+       (with-current-buffer buf
+         (agent-org-buffer-set-status buf :title "Pushed Title")
+         (agent-org-buffer-insert-prompt buf)
+         (ao--type "hi")
+         (agent-org-send)
+         (ao--drive "session/prompt" nil)
+         (should-not (ao--sent-get "session/list"))
+         (should (equal "Pushed Title"
+                        (plist-get agent-org-buffer--status :title)))))
+     (kill-buffer buf))))
+
+(ert-deftest test-agent-org-title-looked-up-only-once ()
+  "`:title-seeked' makes the sync a one-shot: the second turn does not
+page the directory again, even when the first lookup came back empty."
+  (ao--capture-wire
+   (let* ((pair (ao--make-test-session "tonce"))
+          (buf (car pair))
+          (session (cdr pair)))
+     (cl-letf (((symbol-function 'acp-make-session-prompt-request)
+                (lambda (&rest a)
+                  `((:method . "session/prompt")
+                    (:params . ((sessionId . ,(plist-get a :session-id))
+                                (prompt . ,(plist-get a :prompt))))))))
+       (setf (plist-get session :lists-sessions) t)
+       (with-current-buffer buf
+         (agent-org-buffer-insert-prompt buf)
+         (ao--type "one")
+         (agent-org-send)
+         (ao--drive "session/prompt" nil)
+         (ao--drive "session/list" (ao--list-resp nil))
+         (agent-org-buffer-insert-prompt buf)
+         (ao--type "two")
+         (agent-org-send)
+         (ao--drive "session/prompt" nil)
+         (should (= 1 (length (ao--list-pages))))))
+     (kill-buffer buf))))
 
 (defun ao--drawer-folded-p (name)
   "Non-nil when the drawer NAME body in the current buffer is hidden."

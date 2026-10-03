@@ -126,6 +126,18 @@ now disables font-lock for the paint run and flushes once at the end.
 =test-agent-org-streaming-never-toggles-font-lock= pins the no-toggle
 invariant.
 
+** DONE Show the session title in =#+TITLE: for silent agents
+Qoder never pushes =session_info_update= (live-verified: a full wire
+capture held zero of them), so =#+TITLE:= stayed on the provider-name
+fallback forever even though the agent had a title for the conversation.
+Shipped: =agent-org--sync-title= asks =session/list= once, after the
+first turn ends, matches the row by session id and lands the title.  It
+is one-shot (=:title-seeked=), capability-gated so a silent agent is
+never asked (=:lists-sessions=, recorded from =initialize=), skipped
+when a title already arrived by any route, and :quiet so the echo area
+is not stolen.  Four tests in /tests cover fetch, gating, known-title
+and one-shot.
+
 * TODO Later --- still worth porting, not "basic"
 ** TODO Steer --- inject into the live turn
 agent-shell's =agent-shell-prompt-steer= sends a mid-turn message via

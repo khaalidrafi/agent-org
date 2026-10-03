@@ -211,6 +211,13 @@ Each entry is a plist:
                  phase in flight (a listing, or a `session/load'
                  replay), nil while nothing is being loaded.  See
                  `agent-org--progress-start'.
+  :lists-sessions      - t once `initialize' answered with the `list'
+                 session capability; gates the one-shot title sync
+                 below, because a silent agent (Goose) hangs on
+                 `session/list'
+  :title-seeked        - non-nil once `agent-org--sync-title' has asked
+                 `session/list' for this session's title, whether or not
+                 an answer arrived: the question is asked at most once
   :pending-prompts     - prompts queued while :streaming (FIFO list of
                  strings), sent one per successful turn end by
                  `agent-org--drain-queue'.  See
@@ -659,6 +666,12 @@ been sent yet, so the caller picks `session/new' or `session/load'."
                           :list-state nil
                           :list-timer nil
                           :progress nil
+                          ;; set from the initialize response: the title
+                          ;; sync below is capability-gated, because a
+                          ;; silent agent (Goose) hangs on session/list
+                          :lists-sessions nil
+                          ;; one-shot guard for `agent-org--sync-title'
+                          :title-seeked nil
                           :pending-prompts nil)))
       (agent-org--register-session session)
       (agent-org--subscribe client session)
@@ -709,6 +722,11 @@ fresh `session/new' is started."
                :write-text-file-capability t)
      :buffer buffer
      :on-success (lambda (resp)
+                   ;; recorded for the whole life of the session: the
+                   ;; title sync at first turn end may run long after
+                   ;; this callback
+                   (setf (plist-get session :lists-sessions)
+                         (agent-org--lists-sessions-p resp))
                    (if next
                        (funcall next resp)
                      (agent-org--session-new session)))
@@ -871,6 +889,7 @@ instead of loading (see `agent-org--load-session')."
 (cl-defun agent-org--list-sessions (session
                                     &key cursor seen pages
                                     (page-limit agent-org-session-list-page-limit)
+                                    quiet
                                     on-success on-failure)
   "Fetch the directory's `session/list' pages for SESSION, then ON-SUCCESS.
 CURSOR is the continuation the agent offered on the previous page, SEEN
@@ -881,6 +900,10 @@ offering one; an integer caps the requests and the remainder is dropped.
 ON-SUCCESS gets one synthesized response, `((sessions . VECTOR))', so
 the candidates helper does not care how many pages it came from.
 ON-FAILURE gets the ACP error and the raw message.
+
+QUIET non-nil suppresses the echo-area progress report, for a background
+lookup the user never asked for (see `agent-org--sync-title') -- it must
+not replace what the echo area currently says.
 
 An agent that hands back the cursor it was just sent would page here
 forever, so a repeated cursor is a failure, not another request.
@@ -895,7 +918,8 @@ with a line still spinning over the chooser."
       ;; One report for the whole paging, and creating it already paints
       ;; the line in the echo area, so the wait before the first page is
       ;; described too.  The recursion leaves the report alone.
-      (agent-org--progress-start session "Listing sessions"))
+      (unless quiet
+        (agent-org--progress-start session "Listing sessions")))
     (acp-send-request
      :client (plist-get session :client)
      :request (acp-make-session-list-request
@@ -910,17 +934,18 @@ with a line still spinning over the chooser."
                      ;; of its own: how many the agent has named is the
                      ;; difference between "working" and "hung" while a
                      ;; silent agent pages.
-                     (agent-org--progress-step session (format "%d so far" (length all)))
+                     (unless quiet
+                       (agent-org--progress-step session (format "%d so far" (length all))))
                      (cond
                       ((null next)
-                       (agent-org--progress-stop session)
+                       (unless quiet (agent-org--progress-stop session))
                        (funcall on-success `((sessions . ,all))))
                       ((member next seen)
-                       (agent-org--progress-stop session)
+                       (unless quiet (agent-org--progress-stop session))
                        (funcall on-failure
                                 nil '((message . "agent repeated the same session/list cursor"))))
                       ((and page-limit (>= (1+ (length seen)) page-limit))
-                       (agent-org--progress-stop session)
+                       (unless quiet (agent-org--progress-stop session))
                        (funcall on-success `((sessions . ,all))))
                       (t
                        (agent-org--list-sessions
@@ -929,10 +954,11 @@ with a line still spinning over the chooser."
                         :seen (cons next seen)
                         :pages all
                         :page-limit page-limit
+                        :quiet quiet
                         :on-success on-success
                         :on-failure on-failure)))))
      :on-failure (lambda (err msg)
-                   (agent-org--progress-stop session)
+                   (unless quiet (agent-org--progress-stop session))
                    (funcall on-failure err msg)))))
 
 (defun agent-org--settle-listing (session)
@@ -1788,6 +1814,46 @@ a typed one."
       (agent-org-buffer-insert-user buffer (car prompts))
       (agent-org--send-turn session buffer (car prompts)))))
 
+(defun agent-org--sync-title (session)
+  "Ask `session/list' once for SESSION's title and apply it if found.
+
+Some harnesses (qoder, live-verified) never push `session_info_update',
+so the title the agent has chosen for the conversation only exists in the
+directory listing.  Reading it once, after the first turn has run, is
+what makes =#+TITLE:= stop showing the bare provider name forever.
+
+The whole thing is one-shot per session: `:title-seeked' is set before
+the request goes out, so a late or empty answer cannot trigger a second
+page, and a title that arrives by any other route (a `session/new' that
+carries one, a pushed update) is left untouched.  Gated on
+`:lists-sessions' because an agent that does not advertise the capability
+would be handed a request it never answers (Goose).  :quiet so a lookup
+the user never asked for does not overwrite the echo area, and every
+failure is silent: =#+TITLE:= simply keeps the fallback it already had."
+  (let ((buffer (plist-get session :buffer))
+        (sid (plist-get session :session-id)))
+    (when (and (not (plist-get session :title-seeked))
+               (plist-get session :lists-sessions)
+               sid
+               (not (plist-get (buffer-local-value 'agent-org-buffer--status buffer)
+                               :title)))
+      (setf (plist-get session :title-seeked) t)
+      (agent-org--list-sessions
+       session
+       :quiet t
+       :on-success (lambda (list-resp)
+                     (when-let* ((row (seq-find (lambda (s)
+                                                  (equal (map-elt s 'sessionId) sid))
+                                                (agent-org--wire-list
+                                                 (map-elt list-resp 'sessions))))
+                                (title (map-elt row 'title))
+                                ((not (string-empty-p title))))
+                       ;; set-status renames the buffer; the metadata
+                       ;; pass is what rewrites the `#+TITLE:' line
+                       (agent-org-buffer-set-status buffer :title title)
+                       (agent-org-buffer-refresh-metadata buffer)))
+       :on-failure (lambda (_err _msg) nil)))))
+
 (defun agent-org--send-turn (session buffer text)
   "Put TEXT on the wire as the current turn of SESSION.
 The `* User' heading is already in BUFFER (frozen by
@@ -1826,7 +1892,11 @@ twice, or overwriting the buffer's post-cancel state."
                      (agent-org--record-usage buffer resp)
                      (agent-org-buffer-set-status buffer :state 'ready)
                      (agent-org--drain-queue session buffer)
-                     (agent-org-buffer-refresh-metadata buffer)))
+                     (agent-org-buffer-refresh-metadata buffer)
+                     ;; first turn done: the conversation now has a
+                     ;; title worth reading, for agents that only
+                     ;; reveal it through session/list
+                     (agent-org--sync-title session)))
      :on-failure (lambda (_err msg)
                    (when (eq (plist-get session :turn) turn)
                      (setf (plist-get session :turn) nil)
