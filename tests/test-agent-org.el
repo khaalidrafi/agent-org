@@ -1806,6 +1806,31 @@ id, which is the part that actually selects a session."
                 (error "this strategy must not prompt"))))
      ,@body))
 
+(defmacro ao--cancel (&rest body)
+  "Run BODY with every prompt answered the way ESC does: a quit signal.
+This is how a test says \"the user changed their mind at the session
+choice\", which is the case that used to leave a chat buffer stranded."
+  (declare (indent 0))
+  `(cl-letf (((symbol-function 'completing-read)
+              (lambda (&rest _) (signal 'quit nil))))
+     ,@body))
+
+(defvar ao--messages nil
+  "Strings `message' was handed inside `ao--capture-messages', newest first.")
+
+(defmacro ao--capture-messages (&rest body)
+  "Run BODY recording every echo-area `message' call into `ao--messages'.
+The header line hides a bare `:message' while Ready, and some notes (the
+listing timeout, a cancel) are deliberately echo-area only — so the echo
+area is a channel tests have to watch, not just the buffer.  Assert on it
+INSIDE BODY: the binding is gone once the macro's last form has run."
+  (declare (indent 0))
+  `(let ((ao--messages nil))
+     (cl-letf (((symbol-function 'message)
+                (lambda (format-string &rest args)
+                  (push (apply #'format format-string args) ao--messages))))
+       ,@body)))
+
 (ert-deftest test-agent-org-session-strategy-is-a-named-choice ()
   "The three strategies are the whole vocabulary, and a typo says so.
 `agent-shell-session-strategy' is what this copies; the validator exists
@@ -2095,6 +2120,55 @@ deadline arrived\", and a session opened into a killed buffer is the bug."
         (ao--time-out)
         (should-not (ao--sent-get "session/new"))
         (should (= 1 (length acp-mock-shutdown-clients)))))))
+
+(ert-deftest test-agent-org-cancelling-the-start-prompt-kills-the-chat-buffer ()
+  "ESC at the session choice must clean up after itself.  `completing-read'
+signals `quit', which escapes into the acp response callback — and acp
+wraps every callback in `condition-case-unless-debug', so the quit is
+SWALLOWED: the buffer stayed open on \"Starting\" with its agent process
+running and no way to prompt.  Cancelling now kills the buffer, which is
+what releases the agent (`agent-org--forget-session' -> `acp-shutdown'),
+and says so in the echo area."
+  (ao--capture-wire
+    (let ((acp-mock-shutdown-clients nil)
+          (buf (agent-org-start 'qoder)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (should (ao--sent-get "session/list"))
+      (ao--capture-messages
+        (ao--cancel
+          (ao--drive "session/list"
+                     (ao--list-resp `(("s1" "One chat" ,(ao--today))
+                                      ("s2" "Two chat"
+                                       "2026-09-02T10:00:00+0000")))))
+        (should (seq-some (lambda (m) (string-match-p "cancel" m)) ao--messages)))
+      (should-not (buffer-live-p buf))
+      (should-not (agent-org--session-for-buffer buf))
+      ;; nothing was opened in the buffer that is no longer there
+      (should-not (ao--sent-get "session/new"))
+      (should-not (ao--sent-get "session/load"))
+      (should (= 1 (length acp-mock-shutdown-clients))))))
+
+(ert-deftest test-agent-org-cancelling-the-resume-prompt-kills-the-chat-buffer ()
+  "The same cleanup on `agent-org-resume-session', which prompts through
+`agent-org--read-session-id' rather than `agent-org--read-start-choice'.
+Two candidates, because one is auto-selected without asking and would
+never reach the bug."
+  (ao--capture-wire
+    (let ((acp-mock-shutdown-clients nil)
+          (buf (agent-org-resume-session 'qoder nil)))
+      (ao--drive "initialize" ao--fake-init-resp)
+      (should (ao--sent-get "session/list"))
+      (ao--capture-messages
+        (ao--cancel
+          (ao--drive "session/list"
+                     (ao--list-resp `(("s1" "One chat" ,(ao--today))
+                                      ("s2" "Two chat"
+                                       "2026-09-02T10:00:00+0000")))))
+        (should (seq-some (lambda (m) (string-match-p "cancel" m)) ao--messages)))
+      (should-not (buffer-live-p buf))
+      (should-not (agent-org--session-for-buffer buf))
+      (should-not (ao--sent-get "session/load"))
+      (should (= 1 (length acp-mock-shutdown-clients))))))
 
 (ert-deftest test-agent-org-session-label-shows-when-it-last-spoke ()
   "A candidate for an older session is only usable if you can tell its

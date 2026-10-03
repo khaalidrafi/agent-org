@@ -221,6 +221,31 @@ the dead buffer, so both are unarmed on the way out too."
   (seq-find (lambda (s) (eq (plist-get s :buffer) buffer))
             agent-org--sessions))
 
+(defun agent-org--cancel-open (session)
+  "Release SESSION because the user backed out before it ever opened.
+Cancelling a `completing-read' signals `quit', which arrives inside the
+acp response callback — and acp wraps every callback in
+`condition-case-unless-debug', so an uncaught quit is SWALLOWED: the chat
+buffer stayed on \"Starting\"/\"Restoring\" holding a live agent process,
+with no way to prompt and nothing on the header line to explain it.
+Killing the buffer IS the release: its `kill-buffer-hook' runs
+`agent-org--forget-session', which shuts the agent down and unarms its
+timers.  The echo area is the only channel left once the buffer is gone."
+  (message "agent-org: cancelled - no session opened")
+  (let ((buffer (plist-get session :buffer)))
+    (when (buffer-live-p buffer)
+      (kill-buffer buffer))))
+
+(defmacro agent-org--quit-cancels (session &rest body)
+  "Run BODY; if the user quit the session prompt, release SESSION and yield nil.
+Both session readers complete with REQUIRE-MATCH, so nil is never a
+legitimate answer, and a caller that sees nil must send neither
+`session/new' nor `session/load'."
+  (declare (indent 1) (debug t))
+  `(condition-case-unless-debug nil
+       (progn ,@body)
+     (quit (agent-org--cancel-open ,session) nil)))
+
 (defun agent-org--wire-list (value)
   "Return wire array VALUE as a list (JSON arrays arrive as vectors)."
   (cond
@@ -665,15 +690,18 @@ with noise."
   "Open SESSION out of LIST-RESP the way STRATEGY says to.
 `latest' takes the newest without asking; `prompt' offers the listing
 with `New session' on top.  An empty directory is a new session either
-way, and that is the common case for a first chat in a fresh project."
+way, and that is the common case for a first chat in a fresh project.
+Quitting the prompt releases SESSION and sends nothing at all."
   (let* ((candidates (agent-org--session-candidates list-resp))
          (choice (cond
                   ((null candidates) :new)
                   ((eq strategy 'latest) (cdar candidates))
-                  (t (agent-org--read-start-choice candidates)))))
-    (if (eq choice :new)
-        (agent-org--session-new session)
-      (agent-org--load-session session choice))))
+                  (t (agent-org--quit-cancels session
+                       (agent-org--read-start-choice candidates))))))
+    (cond
+     ((null choice) nil)
+     ((eq choice :new) (agent-org--session-new session))
+     (t (agent-org--load-session session choice)))))
 
 (defun agent-org--begin-start (session initialize-resp strategy)
   "Open SESSION after the handshake, honouring the command's STRATEGY.
@@ -842,8 +870,11 @@ would be the wrong surprise.)"
        session
        :on-success (lambda (list-resp)
                      (if (agent-org--session-candidates list-resp)
-                         (agent-org--load-session
-                          session (agent-org--read-session-id list-resp))
+                         ;; quitting releases the session by killing its
+                         ;; buffer, so the load must not run after it
+                         (when-let* ((id (agent-org--quit-cancels session
+                                  (agent-org--read-session-id list-resp))))
+                           (agent-org--load-session session id))
                        (agent-org-loader-fail buffer
                          "No sessions to resume in this directory")))
        :on-failure (lambda (_err msg)

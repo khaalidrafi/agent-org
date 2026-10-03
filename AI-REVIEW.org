@@ -270,6 +270,38 @@ would pass while testing nothing.  Instead ~test-agent-org-killing-during-a-
 listing-cancels-the-timeout~ fires the stored timer (the harness's way of saying
 "the deadline arrived") and asserts that no ~session/new~ is sent afterwards.
 
+* Cancelling the session prompt must not strand a buffer
+
+** TODO Read =agent-org--quit-cancels= (agent-org.el)
+
+~completing-read~ signals ~quit~ on ESC/~C-g~, and here it signals it /inside an
+acp response callback/ — which acp runs under ~condition-case-unless-debug~, so
+the quit is swallowed whole.  Nothing errored, nothing was logged: the chat
+buffer simply stayed on "Starting" with a live ~qoder --acp~ process behind it.
+The macro is three lines; the thing to judge is whether /kill/ is the right
+reaction to a cancel (it is what agent-shell does when you back out of a
+selection, and it is cheap now that ~kill-buffer~ releases the agent) versus
+reusing the buffer for the next ~agent-org-start~.
+
+** TODO Read the nil-is-cancelled contract (agent-org.el)
+
+Both readers (~agent-org--read-start-choice~, ~agent-org--read-session-id~)
+complete with ~REQUIRE-MATCH~, so a nil out of ~agent-org--quit-cancels~ can only
+mean "cancelled", and ~agent-org--choose-start~ / ~agent-org--resume-locate~ then
+send nothing.  That inference is the weak point: if anyone later lets the prompt
+accept free input, or returns ~nil~ for "not found", a cancelled start would
+silently become a ~session/load~ of nil.  A ~:cancelled~ sentinel is the fix if
+that ever happens.
+
+** DONE Two tests, and a harness macro for the echo area
+
+~test-agent-org-cancelling-the-start-prompt-kills-the-chat-buffer~ and its
+~resume~ twin drive a real listing, answer the prompt with ~quit~ (~ao--cancel~)
+and assert the buffer is dead, the registry is empty, the agent was shut down
+once, and no ~session/new~/~session/load~ went out.  ~ao--capture-messages~ was
+added for the last assertion, because the cancel note is deliberately echo-area
+only — the buffer it would have lived on is gone.
+
 * How to check the whole thing
 
 #+begin_src sh
@@ -279,7 +311,7 @@ emacs -Q --batch --eval "(add-to-list 'load-path \"$PWD\")" \
   --eval "(ert-run-tests-batch-and-exit)"
 #+end_src
 
-The suite is 91 tests.  The MiniMax/model ones are
+The suite is 93 tests.  The MiniMax/model ones are
 ~test-agent-org-minimax-provider-present~ (spawns ~mcode acp~, no pin),
 ~test-agent-org-minimax-start-pins-nothing~ (the OpenCode-shaped design may
 not creep back), ~test-agent-org-opencode-provider-present~, the four

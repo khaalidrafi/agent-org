@@ -131,7 +131,9 @@ Investigate the 3-minute lag between Qoder's reply and the prompt   Sep 28, 10:2
 
 — the agent's title, when it last spoke, and the id that actually
 selects it.  ~New session~ sits at the top of the list, so a bare ~RET~
-in a fresh project still means "start".  ~C-u M-x agent-org-start~ forces
+in a fresh project still means "start".  Backing out of the offer (ESC /
+~C-g~) closes the half-open chat buffer and its agent, instead of leaving a
+window stuck on "Starting".  ~C-u M-x agent-org-start~ forces
 ~new~ for one call, which is the shortcut when you mean to start over.
 
 Three details make this bearable on agents that are slow, silent or long:

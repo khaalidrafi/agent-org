@@ -345,6 +345,28 @@ exists.
 
 ---
 
+## 11. A cancelled prompt cleans up, because nothing else will
+
+`completing-read` signals `quit` on ESC / `C-g`.  At a session prompt that signal
+is raised *inside an acp response callback*, and acp runs every callback under
+`condition-case-unless-debug` — so an unguarded `quit` is **swallowed**: no error,
+no backtrace, just a chat buffer parked on "Starting"/"Restoring" with a live
+agent process behind it.
+
+* Both prompt sites (`agent-org--choose-start`, `agent-org--resume-locate`) wrap
+  the read in `agent-org--quit-cancels`, which calls `agent-org--cancel-open`:
+  kill the buffer (the kill-hook of §9's release path shuts the agent down and
+  unarms its timers) and say so in the echo area — the buffer that would show a
+  header status is gone.
+* **`nil` means cancelled.**  Both readers complete with `REQUIRE-MATCH`, so `nil`
+  is not a possible answer; a caller that gets `nil` sends neither `session/new`
+  nor `session/load`.
+* Reuse the buffer instead of killing it only if a future command wants a
+  "cancelled, keep the window" mode — that is a different decision, and it needs
+  its own test.
+
+---
+
 ## Manual nodes referenced
 
 * `(org) Headlines` — §2.1 structure, left margin, separator lines.

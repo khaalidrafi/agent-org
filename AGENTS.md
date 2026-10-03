@@ -152,3 +152,11 @@ emacs -Q --batch \
 #   BEHAVIOUR in tests, not the `cancel-timer' call: `ao--capture-wire' stubs
 #   `cancel-timer', so firing the stored timer is how a test says "the deadline
 #   arrived".
+# - ESC at a session prompt is a `quit' that lands INSIDE an acp response
+#   callback, and acp swallows it (`condition-case-unless-debug'): unguarded, the
+#   chat buffer sat on "Starting"/"Restoring" holding a live agent process.  So
+#   both prompt sites go through `agent-org--quit-cancels', which releases the
+#   session by killing its buffer (the kill-hook path above is what shuts the
+#   agent down) and notes it in the echo area.  A cancelled prompt yields NIL —
+#   both readers complete with REQUIRE-MATCH, so nil is never a real answer, and
+#   the caller must then send neither `session/new' nor `session/load'.
