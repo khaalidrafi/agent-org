@@ -2,3 +2,7 @@
 *~
 \#*\#
 *.tar
+
+# Per-project transcripts: what the mirror writes into the directory a chat
+# is of (agent-org-transcript-directory).  Notes, not source.
+/.agent-org/

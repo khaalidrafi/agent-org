@@ -1014,6 +1014,44 @@ two switcher =candidates= tests assert it too (they share
 star anywhere in the name, nothing in front of the chat's own word.
 Mutation-checked: reverting =chat-label= to =project " " label= fails 11.
 
+* Transcripts moved into the project's own =.agent-org/=
+
+** TODO Read the line that makes a relative default mean /the chat's/ project
+One call, =expand-file-name=, and the reason it works is the buffer context:
+=agent-org-buffer--transcript-file' is called from
+=agent-org-buffer-transcribe= inside =with-current-buffer=, so
+=default-directory= is the session cwd the chat was created in, not the
+directory Emacs was launched from.  That is also why the function is separate
+from the writer: a path built in the wrong buffer silently files a chat of
+=~/proj-b= under =~/proj-a=.  If you move the writer out of the buffer
+context, move the path with it.
+
+** TODO Read the test-hygiene bug this found, which was already shipped
+The suite was green /and/ writing 22 =sid-*.org= files into the developer's
+tree — into =~/.emacs.d/agent-org/transcripts/= before this change, into
+=./.agent-org/= after it.  =agent-org-transcribe= defaults to on and most
+fixtures produce a Ready session with an id, so every unrelated test was a
+writer test.  Fixed at the top of ~tests/test-agent-org.el~ with
+~(setq agent-org-transcribe nil)~ plus the comment saying why: a test that
+cares about the file says so with =ao--transcript-in=, which turns it back on
+inside its own temp directory.  Review the guard by running the suite twice
+and checking that no =.agent-org= appears in the tree.
+
+The leftovers from before the guard are still in
+=~/.emacs.d/agent-org/transcripts/= (small files with obvious fixture ids:
+=sid-1=, =sid-cap=, =sess-9=, =s-old= …).  They are not the user's chats and
+can be deleted; they were left alone because that directory also holds six
+real session transcripts, including this conversation's.
+
+** DONE One file, one gitignore, four tests (186 -> 190)
+=directory-default-is-a-project-dot-directory= pins the option's value;
+=lands-in-the-chats-own-project= and =two-projects-keep-their-own-transcripts=
+assert real files under real temp projects;
+=honours-an-absolute-directory-option= keeps the global-pool setting honest —
+it is the test that explains why the code expands a path at all.
+=/.agent-org/= is now ignored in this repo, and the README tells a user to do
+the same in theirs.
+
 * How to check the whole thing
 
 #+begin_src sh
@@ -1023,7 +1061,7 @@ emacs -Q --batch --eval "(add-to-list 'load-path \"$PWD\")" \
   --eval "(ert-run-tests-batch-and-exit)"
 #+end_src
 
-The suite is 186 tests.  The transcript ones are the
+The suite is 190 tests.  The transcript ones are the
 ~test-agent-org-transcript-*~ family (select them with
 ~ert-run-tests-batch-and-exit "transcript"~); they are the only tests that
 write to a filesystem, each inside its own ~ert-with-temp-directory~, which is

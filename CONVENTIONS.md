@@ -573,6 +573,14 @@ is the chat buffer's frozen body — `point-min` to `agent-org-buffer--render-en
 — so the transcript is the same document the user is reading, and the same
 `:ID:` in its `PROPERTIES` drawer makes it an `id:`-linkable target.
 
+* **The default directory is the project's own `.agent-org'.**  The option is
+  a *relative* name, and `agent-org-buffer--transcript-file` resolves it with
+  `expand-file-name` while the chat buffer is current — so `default-directory`
+  is the session cwd and each project keeps its chats in its own
+  `.agent-org/`, the way it keeps its own README.  An absolute setting expands
+  to itself, so one global pool is a setting, not a code change.  Because the
+  files now land inside a repo, `~/.agent-org/~ belongs in that repo's
+  `.gitignore` unless the transcripts are notes to commit (this repo does).
 * **Mirror, never append log.** A tool heading is one line rewritten in place
   TODO→DOING→DONE (§3).  An append-only log can only add, so the file would
   keep every superseded state of every call — a different document from the

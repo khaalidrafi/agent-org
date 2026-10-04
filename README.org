@@ -340,8 +340,9 @@ conversation below it.
 :END:
 
 By default every session also has an Org file of its own, in
-~agent-org-transcript-directory~ (~/.emacs.d/agent-org/transcripts/~),
-named for its ACP session id: ~7c1f….org~.  The file is a mirror of the
+~.agent-org/~ *inside the project the chat is of*
+(~agent-org-transcript-directory~; set an absolute path there for one
+global pool), named for its ACP session id: ~7c1f….org~.  The file is a mirror of the
 chat buffer — the same headings, the same tool-call keywords, the same
 ~:PROPERTIES:~ drawer, whose ~:ID:~ is the id in the file name, so a
 transcript is an ~id:~-linkable document you can reference from any org
@@ -365,7 +366,8 @@ write is a note in the echo area, never a broken turn.
 
 Turn it off with ~agent-org-transcribe~ nil — a chat whose transcript is
 a real org file under version control does not want a second copy
-appearing behind it.
+appearing behind it.  A project that has no use for the files can add
+~/.agent-org/~ to its ~.gitignore~; this repo does.
 
 * Configuration
 
@@ -383,9 +385,10 @@ appearing behind it.
   ~session/list~, goose does not).
 - ~agent-org-transcribe~ — when non-nil (the default) each session is mirrored
   to its own Org file, see [[*Transcript file]].
-- ~agent-org-transcript-directory~ — where those files live
-  (~/.emacs.d/agent-org/transcripts/~ by default; it is created on the
-  first write).
+- ~agent-org-transcript-directory~ — where those files live.  The default
+  is the relative ~.agent-org~, resolved against the chat's own directory,
+  so every project keeps its own transcripts; an absolute value is a global
+  pool.  Created on the first write.
 - ~agent-org-session-strategy~ — what starting means: ~new~, ~latest~ or
   ~prompt~ (the default), see [[*Starting: which session you get]].
 - ~agent-org-session-list-page-limit~ — how many ~session/list~ pages to

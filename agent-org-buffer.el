@@ -1084,14 +1084,19 @@ renderer — the buffer — and the file simply agrees with it."
   :type 'boolean
   :group 'agent-org-buffer)
 
-(defcustom agent-org-transcript-directory
-  (locate-user-emacs-file "agent-org/transcripts/")
-  "Directory holding the per-session Org transcripts.
-Kept under `~/.emacs.d' rather than the user's project because a
-transcript is Emacs' record of a chat, not a file the repo asked for;
-`agent-org-reload' and a resume both land on the same path for the same
-id, so the directory is the only thing that decides where a session's
-history lives."
+(defcustom agent-org-transcript-directory ".agent-org"
+  "Where the per-session Org transcripts go, relative to the chat's project.
+The default is a RELATIVE directory name, and a relative name is resolved
+against the chat buffer's `default-directory' — the session's cwd — so
+every project keeps its own chats in its own `.agent-org/', the way it
+keeps its own README.  Set an absolute path for one global pool instead;
+anything with `~' in it expands as Emacs usually does.
+
+A project directory is where a person looks for the record of a chat in
+that project, which is why this default replaced a path under
+`~/.emacs.d'.  The cost is that transcripts now sit inside a repo, so
+`.agent-org/' is a line worth adding to its `.gitignore' unless the
+transcripts are notes you want committed."
   :type 'directory
   :group 'agent-org-buffer)
 
@@ -1139,23 +1144,34 @@ agent has given the session an id."
             (unless (equal text agent-org-buffer--transcript-cache)
               (agent-org-buffer--write-transcript session-id text))))))))
 
+(defun agent-org-buffer--transcript-file (session-id)
+  "Path of SESSION-ID's transcript, resolved against THIS buffer's project.
+`agent-org-transcript-directory' is a relative name by default, and
+`expand-file-name' is what turns that into \"the chat's own directory\":
+called with the chat buffer current, `default-directory' is the session cwd
+the buffer was created in.  An absolute setting expands to itself, so one
+global pool is still a setting away rather than a code change."
+  (expand-file-name (agent-org-buffer--transcript-name session-id)
+                    (file-name-as-directory
+                     (expand-file-name agent-org-transcript-directory))))
+
 (defun agent-org-buffer--write-transcript (session-id text)
   "Replace this buffer's transcript file with TEXT.
+Called with the chat buffer current, which is what gives
+`agent-org-buffer--transcript-file' its project.
 VISIT is nil on purpose: a non-nil one would make the chat buffer
 `visit' the transcript, and then `C-x s' would save the live draft into
 it and auto-save would follow.  `buffer-substring-no-properties' already
 stripped the faces, so what lands is plain Org.
 
 A failure is a note in the echo area and nothing more.  The transcript is
-a convenience; the conversation is the feature — a full disk or a
-`~/.emacs.d' that is not writable must not break a turn.  The cache is
-left untouched, so the next boundary tries again."
-  (let* ((directory (file-name-as-directory agent-org-transcript-directory))
-         (file (expand-file-name (agent-org-buffer--transcript-name session-id)
-                                 directory)))
+a convenience; the conversation is the feature — a full disk, or a project
+directory the user has no write bit on, must not break a turn.  The cache
+is left untouched, so the next boundary tries again."
+  (let ((file (agent-org-buffer--transcript-file session-id)))
     (condition-case err
         (progn
-          (make-directory directory t)
+          (make-directory (file-name-directory file) t)
           (write-region text nil file nil)
           (setq agent-org-buffer--transcript-cache text))
       (file-error

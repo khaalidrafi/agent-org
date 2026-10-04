@@ -338,4 +338,11 @@ emacs -Q --batch \
 #   file name is sanitized to `[A-Za-z0-9._-]' because it arrives over the wire and
 #   becomes a path; a `file-error' is a `message', never a broken turn; and
 #   `write-region' VISIT stays nil or the chat buffer would start `visiting' its own
-#   transcript and `C-x s' would save the draft into it.
+#   transcript and `C-x s' would save the draft into it.  The directory is the
+#   RELATIVE `.agent-org' resolved against the CHAT buffer's `default-directory'
+#   (`agent-org-buffer--transcript-file'), so each project keeps its own
+#   transcripts; only an absolute setting means a global pool.  So a test suite
+#   that leaves transcription on writes into whatever directory the batch was
+#   launched in — measured: 22 `sid-*.org' in the package tree.  The suite now
+#   binds `agent-org-transcribe' nil at the top of tests/test-agent-org.el, and
+#   only `ao--transcript-in' turns it back on inside a temp directory.

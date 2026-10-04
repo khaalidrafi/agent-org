@@ -29,6 +29,14 @@
 ;; the edit under test — silently, and the warning only goes to
 ;; `standard-error'.  Prefer the newer file, always.
 (setq load-prefer-newer t)
+;; The transcript writer is ON by default, and most fixtures below produce a
+;; Ready session with an id — so without this guard every such test mirrors its
+;; chat into `agent-org-transcript-directory', which for a relative default is
+;; the directory the suite happens to be running in.  Measured: a full run
+;; dropped 22 `sid-*.org' files in the package tree.  A test that cares about
+;; the file says so with `ao--transcript-in', which turns the writer back on
+;; inside its own temp directory.
+(setq agent-org-transcribe nil)
 (load (expand-file-name "acp-mock.el" (file-name-directory load-file-name)))
 (require 'agent-org)
 (require 'agent-org-buffer)
@@ -4441,6 +4449,74 @@ server the user pointed Emacs at."
                                                        (file-name-directory
                                                         (directory-file-name temp-dir)))))
           (kill-buffer buf))))))
+
+(ert-deftest test-agent-org-transcript-directory-default-is-a-project-dot-directory ()
+  "The default is the RELATIVE name `.agent-org', not a path under ~/.emacs.d.
+User order: \"Transcripts should live under a project's .agent-org/.\"  A
+chat's own directory is the one place its transcript is found without a
+search, the same reason a project keeps its own README — and a relative
+default is what makes it so, because `expand-file-name' resolves it against
+the buffer's `default-directory', which is the session cwd.  An absolute
+value is still honoured (see the test below), so one global pool is a
+setting away."
+  (should (equal agent-org-transcript-directory ".agent-org"))
+  (should-not (file-name-absolute-p agent-org-transcript-directory)))
+
+(ert-deftest test-agent-org-transcript-lands-in-the-chats-own-project ()
+  "A chat of ~/proj writes ~/proj/.agent-org/<sid>.org.
+The whole point of the relative default, so it is asserted against a real
+directory rather than against a computed string: the file must be THERE,
+under the project, after the handshake that names the session.  A project
+keeps its own transcript the way it keeps its own README."
+  (ert-with-temp-directory project
+    (let ((agent-org-transcribe t)
+          (agent-org-transcript-directory ".agent-org")
+          (default-directory (file-name-as-directory project)))
+      (ao--capture-wire
+        (let ((buf (ao--chat-on-model "qmodel-large" "QModel Large"
+                                      "sid-proj")))
+          (let ((in-project (expand-file-name ".agent-org" project)))
+            (should (file-directory-p in-project))
+            (should (equal '("sid-proj.org") (ao--transcript-files in-project))))
+          (kill-buffer buf))))))
+
+(ert-deftest test-agent-org-two-projects-keep-their-own-transcripts ()
+  "Two chats, two projects, two directories.
+One pool named by id makes a transcript impossible to find without knowing
+which chat produced it; the project directory is the index.  Both buffers
+are Ready with the same model, so only the cwd distinguishes them."
+  (ert-with-temp-directory proj-a
+    (ert-with-temp-directory proj-b
+      (let ((agent-org-transcribe t)
+            (agent-org-transcript-directory ".agent-org"))
+        (ao--capture-wire
+          (let* ((default-directory (file-name-as-directory proj-a))
+                 (buf-a (ao--chat-on-model "qmodel-large" "QModel Large" "sid-a"))
+                 (default-directory (file-name-as-directory proj-b))
+                 (buf-b (ao--chat-on-model "qmodel-large" "QModel Large" "sid-b")))
+            (should (equal '("sid-a.org")
+                           (ao--transcript-files (expand-file-name ".agent-org" proj-a))))
+            (should (equal '("sid-b.org")
+                           (ao--transcript-files (expand-file-name ".agent-org" proj-b))))
+            (kill-buffer buf-a)
+            (kill-buffer buf-b)))))))
+
+(ert-deftest test-agent-org-transcript-honours-an-absolute-directory-option ()
+  "An absolute setting is a global pool, and the code must not join it twice.
+`(expand-file-name \"/srv/t\" \"/proj/\")' answers \"/srv/t\" — the property
+this test pins, because the same line of code resolves both cases and the
+one that reads like a bug (`why is a path being expanded?') is what makes a
+relative setting work."
+  (ert-with-temp-directory project
+    (ert-with-temp-directory pool
+      (let ((agent-org-transcribe t)
+            (agent-org-transcript-directory (file-name-as-directory pool))
+            (default-directory (file-name-as-directory project)))
+        (ao--capture-wire
+          (let ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-abs")))
+            (should (equal '("sid-abs.org") (ao--transcript-files pool)))
+            (should-not (file-exists-p (expand-file-name ".agent-org" project)))
+            (kill-buffer buf)))))))
 
 (ert-deftest test-agent-org-transcript-failure-never-breaks-a-turn ()
   "An unwritable directory is a note in the echo area, not a broken chat.

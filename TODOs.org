@@ -274,7 +274,9 @@ state of every call, and it would be a second renderer (CONVENTIONS.md
 the same marker that protects it from a streaming turn.
 
 - =agent-org-transcribe= (default t) and =agent-org-transcript-directory=
-  (=~/.emacs.d/agent-org/transcripts/=), created on the first write.
+  (default the RELATIVE =.agent-org=, resolved against the chat buffer's
+  =default-directory= — so each project keeps its own transcripts; an
+  absolute setting is one global pool), created on the first write.
 - One file per session, named =<id>.org= by
   =agent-org-buffer--transcript-name=, which replaces every character
   outside =[A-Za-z0-9._-]= with a dash: the id comes off the wire and
