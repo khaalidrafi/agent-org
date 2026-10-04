@@ -24,6 +24,11 @@
 ;; `ert-with-temp-directory' — the transcript tests are the first here to
 ;; touch the disk, and that macro lives in ert-x, not ert.
 (require 'ert-x)
+;; A `.elc' beside the sources wins the load race, so a suite run after a
+;; package-compile step would test the 4-am image of the code rather than
+;; the edit under test — silently, and the warning only goes to
+;; `standard-error'.  Prefer the newer file, always.
+(setq load-prefer-newer t)
 (load (expand-file-name "acp-mock.el" (file-name-directory load-file-name)))
 (require 'agent-org)
 (require 'agent-org-buffer)
@@ -72,9 +77,9 @@ model is already a MiniMax model."
 
 (defconst ao--name-dir "/tmp/ao-proj/"
   "Fixed `default-directory' for the buffer-name tests.
-A name now carries the project too — the last directory component of the
-cwd the buffer was created in — so tests that assert an exact name bind
-this instead of inheriting whatever directory the suite was launched
+A name carries the project — the last directory component of the cwd the
+buffer was created in — so tests that assert an exact name bind this
+instead of inheriting whatever directory the suite was launched
 from.  The directory need not exist: nothing here touches the disk.")
 
 (ert-deftest test-agent-org-buffer-create ()
@@ -84,7 +89,7 @@ from.  The directory need not exist: nothing here touches the disk.")
       (with-current-buffer buf
         (should buf)
         (should (buffer-live-p buf))
-        (should (string-prefix-p "*agent-org: ao-proj test" (buffer-name buf)))
+        (should (string-prefix-p "test:ao-proj" (buffer-name buf)))
         (should (derived-mode-p 'org-mode))
         (should-not buffer-read-only)
         (should-not (bound-and-true-p cursor-intangible-mode))
@@ -93,36 +98,37 @@ from.  The directory need not exist: nothing here touches the disk.")
         (should header-line-format))
       (kill-buffer buf))))
 
-;;;; Buffer names carry the project, title and id
+;;;; Buffer names: <who>:<project> [id]
 
 (ert-deftest test-agent-org-buffer-name-carries-project ()
-  "The project comes before the title.
-`*agent-org: qoder [sid]*' cannot tell a chat of ~/proj-a from a chat of
-~/proj-b until you open one; agent-shell names its buffers \"Claude
-Agent @ project\" for exactly this reason.  The last directory component
-of the session's cwd is rendered first, and the creation name already
-wears it — a buffer is findable by project during the handshake, not
-only after the agent answers."
+  "The chat's own name leads, and the project follows the colon.
+`Qoder:agent-org [sid]' is the shape the user asked for: the agent or the
+title first, because that is what a person scans for, and the last
+directory component of the cwd after the colon, because that is what
+tells a chat of ~/proj-a from a chat of ~/proj-b (measured live: two
+sessions in two projects produced two switcher rows identical but for
+their UUIDs until the project entered the name).  The creation name
+already wears both — a buffer is findable from the handshake, not only
+after the agent answers."
   (let ((default-directory ao--name-dir))
     (let ((buf (agent-org-buffer-create "qoder")))
-      (should (string-prefix-p "*agent-org: ao-proj qoder" (buffer-name buf)))
+      (should (string-prefix-p "qoder:ao-proj" (buffer-name buf)))
       (agent-org-buffer-set-status buf :session-id "sid-prj")
-      (should (equal "*agent-org: ao-proj qoder [sid-prj]*" (buffer-name buf)))
+      (should (equal "qoder:ao-proj [sid-prj]" (buffer-name buf)))
       (kill-buffer buf))))
 
 (ert-deftest test-agent-org-buffer-name-gains-title-and-id ()
   "Once the agent names the session, its buffer is that session.
-`*agent-org: qoder*' tells a user with three chats open nothing; the
-project, the title the harness reports and the id the wire addresses are
-the facts that make a buffer distinguishable in `C-x b' and in the
-switcher."
+`Qoder:agent-org' tells a user with three chats open nothing; the title
+the harness reports, the project and the id the wire addresses are the
+facts that make a buffer distinguishable in `C-x b' and in the switcher."
   (let ((default-directory ao--name-dir))
     (let* ((pair (ao--make-test-session "nametest"))
            (buf (car pair))
            (session (cdr pair)))
       (setf (plist-get session :session-id) nil)
       (agent-org--session-ready session "sid-x" (ao--fake-session-new-resp))
-      (should (equal "*agent-org: ao-proj Initial Session Title [sid-x]*"
+      (should (equal "Initial Session Title:ao-proj [sid-x]"
                      (buffer-name buf)))
       (kill-buffer buf))))
 
@@ -133,7 +139,7 @@ buffer is never left with the pre-handshake name once an id exists."
   (let ((default-directory ao--name-dir))
     (let ((buf (agent-org-buffer-create "standin")))
       (agent-org-buffer-set-status buf :session-id "sid-9")
-      (should (equal "*agent-org: ao-proj standin [sid-9]*" (buffer-name buf)))
+      (should (equal "standin:ao-proj [sid-9]" (buffer-name buf)))
       (kill-buffer buf))))
 
 (ert-deftest test-agent-org-buffer-name-follows-a-late-title ()
@@ -145,31 +151,34 @@ provider's name."
     (let* ((pair (ao--make-test-session "latetitle"))
            (buf (car pair)))
       (agent-org-buffer-set-status buf :session-id "sid-l")
-      (should (equal "*agent-org: ao-proj latetitle [sid-l]*" (buffer-name buf)))
+      (should (equal "latetitle:ao-proj [sid-l]" (buffer-name buf)))
       (agent-org-buffer-set-status buf :title "Refactor the parser")
-      (should (equal "*agent-org: ao-proj Refactor the parser [sid-l]*"
+      (should (equal "Refactor the parser:ao-proj [sid-l]"
                      (buffer-name buf)))
       (kill-buffer buf))))
 
 (ert-deftest test-agent-org-buffer-name-flattens-a-multiline-title ()
   "Agent-supplied titles go through the same one-line filter headings do.
 A title is free text; a newline in a buffer name would break `C-x b'
-rendering, so the label rule applies here too."
+rendering, so the label rule applies here too — and the truncation it
+performs cannot swallow the project either, so the test pins the end of
+the name as well as its beginning."
   (let ((default-directory ao--name-dir))
     (let ((buf (agent-org-buffer-create "multiline"))
           (long (concat "First line\n" (make-string 200 ?x) "\ntrailing")))
       (agent-org-buffer-set-status buf :session-id "sid-m" :title long)
       (with-current-buffer buf
         (should-not (string-match-p "\n" (buffer-name)))
-        (should (string-prefix-p "*agent-org: ao-proj First line " (buffer-name))))
+        (should (string-prefix-p "First line" (buffer-name)))
+        (should (string-suffix-p ":ao-proj [sid-m]" (buffer-name))))
       (kill-buffer buf))))
 
 (ert-deftest test-agent-org-buffer-name-does-not-accumulate-suffixes ()
   "Re-announcing the same title and id is not a rename.
 `generate-new-buffer-name' counts OUR OWN buffer when it already wears
 that name, so an unconditional rename would walk
-`*agent-org: T [s]*<2><3><4>' over a session's lifetime — every status
-update, of which a turn sends dozens."
+`T [s]<2><3><4>' over a session's lifetime — every status update, of
+which a turn sends dozens."
   (let ((default-directory ao--name-dir))
     (let* ((pair (ao--make-test-session "churn"))
            (buf (car pair)))
@@ -178,7 +187,7 @@ update, of which a turn sends dozens."
           :title "Same Title")
         (agent-org-buffer-set-status buf :used 100 :size 200 :state 'streaming)
         (agent-org-buffer-set-status buf :state 'ready))
-      (should (equal "*agent-org: ao-proj Same Title [sid-c]*" (buffer-name buf)))
+      (should (equal "Same Title:ao-proj [sid-c]" (buffer-name buf)))
       (kill-buffer buf))))
 
 (ert-deftest test-agent-org-buffer-names-stay-unique-per-session ()
@@ -192,13 +201,25 @@ still produce a live, distinct buffer rather than clobbering the other."
            (bufb (car b)))
       (agent-org-buffer-set-status bufa :session-id "sid-1" :title "Twin")
       (agent-org-buffer-set-status bufb :session-id "sid-2" :title "Twin")
-      (should (equal "*agent-org: ao-proj Twin [sid-1]*" (buffer-name bufa)))
-      (should (equal "*agent-org: ao-proj Twin [sid-2]*" (buffer-name bufb)))
+      (should (equal "Twin:ao-proj [sid-1]" (buffer-name bufa)))
+      (should (equal "Twin:ao-proj [sid-2]" (buffer-name bufb)))
       ;; the same id twice cannot happen; the same title with no id can
       (agent-org-buffer-set-status bufb :session-id nil :title "Twin")
-      (should (equal "*agent-org: ao-proj Twin*" (buffer-name bufb)))
+      (should (equal "Twin:ao-proj" (buffer-name bufb)))
       (kill-buffer bufa)
       (kill-buffer bufb))))
+
+(ert-deftest test-agent-org-buffer-name-wears-no-star-delimiters ()
+  "The name is the chat, not an internal Emacs buffer.
+`*agent-org: …*' is the Emacs convention for a buffer that is not a file,
+but it is noise in `C-x b', in the switcher and in a mode line that
+repeats it, and the user's asked-for shape has no delimiters in it.  So
+nothing in the name is decorative: no leading `agent-org: ', no stars."
+  (let ((default-directory ao--name-dir))
+    (let ((buf (agent-org-buffer-create "plain")))
+      (should-not (string-match-p "\\*" (buffer-name buf)))
+      (should-not (string-prefix-p "agent-org" (buffer-name buf)))
+      (kill-buffer buf))))
 
 ;;;; Session registry
 
@@ -3665,7 +3686,7 @@ would then switch to nothing."
   "An agent that has titled nothing still gets a readable row.
 The provider stands in, exactly as it does in the buffer name and
 `#+TITLE:', so the switcher and `C-x b' never disagree about what a chat
-is called.  The row leads with the project directory, which
+is called.  The row carries the project directory after the colon, which
 `agent-org-buffer-create' knows from the moment the buffer exists — this
 is the one case where a chat has no title, so the label proves the
 fallback reaches the switcher too."
@@ -3675,7 +3696,7 @@ fallback reaches the switcher too."
            (project (file-name-nondirectory
                      (directory-file-name default-directory))))
       (should (= 1 (length choices)))
-      (should (string-prefix-p (format "%s untitled" project)
+      (should (string-prefix-p (format "untitled:%s" project)
                                (car (nth 0 choices))))
       (should (string-match-p "\\[sid-test\\]\\'" (car (nth 0 choices))))
       (kill-buffer (car pair)))))
@@ -3697,8 +3718,8 @@ because two builders drift and one chat then has two names."
       (agent-org-buffer-set-status (car two) :project "agent-org")
       (let ((choices (agent-org--switch-candidates)))
         ;; row 0 is `two', row 1 is `one' (registry order)
-        (should (string-match-p "\\`agent-org Rewrite" (car (nth 0 choices))))
-        (should (string-match-p "\\`org-docs Fix" (car (nth 1 choices))))
+        (should (string-match-p "\\`Rewrite the loader:agent-org" (car (nth 0 choices))))
+        (should (string-match-p "\\`Fix the login bug:org-docs" (car (nth 1 choices))))
         ;; The shared builder, checked against the row rather than trusted:
         ;; this is what makes the assertion above survive a rename of the
         ;; buffer-name rules.

@@ -19,6 +19,9 @@ emacs -Q --batch \
   --eval "(load \"tests/test-agent-org.el\")" \
   --eval "(ert-run-tests-batch-and-exit)"
 
+# The suite sets `load-prefer-newer': without it a stale `.elc' left in this
+# directory by a package-build step silently shadows the sources under test.
+
 # Run a single test by name:
 emacs -Q --batch \
   --eval "(add-to-list 'load-path \"/home/khalid/agent-org\")" \
@@ -122,13 +125,20 @@ emacs -Q --batch \
 #   back to the id — a bar that drops the model field reads as "no model",
 #   which is the worse lie.  Every writer goes through
 #   `agent-org--ingest-config', so the pair cannot drift apart.
-# - A chat buffer is named for its session: `*agent-org: <project> <title> [sid]*'
-#   (`agent-org-buffer--wanted-name'), applied by `agent-org-buffer-set-status'
+# - A chat buffer is named for its session: `<who>:<project> [sid]` — the title
+#   (provider standing in until one arrives), then the project after the colon.
+#   NO `agent-org: ` prefix and no `*…*` delimiters: the user asked for
+#   `Qoder:agent-org [SESSION_ID]` and the package's own name only costs a chat
+#   its place in `C-x b` (the rule is pinned by
+#   `test-agent-org-buffer-name-wears-no-star-delimiters`).  Built by
+#   `agent-org-buffer--wanted-name', applied by `agent-org-buffer-set-status'
 #   ONLY on an update carrying `:title' or `:session-id' — those are the facts a
 #   name is made of (`:project' is fixed at creation, from the session cwd), so a
-#   per-chunk usage update builds no string.  `agent-org-buffer-create' applies the
-#   name itself, once the status (and therefore the project) exists, so even the
-#   handshake buffer is findable by project.  The provider
+#   per-chunk usage update builds no string.  `agent-org-buffer-create' names the
+#   buffer itself, once the status (and therefore the project) exists, so even the
+#   handshake buffer is findable by project; its own first name is the internal
+#   ` *agent-org-<provider>*' (leading space = never listed), replaced three lines
+#   later.  The provider
 #   stands in for a title that has not arrived (as it does for `#+TITLE') and
 #   qoder's `session_info_update' renames the buffer later.  The equality test in
 #   `agent-org-buffer--apply-name' is not an optimisation: `generate-new-buffer-name'

@@ -100,12 +100,14 @@ The prompt queue is NOT cleared: the cancelled turn was the only thing
 holding it, so the queue drains right away.
 
 * Display fixes (the user's live complaints)
-** DONE Buffer name carries the project name and session id
+** DONE Buffer name is =<who>:<project> [sid]=, with no =agent-org: = prefix
+CLOSED: [2026-10-04 Sun]
+*** DONE What was built first
 agent-shell names buffers ="Claude Agent @ project"= via
 =agent-shell-buffer-name-format= and shows the session id separately
 (=agent-shell-show-session-id=).
 
-Shipped: =agent-org-buffer--wanted-name= renders
+Shipped: =agent-org-buffer--wanted-name= rendered
 =*agent-org: <project> <title|provider> [sid]*=, the project being the
 last directory component of the session cwd (already in the status
 model as =:project=).  =agent-org-buffer-create= now applies that name
@@ -116,6 +118,21 @@ only on =:title=/:session-id= updates plus the equality guard.
 Guarded by =test-agent-org-buffer-name-carries-project= and the
 updated exact-name tests, which bind =ao--name-dir= so the project
 part never depends on where the suite was launched.
+
+*** DONE What the user then asked for
+#+begin_quote
+"Remove \"agent-org: \" prefix from buffer names.  Use like this format -
+\"Qoder:agent-org [SESSION_ID]\"."
+#+end_quote
+
+Shipped: the name is now =<who>:<project> [sid]= -- the title, or the
+provider until a title arrives, then the project after the colon, then
+the id in brackets.  No package prefix and no =*…*= delimiters.  The
+example was read as =<agent>:<project>= rather than =<agent>:<package>=
+because the project part is what the previous item existed to add: two
+qoder chats in two directories must not print the same row.  The one
+builder is still =agent-org-buffer--chat-label=, so the switcher's first
+column changed with it (CONVENTIONS.md §13).
 
 ** DONE Tool call headings must not show raw ids
 agent-shell renders tool calls through =agent-shell-make-tool-call-label=

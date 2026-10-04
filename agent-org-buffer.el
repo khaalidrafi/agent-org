@@ -282,7 +282,11 @@ the handshake onward.  Buffer is in `org-mode' and `agent-org-mode'
 with a status header line.  Programmatic text is protected by
 `read-only' text properties, not by a global `buffer-read-only', so the
 live prompt at the end is always typeable."
-  (let ((buf (generate-new-buffer (format "*agent-org: %s*" name))))
+  ;; The leading space marks the FIRST name as an internal one: it exists
+  ;; for the three lines it takes to seed the status, and `apply-name'
+  ;; replaces it with the real chat name before this buffer is ever
+  ;; listable.  A blank name would hide a session whose rename failed.
+  (let ((buf (generate-new-buffer (format " *agent-org-%s*" name))))
     (with-current-buffer buf
       (org-mode)
       (setq agent-org-buffer--status
@@ -361,11 +365,10 @@ the per-turn :thinking: drawer by `agent-org-buffer-append-thought'.")
 (defun agent-org-buffer--wanted-name ()
   "The buffer name this buffer's session facts call for.
 A chat buffer is the session: `C-x b' and the switcher list its name, and
-`*agent-org: qoder*' says nothing at all to someone with three qoder
-chats open.  So the name carries the project directory, the harness's
-own title and the ACP session id — the three things that make one
-buffer different from the next, and the shape agent-shell's \"Claude
-Agent @ project\" names converge on.
+`Qoder' says nothing at all to someone with three qoder chats open.  So
+the name is `<who>:<project> [<session id>]' — the agent, or the harness's
+own title once it has one, then the project directory it is a chat OF,
+then the ACP id the wire addresses it by.
 
 The provider stands in for a title that has not arrived, exactly as it
 does for `#+TITLE:', and the id is left out until the agent has given one
@@ -374,26 +377,32 @@ and qoder titles a session only after the first turn).  Title text is
 agent-supplied free text, hence `agent-org-buffer--label': a buffer name
 with a newline in it breaks the completion UI.
 
-The name's middle is `agent-org-buffer--chat-label', which
+No `agent-org: ' prefix and no `*…*' delimiters: the user asked for the
+name to BE the chat, and the package's own name costs a chat its place in
+`C-x b', where `*agent-org: …*' sorts together with everything else in the
+product rather than with the project it belongs to.
+
+The name's first part is `agent-org-buffer--chat-label', which
 `agent-org-switch-buffer' builds its first column from as well: one chat,
 one display label, wherever it is shown."
   (let* ((status agent-org-buffer--status)
          (sid (plist-get status :session-id)))
-    (format "*agent-org: %s%s*"
+    (format "%s%s"
             (agent-org-buffer--chat-label status)
             (if sid (format " [%s]" sid) ""))))
 
 (defun agent-org-buffer--chat-label (status)
   "The display label of the chat described by the status plist STATUS.
-`<project> <title>': the directory the chat was started in, then the
-harness's own title, the provider standing in before a title arrives, and
-`agent-org' if not even that is known.  The project comes FIRST because it
-is what distinguishes two chats of one provider — measured live, a session
-in this repo and a session in org-docs produced two switcher rows
-identical but for their UUIDs, while `C-x b' was already telling them
-apart.  Flattened by `agent-org-buffer--label' (the title is agent free
-text) and never truncated, so the label can out-grow a column; the
-padding code copes.
+`<who>:<project>': the harness's own title, the provider standing in
+before a title arrives and `agent-org' if not even that is known, then the
+directory the chat was started in after the colon.  The idiom is the one
+Emacs users already read as \"thing it is a buffer OF\" (`file:directory'
+in the buffer menu) and the one the user asked for by name.  The project
+still has to be IN the name: measured live, a session in this repo and a
+session in org-docs produced two switcher rows identical but for their
+UUIDs while `C-x b' was already telling them apart.  Flattened by
+`agent-org-buffer--label' (the title is agent free text) and never
+truncated, so the label can out-grow a column; the padding code copes.
 
 STATUS is a parameter, not a read of `agent-org-buffer--status': the
 switcher labels OTHER buffers, and a function that is only correct when
@@ -404,7 +413,7 @@ called in the right buffer is a bug waiting for the next caller."
                     (plist-get status :provider)
                     "agent-org"))))
     (if (and project (not (string-empty-p project)))
-        (concat project " " label)
+        (concat label ":" project)
       label)))
 
 (defun agent-org-buffer--apply-name ()
@@ -412,7 +421,7 @@ called in the right buffer is a bug waiting for the next caller."
 The equality test is not an optimisation.  `generate-new-buffer-name'
 counts this very buffer when it already wears the name, so renaming on
 every status update would walk a session through
-`*agent-org: T [s]*<2><3><4>' — a turn sends dozens of updates.
+`T [s]<2><3><4>' — a turn sends dozens of updates.
 Renaming with `rename-buffer' rather than `rename-uniquely' because the
 name is the point, not a fresh one: RENAME-ALL-PROCESSES stays nil so
 the agent process keeps the name `acp' gave it, which is what

@@ -971,6 +971,49 @@ not something else in Emacs.  Mutation-checked: dropping the sanitizer fails 2,
 dropping the kill-hook write fails 1, moving the writer onto the chunk path fails
 the cost test, and pointing it at =point-max= fails the draft test.
 
+* The buffer name lost its =agent-org: = prefix
+
+** TODO Judge the reading of the asked-for format  (agent-org-buffer.el)
+The order was: "Remove =agent-org: = prefix from buffer names.  Use like this
+format - =Qoder:agent-org [SESSION_ID]=".  Two strings are candidates for
+what follows the colon: the /package/ (so every chat of every project reads
+=Qoder:agent-org=, and two chats from two directories are identical again —
+which is the exact bug =test-agent-org-buffer-name-carries-project= exists to
+prevent) or the /project/ (so a chat in this repo reads =Qoder:agent-org=
+because this repo /is/ =agent-org=, and a chat in =~/proj-b= reads
+=Qoder:proj-b=).  The second was built: it satisfies the example byte for
+byte in the only context it was written in, and it keeps the fact that makes
+a name placeable.  If the first was meant, the change is one =concat= in
+=agent-org-buffer--chat-label= plus five test strings.
+
+** TODO Read what the rename removed, and what it kept
+No =*…*= delimiters either, which is a break with an Emacs convention (a
+buffer not visiting a file is normally starred, and =C-x b= uses that to say
+"this is not a file").  Nothing keys off a name: the registry maps buffers to
+sessions, =agent-org--session-open-p= reads ids, and the switcher's rows carry
+buffer /objects/ (§13 of CONVENTIONS.md), so a rename is cosmetic here in a way
+it usually is not.  =agent-org-buffer-create= still gives its buffer a first
+name, = *agent-org-<provider>*=, chosen so that a failure leaves something
+findable rather than an invisible = *…*= — the space keeps it out of
+=other-buffer= lists for the three lines it exists.
+
+** DONE The suite was testing a 4 a.m. image of the code
+The run kept reporting the OLD name after the old name was deleted.  A stale
+=agent-org-buffer.elc= (left by the package-compile step of an earlier unit)
+won the load race, and =batch-byte-compile='s warning about it goes to
+=standard-error=, which the test command's output was not showing.  Fixed by
+=(setq load-prefer-newer t)= at the top of ~tests/test-agent-org.el~, so the
+source under test is always the file Emacs loads.  Review the comment there:
+this is the kind of failure that makes a green suite mean nothing.
+
+** DONE Thirteen tests moved, one added (185 -> 186)
+The six =buffer-name= tests and =buffer-create= now assert the new shape, the
+two switcher =candidates= tests assert it too (they share
+=agent-org-buffer--chat-label=, which is the point of that function), and
+=test-agent-org-buffer-name-wears-no-star-delimiters= pins the negative: no
+star anywhere in the name, nothing in front of the chat's own word.
+Mutation-checked: reverting =chat-label= to =project " " label= fails 11.
+
 * How to check the whole thing
 
 #+begin_src sh
@@ -980,7 +1023,7 @@ emacs -Q --batch --eval "(add-to-list 'load-path \"$PWD\")" \
   --eval "(ert-run-tests-batch-and-exit)"
 #+end_src
 
-The suite is 185 tests.  The transcript ones are the
+The suite is 186 tests.  The transcript ones are the
 ~test-agent-org-transcript-*~ family (select them with
 ~ert-run-tests-batch-and-exit "transcript"~); they are the only tests that
 write to a filesystem, each inside its own ~ert-with-temp-directory~, which is
