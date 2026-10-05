@@ -106,8 +106,10 @@ when `agent-org-start' opened a blank buffer anyway."
 
 The names follow agent-shell's `agent-shell-session-strategy'.  An agent
 that does not advertise the `list' capability, or cannot `session/load',
-falls back to `new': there is nothing to choose.  A prefix argument on
-`agent-org-start' forces `new' for that one call.
+falls back to `new': there is nothing to choose.  One call can override
+the setting without editing it: `C-u M-x agent-org-start' forces `new',
+and `C-u C-u' forces `latest' -- reopen the chat you were last in, which
+is what makes `latest' a habit rather than a preference.
 
 `prompt' costs one request before a session opens, and some agents are
 slow or silent on `session/list' (Goose advertises the capability and
@@ -724,8 +726,10 @@ been sent yet, so the caller picks `session/new' or `session/load'."
 When called interactively, prompt for the provider.  What \"start\"
 means is `agent-org-session-strategy''s business: with the default
 `prompt' the agent is asked what this directory already holds and you
-choose from that, or from `New session'.  A prefix argument forces `new'
-for this call, skipping the listing."
+choose from that, or from `New session'.  One prefix argument forces
+`new' for this call, skipping the listing; two force `latest', which
+opens the most recently modified session without asking -- the same
+16-and-up reading `agent-org-resume-session' uses for its second tier."
   (interactive (list (agent-org--read-provider)))
   (let* ((session (agent-org--open-session (agent-org--provider-spec provider)))
          (buffer (plist-get session :buffer))
@@ -735,7 +739,10 @@ for this call, skipping the listing."
          ;; asked.  Reading the variable late made a live probe that
          ;; bound `new' around `agent-org-start' still go and list the
          ;; directory, because by then the binding was gone
-         (strategy (or (and current-prefix-arg 'new)
+         (strategy (or (and current-prefix-arg
+                            (if (>= (prefix-numeric-value current-prefix-arg) 16)
+                                'latest
+                              'new))
                        agent-org-session-strategy)))
     (agent-org-loader-begin buffer)
     (agent-org--initialize session

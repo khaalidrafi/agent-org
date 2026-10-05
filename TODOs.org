@@ -306,6 +306,19 @@ for the per-chunk append model, spent inside the stream.  Twelve tests
 suite's first to touch a filesystem, so =tests/test-agent-org.el= now
 requires =ert-x= for =ert-with-temp-directory=.
 
+** DONE =latest= is reachable per call, and means /modified/
+User order: "Add session strategy to always open the latest modified
+session."  The strategy already existed and already sorted on
+=agent-org--session-stamp= (=updatedAt=, else =createdAt= for a session
+nobody ever came back to) — what it lacked was a way to use it without
+editing =agent-org-session-strategy=.  So =agent-org-start= now reads its
+prefix argument in two tiers, the same 16-and-up rule
+=agent-org-resume-session= uses: =C-u= forces =new=, =C-u C-u= forces
+=latest=.  One test
+=test-agent-org-start-double-prefix-forces-the-latest-session= pins both
+halves of the claim: the wire answers oldest-first so the pick proves the
+sort, and =ao--never-prompt= fails the test if anything asks.
+
 ** TODO Markdown → Org for user and agent replies (default on, off-able)
 agent-shell only renders markdown to /faces/, never to Org, so this is
 beyond parity: convert headings, emphasis, lists, fences and tables of

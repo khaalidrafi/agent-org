@@ -159,6 +159,13 @@ and the session opening — the same three choices ~agent-shell~ offers:
 | ~latest~       | loads the most recently updated session, without asking |
 | ~new~          | opens a blank session, no listing round trip            |
 
+One call can pick a strategy without touching the setting: ~C-u M-x~
+forces ~new~ (no listing round trip), ~C-u C-u M-x~ forces ~latest~ — the
+session you last modified, which is how "always reopen where I left off"
+works as a keypress.  ~latest~ means /modified/: the agent's ~updatedAt~,
+or ~createdAt~ for a session nobody ever came back to, not the order the
+agent happened to list them in.
+
 ~prompt~ is the default.  The offer is the agent's own ~session/list~ for
 ~default-directory~, newest first, each candidate labelled
 

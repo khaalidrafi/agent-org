@@ -3059,6 +3059,39 @@ one keypress has to be enough to say \"not this time\"."
       (should-not (ao--sent-get "session/list"))
       (kill-buffer (current-buffer)))))
 
+(ert-deftest test-agent-org-start-double-prefix-forces-the-latest-session ()
+  "C-u C-u opens the most recently MODIFIED session, and asks nothing.
+`latest' is the strategy that means \"open the chat I was last in\", and
+until now it was reachable only by editing `agent-org-session-strategy'.
+One prefix arg has always meant `new', so the second tier carries the
+other answer -- the same 16-and-up reading `agent-org-resume-session'
+already uses for its own second tier.
+
+Recency is the listing's `updatedAt', falling back to `createdAt' for a
+session nobody ever touched, NOT the order the agent put them in: this
+wire answers oldest first."
+  (ao--capture-wire
+    (let ((current-prefix-arg '(16))
+          (agent-org-session-strategy 'prompt))
+      (let ((buf (cl-letf (((symbol-function 'agent-org--read-provider)
+                            (lambda () 'qoder)))
+                   (call-interactively 'agent-org-start))))
+        (ao--never-prompt
+          (ao--drive "initialize" ao--fake-init-resp)
+          (ao--drive
+           "session/list"
+           `((sessions . [((sessionId . "s-stale") (title . "Old work")
+                           (updatedAt . "2026-08-01T10:00:00+0000"))
+                          ((sessionId . "s-live") (title . "Last thing I did")
+                           (updatedAt . "2026-10-04T18:30:00+0000"))
+                          ((sessionId . "s-quiet") (title . "Born, never touched")
+                           (createdAt . "2026-07-01T09:00:00+0000"))])))
+        (should-not (ao--sent-get "session/new"))
+        (let ((params (map-elt (plist-get (ao--sent-get "session/load") ':request)
+                               ':params)))
+          (should (equal (map-elt params 'sessionId) "s-live")))
+        (kill-buffer buf))))))
+
 (ert-deftest test-agent-org-start-prompts-with-the-directory-sessions ()
   "Starting a chat means asking the agent what this directory already
 holds, offering that list, and loading what was chosen instead of
