@@ -19,8 +19,8 @@ Top to bottom, a session buffer is exactly:
 2. A blank line separating it from the conversation.
 3. The conversation: alternating `* User` and `* Agent` level-1 headings.
    An Agent turn carries a `:thinking:` drawer of its reasoning, a `:tool:`
-   drawer with one line per tool call, and one `:tool-N:` drawer holding what
-   call *N* printed — for every call that printed something (see §3).
+   drawer with one line per tool call, and ONE `:tool-output:` drawer holding
+   what each of those calls printed, under the call's title (see §3).
    By default the Agent heading is not the word
    `Agent` but the model that answered — `* MiniMax M3` (see below).
 
@@ -54,11 +54,12 @@ What does agent-org-buffer.el do?
 Let me look at the buffer first…
 :end:
 :tool:
-- TODO 1. read_file
-- DONE 2. write_file
+- TODO read_file
+- DONE write_file
 :end:
-:tool-2:
-+ def login(user):
+:tool-output:
+- write_file
+  + def login(user):
 :end:
 ```
 
@@ -164,16 +165,18 @@ agent turn's `:tool:` drawer (the turn heading is named for the model, see §1):
 
 ```org
 :tool:
-- KEYWORD N. title
+- KEYWORD title
 :end:
 ```
 
 The `toolCallId` is *not* in the line — it is the agent's bookkeeping, and the
 turn's `agent-org-buffer--tools` alist already owns the call, so every update
 redraws the whole drawer from that list rather than hunting for a marker.
-`N` is the call's position in that order, and it is what pairs the line with the
-`:tool-N:` drawer of its output below (§3.1); a gap in the numbering therefore
-means "this call printed nothing", which is why no empty drawer is created.
+Neither is a number: `N.` used to prefix the title as the index into a
+per-call `:tool-N:` output drawer (§3.1), and one drawer for the whole turn
+needs no index — a call is found by the title the board already shows.  This
+is the user's order: *"No need to add numbers to tool drawers.  Consecutive
+tool calls belong to a single drawer."*
 
 `KEYWORD` maps the ACP `status` onto a per-file TODO set:
 
@@ -212,10 +215,26 @@ stays for that same reason reversed — it names the only state a reader of a
 transcript or a chat can see for a call, and a file whose heading vocabulary is
 declared is a file Org parses the way it looks.
 
-### 3.1 What a call printed: a folded `:tool-N:` drawer
+### 3.1 What a call printed: ONE folded `:tool-output:` drawer for the turn
 
-Output goes in a drawer of its own, named by the number on the call's status
-line, for three reasons:
+Every call that printed gets an item in the turn's single output drawer — a
+`- TITLE` line, with the body indented two columns under it:
+
+```org
+:tool-output:
+- ls -R
+  agent-org.el
+  TODOs.org
+
+- grep -rn foo
+  * a heading
+  ::END:
+  plain
+:end:
+```
+
+Three reasons, and the first two are the same Org facts that used to argue for a
+drawer per call:
 
 * **Org forbids nesting.**  §2.7: a drawer holds "anything but a headline and
   another drawer" — so the body of `:tool:` cannot contain the output of the
@@ -224,10 +243,10 @@ line, for three reasons:
   is the live progress the user watches) while the bodies must not fill the
   screen.  Shared drawer = choose one; agent-shell reaches the same conclusion
   and ships `agent-shell-tool-use-expand-by-default` nil, i.e. collapsed.
-* **Activity order is preserved.**  The status drawer lists the calls in the
-  order the agent made them, and each body sits under the turn with the same
-  number, so reading down the turn is reading the agent's actions in order —
-  which is the ordering the user asked to keep from agent-shell.
+* **But one drawer per call was too many.**  Six calls meant seven folders per
+  turn, and the only thing that made them findable was a number printed on
+  every status line.  The title is the key a reader actually uses, so the
+  bodies moved into one drawer named by title (§3).
 
 The extraction (`agent-org-buffer--tool-output`) is agent-shell's rule, in its
 order: the `content` blocks, else `rawOutput.formatted_output` **only when it is
@@ -239,7 +258,13 @@ shows what it printed so far.  Nothing is truncated: folding is the affordance,
 and a record that quietly lost its middle is worse than a long one.
 
 `:shown` on the entry is the body last written, so the many status-only updates
-that follow an output-bearing one cost no redraw of the body.
+that follow an output-bearing one cost no redraw — which matters more now the
+bodies share a drawer, because a redraw rewrites and re-protects the whole turn's
+output.  Measured (Celeron, `test-agent-org-shared-tool-output-drawer-redraw-cost`,
+quiet machine): 20 calls of 40 lines each cost ~105 ms for the turn, ~5 ms per
+redraw of the growing 800-line body — on a busy machine the same test prints
+213 ms, so re-measure rather than quoting.  If a real session outgrows that, the
+drawer grows append-only instead, in `agent-org-buffer--tool-output-body`.
 
 ### 3.2 A drawer body may not re-shape its own drawer
 
@@ -253,13 +278,17 @@ And `:END:` is matched case-insensitively and whitespace-tolerantly, so `:end:`,
 markdown thought's `* ` bullet, carries these routinely).
 
 `agent-org-buffer--drawer-safe-lines` is the one primitive guarding every body the
-stream writes — `:thinking:` and `:tool-N:` alike:
+stream writes — `:thinking:`, `:tool:` and `:tool-output:` alike:
 
 * every line gets **one space of indent** (a headline must start at column 0);
 * a bare END line additionally gets a **doubled colon**, ` ::END:`, which is not
   the marker and still reads as the text it is;
 * blank lines stay blank (they are legal inside a drawer, and dropping them would
   flatten the output's own shape).
+
+Inside `:tool-output:` each body takes **one further space**, which is what makes
+it the contents of its `- TITLE` item rather than loose drawer text; the guard's
+own escapes therefore appear as `  * …` and `  ::END:`.
 
 ### The per-file keyword line
 

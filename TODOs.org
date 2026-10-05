@@ -162,17 +162,19 @@ the =content= blocks first, else =rawOutput.formatted_output=, else nothing,
 an unknown block named rather than dropped, and the body collapsed by default
 (=agent-shell-tool-use-expand-by-default= nil).
 
-Shipped: each call that printed anything gets a folded =:tool-N:= drawer,
-=N= being the number now prefixed to its status line (=- DONE 2. run tests=
-pairs with =:tool-2:=), so the turn reads in the order the agent acted and
-the agent's =toolCallId= still never reaches a visible line.  Output cannot
-join the =:tool:= drawer -- Org forbids a drawer inside a drawer, and one
-drawer has one fold state, which would either hide the live status lines or
-flood the chat with bodies.  =agent-org-buffer--tool-output= does the
+Shipped: what a call printed goes in a folded drawer, so the turn reads in the
+order the agent acted and the agent's =toolCallId= still never reaches a
+visible line.  Output cannot join the =:tool:= drawer -- Org forbids a drawer
+inside a drawer, and one drawer has one fold state, which would either hide the
+live status lines or flood the chat with bodies.  The /first/ cut was one
+=:tool-N:= drawer per call with =N= printed on its status line; the next unit
+("Consecutive tool calls belong to a single drawer") replaced that with ONE
+=:tool-output:= drawer per turn, each call a =- TITLE= item -- see the DONE
+entry for it below.  =agent-org-buffer--tool-output= does the
 extraction (content blocks → string =rawOutput.formatted_output= → nothing;
 diffs show path and text; anything else is
 =[unsupported content: TYPE]=), =:shown= on the entry stops an unchanged body
-being re-inserted, and a call with no output gets no drawer.
+being re-inserted, and a call with no output gets no item.
 =agent-org-buffer--drawer-safe-lines= escapes every streamed body on the way
 in: one space of indent (a line starting with =*= at column 0 is a headline)
 and a doubled colon on a bare =:END:= (matched case-insensitively and
@@ -440,6 +442,29 @@ records the calls and fails on any ~font-lock-mode~ one at all, and
 ~test-agent-org-chat-buffer-asks-for-font-lock-when-displayed~ runs the
 buffer-local hook the way a window would.  Suite: 236 green.
 
+** DONE Consecutive tool calls share one drawer, and the lines lost their numbers
+User order, in the same message as the colours report: "No need to add numbers
+to tool drawers.  Consecutive tool calls belong to a single drawer."
+
+Two shape changes, both in =agent-org-buffer.el=:
+- the =:tool:= board line is =- KEYWORD title=, with no number.  The number only
+  ever existed to pair a status line with a =:tool-N:= drawer of the same name;
+  with one drawer there is nothing to pair, and the title is the key a reader
+  uses anyway (the raw =toolCallId= stays off the visible line, as ordered).
+- one folded =:tool-output:= drawer per turn holds every call's output: each
+  call is a =- TITLE= item with its body indented two columns, which is
+  =agent-org-buffer--drawer-safe-lines= plus one more space, because the body is
+  now an item's contents rather than loose drawer text.  A call that printed
+  nothing gets no item, so the drawer is absent rather than empty.
+
+Built from =agent-org-buffer--tools= like the board, so it cannot drift from the
+record; =:shown= stayed per-entry, so a status-only update still repaints
+nothing, while the paint itself went whole-turn.  Measured: 98-108 ms for 20
+calls of 40 lines (~5 ms per redraw), the number
+=test-agent-org-shared-tool-output-drawer-redraw-cost= prints (CONVENTIONS.md
+§3.1).  Three tests added, two renamed, 29 touched: 239 green, byte-compile zero
+warnings.
+
 * TODO Later --- still worth porting, not "basic"
 ** TODO Steer --- inject into the live turn
 agent-shell's =agent-shell-prompt-steer= sends a mid-turn message via
@@ -465,12 +490,16 @@ buffer-local accept/deny affordance would keep the chat responsive.
 
 ** TODO Tool-call grouping
 agent-shell has =--group-tool-calls= (agent-shell.el:2763): consecutive
-calls of one kind fold under a summary heading.  Calls are drawer lines
-here now, one per =toolCallId= under a =:tool:= heading-free drawer
-(CONVENTIONS.md §3), so grouping is a rendering choice in
-=agent-org-buffer--redraw-drawer=: consecutive same-title calls could
-collapse to one line carrying a count, with each call's own =:tool-N:=
-output drawer kept.  Nothing about the fold state today depends on that.
+calls of one kind fold under a summary heading.  Most of that is now the
+shape here anyway — calls are =- KEYWORD title= lines of one =:tool:=
+drawer and their output is one =:tool-output:= drawer of =- TITLE= items
+(CONVENTIONS.md §3), so nothing folds per call any more.  What is left of
+the idea is a count: consecutive same-title calls could collapse to one
+board line reading =- DONE run tests (x3)=, with the three output items
+kept.  That is a choice in =agent-org-buffer--tool-output-body= and the
+board's =mapcar=, and it must not touch =agent-org-buffer--tools= — the
+list is the record, one entry per =toolCallId=, and collapsing is
+rendering.
 
 ** TODO Copy session id command
 agent-shell's =agent-shell-copy-session-id= (agent-shell.el:2033):

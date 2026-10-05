@@ -1140,7 +1140,8 @@ review item.
 ** TODO Read the drawer rewrite: one list, no marker per call  (agent-org-buffer.el)
 
 =agent-org-buffer--tools= went from =((ID :marker M :title T :status S) ...)= to
-=((ID :title T :status S) ...)=, and =agent-org-buffer-insert-tool= now rebuilds
+=((ID :title T :status S) ...)= (since grown to =:output= and =:shown= for the
+output drawer), and =agent-org-buffer-insert-tool= now rebuilds
 the whole =:tool:= drawer from it on every update.  The claim to check is that this
 /removed* a bug class rather than adding a redraw cost: a tool state change is one
 line, so re-writing a drawer body per =tool_call_update= is a delete+insert of a
@@ -1313,22 +1314,32 @@ that is still a drawer when a shell result happens to quote an Org file.  Reprod
 it yourself in ~emacs -Q --batch~ with ~org-element-parse-buffer~ on a drawer
 containing one ~* heading~ line: the reported drawer list comes back empty.
 
-** TODO Read the numbering decision in =agent-org-buffer-insert-tool=
+** TODO Read the one-drawer decision in =agent-org-buffer-insert-tool=
 
-Output goes to a sibling ~:tool-N:~ drawer keyed by the call's position in
-~agent-org-buffer--tools~, and the status line now carries that same number.
-Two questions:
+The user's order was "No need to add numbers to tool drawers.  Consecutive tool
+calls belong to a single drawer."  So the board line is =- KEYWORD title= with no
+number, and every call that printed something is one =- TITLE= item followed by
+its indented body inside ONE folded ~:tool-output:~ drawer for the turn, rebuilt
+from ~agent-org-buffer--tools~ exactly like the board is.  Two questions worth a
+human eye:
 
-1. Is a NUMBER stable enough as the pairing key?  It is, because the list only
-   ever grows within a turn (=start-agent-turn= clears it), so entry 3 stays
-   entry 3 for the turn's life -- but a *new turn* restarts at 1, which means
-   ~:tool-1:~ appears in more than one place in the buffer.  Render sites locate
-   a drawer bounded by the current turn, and the transcript is a mirror of the
-   buffer, so that is intended; judge whether you want it in a file you read
-   later.
+1. Is dropping the number safe?  The number was only ever a *locator* -- it paired
+   a status line with a drawer of the same name.  With one drawer per turn there
+   is nothing to pair, and the call's own title is the readable key.  What is
+   lost is the ability to say "the third call" across the two drawers; judge
+   whether you ever wanted that.
 2. Why not the ~toolCallId~?  The user ordered the raw ids off the visible lines
-   (TODOs.org, "Tool call headings must not show raw ids").  The number is the
-   cheapest key that a human can also read.
+   (TODOs.org, "Tool call headings must not show raw ids").  A title is the
+   cheapest key a human can also read, and it is already flattened by
+   ~agent-org-buffer--label~.
+
+The cost of the shape is measured, not assumed: one redraw rewrites the whole
+output drawer, so ~:shown~ (the body last written, per entry) is what keeps a
+status-only update from repainting bodies that did not change.  A turn with 20
+calls of 40 lines each costs ~105 ms~ of redraws (~5.3 ms~ per update) on a quiet
+machine -- ~test-agent-org-shared-tool-output-drawer-redraw-cost~ prints the
+number, so re-measure it rather than trusting the one written here (a loaded
+machine has shown 213 ms for the same work).
 
 ** TODO Read =agent-org-buffer--tool-output= against agent-shell
 
@@ -1343,12 +1354,63 @@ and is not ported.
 ** TODO Check the fold choice on a live session
 
 =M-x agent-org-start=, ask the agent to run a shell command, and watch the
-turn: ~:tool:~ open with its numbered lines, ~:tool-1:~ born folded, =TAB= on the
-drawer line opens the body.  Judge the ergonomics, not the code: on a long
-~grep~ result, is "folded but complete" better than the truncated preview a
-chat UI would normally show?  (This project's answer, in the docstrings: yes --
-folding is the affordance, and a record that quietly lost its middle is worse
-than a long one.)
+turn: ~:tool:~ open with its =- KEYWORD title= lines, ~:tool-output:~ born folded
+with one =- TITLE= item plus its indented body per call, =TAB= on the
+drawer line opens the bodies.  Judge the ergonomics, not the code: on a long
+~grep~ result, is "one drawer, several calls, folded but complete" better than the
+truncated preview a chat UI would normally show -- and is a single drawer whose
+middle you must scroll through better than the per-call drawers this replaced?
+(This project's answer, in the docstrings: yes to both -- folding is the
+affordance, a record that quietly lost its middle is worse than a long one, and
+the user asked for consecutive calls in one drawer.)
+
+* Consecutive tool calls share one drawer, and the lines lost their numbers
+
+User order: "No need to add numbers to tool drawers.  Consecutive tool calls
+belong to a single drawer."  One code file (=agent-org-buffer.el=, the tool
+renderer and its docstrings), the suite, and the four documents that describe the
+shape.
+
+** TODO Read =agent-org-buffer--tool-output-body= (agent-org-buffer.el)
+
+It builds the whole shared drawer from ~agent-org-buffer--tools~ in one pass -- no
+number, no per-call drawer name, and the *order of the drawer is the order the
+agent made the calls* because the list is append-only within a turn.  Two things
+to check:
+
+- every body line still goes through =agent-org-buffer--drawer-safe-lines= and
+  then takes /one more/ space of indent (=concat " " line=), because the body is
+  now inside a list item.  Without it a =*= at column 0 would end the item /and/
+  break the drawer.  Judge whether an item's continuation line is the right place
+  to hang a shell result, or whether a plain =- TITLE= followed by an
+  unindented block reads better in a transcript you open later.
+- a call that printed nothing gets no item, so the drawer can be empty and is
+  then absent.  That is the same rule the per-call drawers had.
+
+** TODO Read the =:shown= guard now that it covers a shared body
+
+=:shown= stayed /per entry/ (=agent-org-buffer-insert-tool= compares the entry's
+own =:output= against it), so a status-only update still repaints nothing.  What
+changed is the /redraw/: when one call's output arrives, =agent-org-buffer--
+tool-output-body= rebuilds the whole turn's drawer and the body is delete+inserted
+and re-protected in one go.  So the guard is cheap per call and the paint is
+whole-turn -- decide whether that is the right split before a session with a
+~cat~ of a large file makes you want append-only instead (CONVENTIONS.md §3.1
+names the function that would change).
+
+** DONE Three tests (236 -> 239), and 29 that had to change shape
+
+New: =test-agent-org-consecutive-tool-calls-share-one-output-drawer=,
+=test-agent-org-tool-board-lines-carry-no-number=, and
+=test-agent-org-shared-tool-output-drawer-redraw-cost=.  Renamed:
+=...-tool-output-update-rewrites-its-drawer-in-place= ->
+=...-rewrites-its-body-in-place=, and
+=...-tool-call-with-no-content-gets-no-output-drawer= ->
+=...-tool-output-skips-a-call-with-nothing-to-show= -- the old names said "per
+call", which is exactly what stopped being true.  The rest of the diff is
+assertions: every one that pinned =^:tool-N:$= or a numbered =- DONE 3. three=
+line, and two that counted /drawer/ occurrences where the shape is now /item/
+occurrences (=git diff -U0 tests/test-agent-org.el= lists them).
 
 * Markdown in a reply becomes Org structure, line by line
 

@@ -451,13 +451,13 @@ conversation alone: `**' is gone."
                                         (toolCallId . "tc1")
                                         (status . "in_progress")))
     (let ((text (with-current-buffer buf (buffer-string))))
-      (should (string-match-p "^- DOING 1. read_file$" text))
+      (should (string-match-p "^- DOING read_file$" text))
       (should (string-match-p "^:tool:$" text))
       (should (= 1 (ao--count-occurrences text "^:tool:$")))
       (should-not (string-match-p "^\\*\\* " text))
       ;; under the Agent heading, and closed: marker, line, :end:
       (should (apply #'ao--ordered text
-                     (list "* Agent" ":tool:" "- DOING 1. read_file" ":end:"))))
+                     (list "* Agent" ":tool:" "- DOING read_file" ":end:"))))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-tool-line-drops-raw-id ()
@@ -476,7 +476,7 @@ still carry it after an update redraws the drawer."
                                         (status . "completed")))
     (let ((text (with-current-buffer buf (buffer-string))))
       (should-not (string-match-p "tc-hide-1" text))
-      (should (string-match-p "^- DONE 1. shell$" text))
+      (should (string-match-p "^- DONE shell$" text))
       ;; the redraw replaced the line rather than adding one
       (should (= 1 (ao--count-occurrences text "^- "))))
     (kill-buffer buf)))
@@ -489,16 +489,16 @@ new ids append their own line, in the order the agent made the calls."
     (agent-org-buffer-insert-tool buf '((title . "shell") (toolCallId . "tc1")
                                         (status . "pending")))
     (should (with-current-buffer buf
-              (string-match-p "^- TODO 1. shell$" (buffer-string))))
+              (string-match-p "^- TODO shell$" (buffer-string))))
     ;; update without a title must not downgrade it to "tool"
     (agent-org-buffer-insert-tool buf '((toolCallId . "tc1") (status . "completed")))
     (agent-org-buffer-insert-tool buf '((toolCallId . "tc2")))
     (let ((text (with-current-buffer buf (buffer-string))))
       (should (= 2 (ao--count-occurrences text "^- ")))
-      (should (= 1 (ao--count-occurrences text "^- DONE 1. shell$")))
+      (should (= 1 (ao--count-occurrences text "^- DONE shell$")))
       (should-not (string-match-p "TODO shell" text))
-      (should (string-match-p "^- TODO 2. tool$" text))
-      (should (apply #'ao--ordered text (list "- DONE 1. shell" "- TODO 2. tool"))))
+      (should (string-match-p "^- TODO tool$" text))
+      (should (apply #'ao--ordered text (list "- DONE shell" "- TODO tool"))))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-tool-line-flattens-multiline-title ()
@@ -522,7 +522,7 @@ still tells two calls apart."
       ;; drawer lines: nothing spilled out of the line it belongs to
       (should (= 1 (ao--count-occurrences (buffer-string) "^\\*+ ")))
       (should (= 2 (ao--count-occurrences (buffer-string) "^- ")))
-      (should (string-match-p "^- TODO 1. ls -la" (buffer-string)))
+      (should (string-match-p "^- TODO ls -la" (buffer-string)))
       (should-not (string-match-p "^second line$" (buffer-string)))
       ;; cut, not merely re-wrapped
       (should-not (string-match-p (make-string 300 ?x) (buffer-string))))
@@ -532,7 +532,7 @@ still tells two calls apart."
     (with-current-buffer buf
       (should (= 1 (ao--count-occurrences (buffer-string) "^\\*+ ")))
       (should (= 2 (ao--count-occurrences (buffer-string) "^- ")))
-      (should (string-match-p "^- DONE 1. ls -la" (buffer-string)))
+      (should (string-match-p "^- DONE ls -la" (buffer-string)))
       (should-not (string-match-p "TODO ls" (buffer-string))))
     (kill-buffer buf)))
 
@@ -559,8 +559,8 @@ drawer, and the next thought chunk erased every call but the last)."
       (should (= 2 (ao--count-occurrences text "^- ")))
       (should (= 1 (ao--count-occurrences text "^:tool:$")))
       (should (= 1 (ao--count-occurrences text "^:thinking:$")))
-      (should (string-match-p "^- TODO 1. one$" text))
-      (should (string-match-p "^- DONE 2. two$" text))
+      (should (string-match-p "^- TODO one$" text))
+      (should (string-match-p "^- DONE two$" text))
       ;; the thought drawer still holds every chunk, in order
       (should (apply #'ao--ordered text
                      (list "thinking" "more thinking" "end of it"))))
@@ -580,7 +580,7 @@ fold choice per drawer, and the two differ."
     (with-current-buffer buf
       (should-not (invisible-p
                    (save-excursion (goto-char (point-min))
-                                   (re-search-forward "^- TODO 1. shell$")
+                                   (re-search-forward "^- TODO shell$")
                                    (point))))
       (should (invisible-p
                (save-excursion (goto-char (point-min))
@@ -602,14 +602,16 @@ fold choice per drawer, and the two differ."
                                         (status . "completed")))
     (with-current-buffer buf
       (should (= 2 (ao--count-occurrences (buffer-string) "^:tool:$")))
-      (should (= 1 (ao--count-occurrences (buffer-string) "^- TODO 1. shell$")))
-      (should (= 1 (ao--count-occurrences (buffer-string) "^- DONE 2. shell$")))
-      (should (= 1 (ao--count-occurrences (buffer-string) "^- TODO 1. tree$")))
+      ;; the lines carry no number, so what separates the two turns' `shell'
+      ;; calls is their keyword -- and each turn owns its own drawer
+      (should (= 1 (ao--count-occurrences (buffer-string) "^- TODO shell$")))
+      (should (= 1 (ao--count-occurrences (buffer-string) "^- DONE shell$")))
+      (should (= 1 (ao--count-occurrences (buffer-string) "^- TODO tree$")))
       ;; a merged turn would hold two lines, not three
       (should (= 3 (ao--count-occurrences (buffer-string) "^- "))))
     (kill-buffer buf)))
 
-;;;; Tool-call output, in a folded drawer per call
+;;;; Tool-call output, in ONE folded drawer for the turn
 
 (defun ao--tool-text-block (text)
   "One ACP `content' item carrying TEXT, in the shape the wire sends.
@@ -622,28 +624,71 @@ agent sends.  The same shape agent-shell's own tests pin."
                  (content (type . "text") (text . ,text)))])))
 
 (ert-deftest test-agent-org-tool-output-drawer-holds-content-block-text ()
-  "A completed call's `content' text is filed under the call's own drawer.
-User order: \"Show tool call outputs, too.\"  Today the drawer line keeps
-only the flattened TITLE (\"cd /home/khalid && grep -rn …\") -- what the
-agent RAN, never what came BACK.  Org forbids a drawer inside a drawer, so
-one call cannot hold its output inside the status drawer: the turn gets a
-second, folded drawer per call, named for the call's number in the status
-list."
+  "A completed call's `content' text is filed under the turn's one output drawer.
+User order: \"Show tool call outputs, too\", then \"Consecutive tool calls
+belong to a single drawer.\"  Org forbids a drawer inside a drawer, so the
+bodies cannot join the status board; they get ONE `:tool-output:' drawer for
+the turn, in which each call is a `- TITLE' item -- the title the board above
+already shows, which is why the board needs no number to point at it."
   (let ((buf (agent-org-buffer-create "out1")))
     (agent-org-buffer-start-agent-turn buf nil)
     (agent-org-buffer-insert-tool
      buf `((toolCallId . "tc1") (title . "shell") (status . "completed")
            ,@(ao--tool-text-block "total 42\ndrwxr-xr-x  khalid")))
     (let ((text (with-current-buffer buf (buffer-string))))
-      (should (string-match-p "^:tool-1:$" text))
-      (should (string-match-p "^ total 42$" text))
-      (should (string-match-p "^ drwxr-xr-x  khalid$" text))
-      ;; the status line still reads, numbered so the drawer is findable
-      (should (string-match-p "^- DONE 1. shell$" text))
+      (should (string-match-p "^:tool-output:$" text))
+      (should (string-match-p "^- shell$" text))
+      (should (string-match-p "^  total 42$" text))
+      (should (string-match-p "^  drwxr-xr-x  khalid$" text))
+      ;; the status line reads keyword + title, and nothing numbers it
+      (should (string-match-p "^- DONE shell$" text))
       ;; marker, body, closer -- and it trails the status drawer
       (should (apply #'ao--ordered text
-                     (list ":tool:" "- DONE 1. shell" ":END:"
-                           ":tool-1:" " total 42" ":END:"))))
+                     (list ":tool:" "- DONE shell" ":END:"
+                           ":tool-output:" "- shell" "  total 42" ":END:"))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-consecutive-tool-calls-share-one-output-drawer ()
+  "Two calls, one drawer: the board lists both and the bodies sit under it.
+The per-call `:tool-N:' drawers this replaced turned a normal turn -- six
+shell calls, say -- into a row of near-identical folded folders, and forced a
+number onto every status line purely so a reader could find the right folder.
+Both are gone: the calls are consecutive, so they belong together."
+  (let ((buf (agent-org-buffer-create "outshare")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool
+     buf `((toolCallId . "tc1") (title . "ls") (status . "completed")
+           ,@(ao--tool-text-block "first body")))
+    (agent-org-buffer-insert-tool
+     buf `((toolCallId . "tc2") (title . "pwd") (status . "completed")
+           ,@(ao--tool-text-block "second body")))
+    (let ((text (with-current-buffer buf (buffer-string))))
+      (should (= 1 (ao--count-occurrences text "^:tool-output:$")))
+      (should-not (string-match-p "^:tool-[0-9]+:$" text))
+      ;; both bodies, each under its own title, in the order the agent ran them
+      (should (apply #'ao--ordered text
+                     (list "- ls" "  first body" "- pwd" "  second body")))
+      ;; and the board carries two unnumbered lines
+      (should (= 1 (ao--count-occurrences text "^- DONE ls$")))
+      (should (= 1 (ao--count-occurrences text "^- DONE pwd$"))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-tool-board-lines-carry-no-number ()
+  "Nothing on a tool line is a number: `- KEYWORD TITLE', full stop.
+The `N.' existed only as the index into `:tool-N:', and with one output
+drawer for the turn an index is meaningless -- a call is named by its title.
+A number would also be a lie after a resume: replay rebuilds the record from
+the updates the agent sends, and nothing guarantees the same count."
+  (let ((buf (agent-org-buffer-create "ononum")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool
+     buf '((toolCallId . "tc1") (title . "one") (status . "pending")))
+    (agent-org-buffer-insert-tool
+     buf '((toolCallId . "tc2") (title . "two") (status . "completed")))
+    (let ((text (with-current-buffer buf (buffer-string))))
+      (should (= 1 (ao--count-occurrences text "^- TODO one$")))
+      (should (= 1 (ao--count-occurrences text "^- DONE two$")))
+      (should-not (string-match-p "^- [A-Z]+ [0-9]+\\." text)))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-tool-output-drawer-falls-back-to-raw-output ()
@@ -658,9 +703,9 @@ agent-defined free JSON."
      buf '((toolCallId . "tc1") (title . "ls") (status . "completed")
            (rawOutput . ((formatted_output . "stdout line\nstderr line\n")))))
     (let ((text (with-current-buffer buf (buffer-string))))
-      (should (string-match-p "^:tool-1:$" text))
-      (should (string-match-p "^ stdout line$" text))
-      (should (string-match-p "^ stderr line$" text)))
+      (should (string-match-p "^:tool-output:$" text))
+      (should (string-match-p "^  stdout line$" text))
+      (should (string-match-p "^  stderr line$" text)))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-tool-output-ignores-a-non-string-raw-output ()
@@ -675,8 +720,8 @@ and no drawer."
      buf '((toolCallId . "tc1") (title . "ls") (status . "completed")
            (rawOutput . ((formatted_output . 42)))))
     (let ((text (with-current-buffer buf (buffer-string))))
-      (should (= 1 (ao--count-occurrences text "^- DONE 1. ls$")))
-      (should-not (string-match-p "^:tool-1:$" text))
+      (should (= 1 (ao--count-occurrences text "^- DONE ls$")))
+      (should-not (string-match-p "^:tool-output:$" text))
       (should-not (string-match-p "42" text)))
     (kill-buffer buf)))
 
@@ -708,16 +753,16 @@ agent editing a file reports the change this way, and \"edited
                         (newText . "* new\n"))])))
     (with-current-buffer buf
       (let ((text (buffer-string)))
-        (should (string-match-p "^:tool-1:$" text))
+        (should (string-match-p "^:tool-output:$" text))
         (should (string-match-p "diff /home/khalid/x.org" text))
-        (should (string-match-p "^ \\* new$" text))))
+        (should (string-match-p "^  \\* new$" text))))
     (kill-buffer buf)))
 
-(ert-deftest test-agent-org-tool-output-update-rewrites-its-drawer-in-place ()
-  "A second update for the same call replaces its drawer, never adds one.
+(ert-deftest test-agent-org-tool-output-update-rewrites-its-body-in-place ()
+  "A second update for the same call replaces its body, never adds one.
 `tool_call_update' patches: the same id arrives again with a longer
-output, then with the final one.  One call, one drawer, one body -- the
-rule the status drawer already follows for its line."
+output, then with the final one.  One call, one body -- the rule the status
+drawer already follows for its line, now inside the turn's single drawer."
   (let ((buf (agent-org-buffer-create "outrepl")))
     (agent-org-buffer-start-agent-turn buf nil)
     (agent-org-buffer-insert-tool
@@ -727,10 +772,13 @@ rule the status drawer already follows for its line."
      buf `((toolCallId . "tc1") (status . "completed")
            ,@(ao--tool-text-block "final 43")))
     (let ((text (with-current-buffer buf (buffer-string))))
-      (should (= 1 (ao--count-occurrences text "^:tool-1:$")))
+      (should (= 1 (ao--count-occurrences text "^:tool-output:$")))
       ;; one closer per drawer this turn has: the status one and the body one
       (should (= 2 (ao--count-occurrences text "^:end:$")))
-      (should (string-match-p "^ final 43$" text))
+      ;; and the call is named ONCE, even though its title is now a body item
+      ;; and a board line
+      (should (= 1 (ao--count-occurrences text "^- shell$")))
+      (should (string-match-p "^  final 43$" text))
       (should-not (string-match-p "partial 42" text)))
     (kill-buffer buf)))
 
@@ -749,11 +797,11 @@ open, exactly as before."
     (with-current-buffer buf
       (should-not (invisible-p
                    (save-excursion (goto-char (point-min))
-                                   (re-search-forward "^- DONE 1. shell$")
+                                   (re-search-forward "^- DONE shell$")
                                    (point))))
       (should (invisible-p
                (save-excursion (goto-char (point-min))
-                               (re-search-forward "^ a very long output$")
+                               (re-search-forward "^  a very long output$")
                                (point)))))
     (kill-buffer buf)))
 
@@ -776,10 +824,10 @@ stays a drawer."
     (let ((text (with-current-buffer buf (buffer-string))))
       ;; one headline in the whole buffer: the turn's own
       (should (= 1 (ao--count-occurrences text "^\\*+ ")))
-      (should (= 1 (ao--count-occurrences text "^:tool-1:$")))
+      (should (= 1 (ao--count-occurrences text "^:tool-output:$")))
       ;; the escaped forms, and the real closer, all present
-      (should (string-match-p "^ \\* a headline$" text))
-      (should (string-match-p "^ ::END:$" text))
+      (should (string-match-p "^  \\* a headline$" text))
+      (should (string-match-p "^  ::END:$" text))
       ;; and the parser agrees: it sees the drawer, and no headline grew
       (with-current-buffer buf
         (let ((drawers nil) (heads 0))
@@ -788,7 +836,7 @@ stays a drawer."
               (if (eq (car e) 'drawer)
                   (push (org-element-property :drawer-name e) drawers)
                 (cl-incf heads))))
-          (should (member "tool-1" drawers))
+          (should (member "tool-output" drawers))
           (should (= 1 heads)))))
     (kill-buffer buf)))
 
@@ -807,12 +855,12 @@ stream writes, so a thought can no longer dissolve the drawer around it."
       (should (string-match-p "^ \\* do this$" text)))
     (kill-buffer buf)))
 
-(ert-deftest test-agent-org-tool-output-drawer-number-follows-the-call ()
-  "The drawer is named for the call's NUMBER, so a gap means no output.
-Three calls, output on the third: `:tool-3:' exists and 1/2 do not -- and
-the status lines carry the same numbers, which is what makes the pairing
-readable without printing the agent's `toolCallId' (the user's earlier
-order: strip the raw ids from the visible line)."
+(ert-deftest test-agent-org-tool-output-skips-a-call-with-nothing-to-show ()
+  "Only calls that printed appear in the drawer; the board still lists all.
+Three calls, output on the third: the board has three lines and the body
+drawer holds one item -- a call with nothing to say costs no line, and no
+number had to be skipped to say so (the shape this test used to pin, before
+one drawer per turn made numbering meaningless)."
   (let ((buf (agent-org-buffer-create "outnum")))
     (agent-org-buffer-start-agent-turn buf nil)
     (agent-org-buffer-insert-tool buf '((toolCallId . "a") (title . "one")
@@ -823,20 +871,21 @@ order: strip the raw ids from the visible line)."
      buf `((toolCallId . "c") (title . "three") (status . "completed")
            ,@(ao--tool-text-block "third output")))
     (let ((text (with-current-buffer buf (buffer-string))))
-      (should (= 1 (ao--count-occurrences text "^:tool-3:$")))
-      (should-not (string-match-p "^:tool-1:$" text))
-      (should-not (string-match-p "^:tool-2:$" text))
+      (should (= 1 (ao--count-occurrences text "^:tool-output:$")))
+      (should (= 1 (ao--count-occurrences text "^  third output$")))
+      (should-not (string-match-p "^- one$" text))
+      (should-not (string-match-p "^- two$" text))
       (should (apply #'ao--ordered text
-                     (list "- TODO 1. one" "- TODO 2. two"
-                           "- DONE 3. three"))))
+                     (list "- TODO one" "- TODO two" "- DONE three"))))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-tool-output-drawer-is-this-turns-only ()
-  "A new turn renumbers from 1, and finds its OWN `:tool-1:'.
-`agent-org-buffer--redraw-drawer' bounds its search to the current turn,
-so turn two's output cannot overwrite turn one's -- the per-turn reset
+  "Each Agent turn owns its output drawer.
+`agent-org-buffer--redraw-drawer' bounds its search to the current turn, so
+turn two's output cannot overwrite turn one's -- the per-turn reset
 `test-agent-org-tool-state-resets-per-turn' pins for the status drawer,
-pinned here for the body drawers the same name would otherwise share."
+pinned here for the body drawer, which now exists twice in one buffer with
+the SAME name and no number to tell them apart."
   (let ((buf (agent-org-buffer-create "outturn")))
     (agent-org-buffer-start-agent-turn buf nil)
     (agent-org-buffer-insert-tool
@@ -848,9 +897,9 @@ pinned here for the body drawers the same name would otherwise share."
      buf `((toolCallId . "tcB") (title . "two") (status . "completed")
            ,@(ao--tool-text-block "second turn text")))
     (let ((text (with-current-buffer buf (buffer-string))))
-      (should (= 2 (ao--count-occurrences text "^:tool-1:$")))
-      (should (string-match-p "^ first turn text$" text))
-      (should (string-match-p "^ second turn text$" text)))
+      (should (= 2 (ao--count-occurrences text "^:tool-output:$")))
+      (should (string-match-p "^  first turn text$" text))
+      (should (string-match-p "^  second turn text$" text)))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-tool-call-with-no-content-gets-no-output-drawer ()
@@ -866,7 +915,7 @@ to discover nothing."
     (with-current-buffer buf
       (let ((text (buffer-string)))
         (should (= 1 (ao--count-occurrences text "^:tool:$")))
-        (should-not (string-match-p "^:tool-1:$" text))))
+        (should-not (string-match-p "^:tool-output:$" text))))
     (kill-buffer buf)))
 
 ;;;; Prompt protection helpers
@@ -1155,7 +1204,7 @@ the box, pushing it down instead of scribbling into the draft."
         ;; the thought drawer came first, the tool drawer after it
         (should (apply #'ao--ordered (buffer-string)
                        (list "* Agent" "thinking aloud"
-                             ":thinking:" ":tool:" "- TODO 1. shell"
+                             ":thinking:" ":tool:" "- TODO shell"
                              "next prompt")))))
     (kill-buffer buf)))
 
@@ -1608,7 +1657,7 @@ redirect the load to it instead of replaying."
       (agent-org-buffer-insert-tool buf '((title . "read_file") (toolCallId . "tc")))
       (should (save-excursion
                 (goto-char (point-min))
-                (and (re-search-forward "^- TODO 1. read_file$" nil t)
+                (and (re-search-forward "^- TODO read_file$" nil t)
                      (get-text-property (match-beginning 0) 'read-only))))
       ;; the drawer's own marker line too: a `:tool:' the user could edit
       ;; is a drawer that leaks into the next redraw
@@ -2230,7 +2279,7 @@ alone."
           (should (string-match-p "Hello world" s))
           (should (apply #'ao--ordered s
                          (list "Hello world" "Answer"
-                               "^- DONE 1. shell$"
+                               "^- DONE shell$"
                                "thinking hard" "Next question")))
           (should (string-match-p "^:thinking:$" s))
           (should (string-match-p "^:tool:$" s)))
@@ -2602,7 +2651,7 @@ showed 1 heading, so this pins the whole turn down at once."
           (should (equal 4 (ao--count-occurrences text "^- ")))
           ;; the completed call was rewritten in place, the others stayed
           ;; pending
-          (should (equal 1 (ao--count-occurrences text "^- DONE 1. read a$")))
+          (should (equal 1 (ao--count-occurrences text "^- DONE read a$")))
           (should (equal 3 (ao--count-occurrences text "^- TODO ")))
           (should (equal 1 (ao--count-occurrences text "^:tool:$")))
           (should (equal 1 (ao--count-occurrences text "^:thinking:$")))
@@ -4689,7 +4738,7 @@ agent split its reply, the document is the reply."
                                    "^\\* User$" "align the columns"
                                    "^\\* QModel Large$" "tok tok"
                                    "^:thinking:$" "reasoning here"
-                                   "^:tool:$" "^- TODO 1. grep -rn foo$")))
+                                   "^:tool:$" "^- TODO grep -rn foo$")))
               (kill-buffer buf))))))))
 
 (ert-deftest test-agent-org-transcript-rewrites-a-tool-line-instead-of-logging-it ()
@@ -4719,7 +4768,7 @@ stored status and the file simply agrees with the buffer."
                           (status . ,status)))))
             (funcall (plist-get (car sent) :on-success) nil)
             (let ((text (ao--transcript-text temp-dir "sid-tool")))
-              (should (= 1 (ao--count-occurrences text "^- DONE 1. run tests$")))
+              (should (= 1 (ao--count-occurrences text "^- DONE run tests$")))
               (should (= 0 (ao--count-occurrences text "^- \\(TODO\\|DOING\\) run tests$")))
               (kill-buffer buf))))))))
 
@@ -4749,9 +4798,9 @@ file an hour later."
                         ,@(ao--tool-text-block "agent-org.el\nTODOs.org"))))
             (funcall (plist-get (car sent) :on-success) nil)
             (let ((text (ao--transcript-text temp-dir "sid-out")))
-              (should (= 1 (ao--count-occurrences text "^:tool-1:$")))
-              (should (string-match-p "^ agent-org.el$" text))
-              (should (string-match-p "^ TODOs.org$" text))
+              (should (= 1 (ao--count-occurrences text "^:tool-output:$")))
+              (should (string-match-p "^  agent-org.el$" text))
+              (should (string-match-p "^  TODOs.org$" text))
               (kill-buffer buf))))))))
 
 (ert-deftest test-agent-org-transcript-is-one-file-for-the-whole-session ()
@@ -5615,6 +5664,35 @@ not where or under what property."
       (goto-char (point-min))
       (should (re-search-forward "^\\*\\* H$" nil t))
       (should (get-text-property (match-beginning 0) 'read-only)))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-shared-tool-output-drawer-redraw-cost ()
+  "One drawer for a turn's whole output means each new body rewrites the
+earlier ones, so the shape has to be measured, not assumed.  This is a heavy
+ordinary turn: 20 calls, 40 output lines each, every update arriving with
+content -- so the drawer is redrawn 20 times over a body that grows to 800
+lines, each redraw a delete, an insert and the read-only protection of the
+result.  Printed with a loose ceiling on purpose: if this ever reaches
+seconds on this machine, the drawer must grow APPEND-ONLY instead, and
+`agent-org-buffer--tool-output-body' is the one place that builds it."
+  (let* ((buf (agent-org-buffer-create "outcost"))
+         (body (let ((out ""))
+                 (dotimes (_ 40)
+                   (setq out (concat out "output line of a real tool result\n")))
+                 out))
+         (start (float-time)))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (dotimes (i 20)
+      (agent-org-buffer-insert-tool
+       buf `((toolCallId . ,(format "tc%d" i))
+             (title . ,(format "call %d" i)) (status . "completed")
+             ,@(ao--tool-text-block body))))
+    (let ((elapsed (- (float-time) start)))
+      (princ (format "\ntool-output drawer: 20 calls x 40 lines in %.1f ms (%.1f ms per redraw)\n"
+                     (* elapsed 1000) (/ (* elapsed 1000) 20.0)))
+      (should (< elapsed 3.0)))
+    (with-current-buffer buf
+      (should (= 1 (ao--count-occurrences (buffer-string) "^:tool-output:$"))))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-markdown-conversion-cost-per-line ()

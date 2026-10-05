@@ -30,7 +30,7 @@
 ;; asks for colors once, when the buffer first appears in a window
 ;; (`agent-org-buffer--ensure-font-lock').
 ;;
-;; Tool calls render as one `- KEYWORD N. title' line of a `:tool:' drawer
+;; Tool calls render as one `- KEYWORD title' line of a `:tool:' drawer
 ;; under the current `* Agent' heading, using the per-file keyword set
 ;; declared by the metadata block (`#+TODO: TODO DOING | DONE
 ;; CANCELLED'): pending→TODO, in_progress→DOING, completed→DONE,
@@ -39,13 +39,15 @@
 ;; the user came to watch) and the thought drawer FOLDED.  A drawer can
 ;; hold no headings, which is why a call is a line and not a `**'.
 ;;
-;; What a call PRINTED is filed beside it, in its own folded `:tool-N:'
-;; drawer named by the same NUMBER that prefixes its status line — output
-;; cannot live inside `:tool:' because Org forbids a drawer inside a
-;; drawer, and one shared fold state would either hide the live status
-;; lines or flood the chat with bodies (agent-shell's tool bodies are
-;; collapsed by default for the same reason).  A call that sent no output
-;; gets no drawer.  Every drawer body goes through
+;; What a call PRINTED is filed in ONE further folded drawer for the turn,
+;; `:tool-output:', where each call is a `- TITLE' item with its body
+;; indented under it — output cannot live inside `:tool:' because Org
+;; forbids a drawer inside a drawer, and one shared fold state would either
+;; hide the live status lines or flood the chat with bodies (agent-shell's
+;; tool bodies are collapsed by default for the same reason).  A call that
+;; sent no output gets no item, and nothing is numbered: the number existed
+;; only to index a per-call drawer, and a call named by its title needs no
+;; index.  Every drawer body goes through
 ;; `agent-org-buffer--drawer-safe-lines' first: agent text routinely
 ;; contains `* heading' and `:END:' at column 0, and either one silently
 ;; destroys the drawer holding it.
@@ -403,15 +405,14 @@ so the heading is never the last thing in the turn.")
 
 (defvar-local agent-org-buffer--tools nil
   "Alist ((ID . PLIST) ...) of the current Agent turn's tool calls.
-PLIST is (:title T :status S :number N :output O :shown SH); each ID owns
-one line of the turn's `:tool:' drawer and, with output, a folded
-`:tool-N:' drawer of its own.  The whole status drawer is redrawn from this
-list on every update (`agent-org-buffer-insert-tool'), so no marker per
-call: the list IS the record, and its order is the order the agent made the
-calls.  `:number' is that order (1-based, assigned once -- the list only
-grows), which is what ties a status line to the drawer under its number.
+PLIST is (:title T :status S :output O :shown SH); each ID owns one line of
+the turn's `:tool:' drawer and, with output, one `- TITLE' item of the
+turn's single `:tool-output:' drawer.  The whole status drawer is redrawn
+from this list on every update (`agent-org-buffer-insert-tool'), so no
+marker per call: the list IS the record, and its order is the order the
+agent made the calls -- which is also the order the output items appear in.
 `:shown' holds the output last written, so a status-only update never
-re-inserts a body that did not change.")
+re-inserts the shared body that did not change.")
 
 (defvar-local agent-org-buffer--thought nil
   "Thinking text accumulated for the current Agent turn, rendered into
@@ -1553,18 +1554,45 @@ responses.\""
           ((stringp raw) raw)
           (t ""))))
 
+(defun agent-org-buffer--tool-output-body ()
+  "This turn's `:tool-output:' drawer body: one item per call that printed.
+The whole turn shares ONE drawer for what its calls printed (the user's
+order: \"Consecutive tool calls belong to a single drawer\"), so a call is
+named by its TITLE -- the same title the board above shows -- and no number
+is needed to point from one to the other.  Built from
+`agent-org-buffer--tools', like the board, so the drawer cannot drift from
+the record and a call that reported nothing simply has no item.
+
+Each output goes through `agent-org-buffer--drawer-safe-lines' and takes one
+further space of indent, which is what puts it under its `- TITLE' item as
+that item's contents rather than as loose drawer text.  The title is
+flattened by `agent-org-buffer--label' for the same reason the board line
+is: agent titles are whole shell commands."
+  (let (lines)
+    (dolist (entry agent-org-buffer--tools)
+      (let ((output (plist-get (cdr entry) :output)))
+        (when (and output (not (string-empty-p output)))
+          (push (format "- %s"
+                        (agent-org-buffer--label
+                         (or (plist-get (cdr entry) :title) "tool")))
+                lines)
+          (dolist (line (agent-org-buffer--drawer-safe-lines output))
+            (push (if (string-empty-p line) "" (concat " " line)) lines))
+          (push "" lines))))
+    (nreverse lines)))
+
 (defun agent-org-buffer-insert-tool (buffer content)
   "Record the tool call or update CONTENT: one status line, plus its output.
 CONTENT is the tool-call alist from the ACP notification.  Each
-toolCallId owns exactly one line `- KEYWORD N. title' of the current turn's
+toolCallId owns exactly one line `- KEYWORD title' of the current turn's
 `:tool:' drawer, KEYWORD mapping the ACP status onto the per-file TODO set
-(`agent-org-buffer--todo-setup') and N the call's number in the turn.
-Later updates overwrite the stored title/status and the WHOLE drawer is
-redrawn from `agent-org-buffer--tools', so an id can never sprout a second
-line and no per-call marker can go stale -- the list is the record, its
-order the order the agent made the calls.  The id never appears on the
-line: it is the agent's bookkeeping, and the entry looked up under it
-already owns the line.
+(`agent-org-buffer--todo-setup').  No number: it existed only as the index
+into a per-call output drawer, and those are gone.  Later updates overwrite
+the stored title/status and the WHOLE drawer is redrawn from
+`agent-org-buffer--tools', so an id can never sprout a second line and no
+per-call marker can go stale -- the list is the record, its order the order
+the agent made the calls.  The id never appears on the line: it is the
+agent's bookkeeping, and the entry looked up under it already owns the line.
 
 LINES, not headings: Org forbids headlines inside drawers (info \"(org)
 Drawers\"), so a call that wants to sit in a `:tool:' drawer cannot be a
@@ -1573,18 +1601,15 @@ Drawers\"), so a call that wants to sit in a `:tool:' drawer cannot be a
 Agent heading is now the turn's only heading, and its tool calls fold
 open beside a folded `:thinking:' drawer.
 
-What the call PRINTED goes into a second drawer of its own, `:tool-N:'
-(`agent-org-buffer--tool-output'), folded.  It cannot live inside the
-status drawer for the same reason the calls cannot live in it as
-headings: a drawer holds no other drawer, and one fold state for the whole
-turn would mean either hiding the live status lines or flooding the chat
-with a `cat' of a file -- agent-shell's own default for tool output is
-collapsed (`agent-shell-tool-use-expand-by-default' nil).  So the turn
-reads as agent-shell's activity run, in arrival order: prose, then the
-status board, then each call's body under the number the board gives it.
-The number is why it is on the status line at all: it is the only way a
-reader gets from `- DONE 3. ls -R' to `:tool-3:' without printing the
-agent's id.  A call that reports no output gets no drawer."
+What the call PRINTED goes into one further drawer for the turn,
+`:tool-output:' (`agent-org-buffer--tool-output-body'), folded, where each
+call is a `- TITLE' item with its output indented under it.  It cannot join
+the status board for the reason the calls cannot be headings in it: a drawer
+holds no other drawer, and one fold state for the whole board would mean
+either hiding the live status lines or flooding the chat with a `cat' of a
+file -- agent-shell's own default for tool output is collapsed
+(`agent-shell-tool-use-expand-by-default' nil).  A call that reports no
+output gets no item."
   (let ((id (map-elt content 'toolCallId))
         (title (or (map-elt content 'title) (map-elt content 'toolName)))
         (status (map-elt content 'status)))
@@ -1600,10 +1625,7 @@ agent's id.  A call that reports no output gets no drawer."
             ;; every key pre-exists so `plist-put' below always mutates in
             ;; place: it only prepends -- returning a NEW list -- when a
             ;; key is absent, and `entry' here would keep the old one.
-            ;; `:number' is fixed at creation because the list only ever
-            ;; grows: the board and the drawers cannot disagree later.
-            (setq entry (list :title nil :status nil :output nil :shown nil
-                              :number (1+ (length agent-org-buffer--tools)))
+            (setq entry (list :title nil :status nil :output nil :shown nil)
                   agent-org-buffer--tools
                   (append agent-org-buffer--tools (list (cons id entry)))))
           (when title (plist-put entry :title title))
@@ -1619,22 +1641,20 @@ agent's id.  A call that reports no output gets no drawer."
           (agent-org-buffer--redraw-drawer
            buffer "tool"
            (mapcar (lambda (e)
-                     (format "- %s %d. %s"
+                     (format "- %s %s"
                              (agent-org-buffer--tool-keyword
                               (plist-get (cdr e) :status))
-                             (plist-get (cdr e) :number)
                              (agent-org-buffer--label
                               (or (plist-get (cdr e) :title) "tool"))))
                    agent-org-buffer--tools))
           (let ((output (plist-get entry :output)))
-            ;; `:shown' is the redraw guard: a status change must not
-            ;; re-insert a body nobody changed, and a turn of ten calls
-            ;; redraws ten short lines rather than the whole text twice
+            ;; `:shown' is the redraw guard, and it matters more now the
+            ;; bodies share a drawer: a status change would otherwise rewrite
+            ;; and re-protect every byte the turn's calls ever printed
             (when (and output (not (equal output (plist-get entry :shown))))
               (plist-put entry :shown output)
               (agent-org-buffer--redraw-drawer
-               buffer (format "tool-%d" (plist-get entry :number))
-               (agent-org-buffer--drawer-safe-lines output) t))))))))
+               buffer "tool-output" (agent-org-buffer--tool-output-body) t))))))))
 
 ;;;; Transcript file
 
