@@ -126,17 +126,38 @@ emacs -Q --batch \
 #   Tests drive this synchronously: `ao--capture-wire' captures
 #   `run-at-time'/'cancel-timer', so `ao--settle' is how a test says "the
 #   agent went quiet".
-# - `agent-org--render-replay' turns font-lock OFF for the paint and back ON
-#   after, so that restore is an `unwind-protect' BODY, not a tail call: acp
-#   swallows errors raised in its response callbacks
-#   (`condition-case-unless-debug'), so an update that raises mid-paint would
-#   otherwise leave the chat permanently unfontified and NOTHING would
-#   announce it (the user's "All fontification gone!  No colors.").  The
-#   progress reporter stops in the same unwind.  Batch Emacs cannot turn
-#   font-lock on at all, so the test pins the BEHAVIOUR by stubbing
-#   `font-lock-mode'/'font-lock-flush' and setting the buffer-local variable
-#   as the premise -- never assert `(font-lock-mode 1)' works under
-#   `emacs -Q --batch'.
+# - NO render path may switch `font-lock-mode' OFF, and the replay is the proof
+#   of why: an OFF is restorable and an ON IS NOT.  Measured live, in a buffer
+#   no window is showing, `(font-lock-mode 1)' leaves the buffer-local variable
+#   NIL — silently, with no error and no trace — and `turn-on-font-lock' does
+#   the same, while in a displayed buffer it sticks.  So the replay's
+#   suppress-for-the-bulk-paint-and-restore-afterwards lost a chat its colors
+#   FOREVER whenever `session/load' painted into a background buffer (the
+#   user's second "colors gone again!"), and an update that raised mid-paint
+#   lost them even in a shown one, acp's own `condition-case-unless-debug'
+#   swallowing the trace.  The suppression is therefore GONE:
+#   `agent-org--render-replay' only flushes after the paint, inside the
+#   `unwind-protect' that also stops the progress reporter (a raise there must
+#   not leak a "Restoring" line).  Flushing is free when colors are off — the
+#   real `font-lock-flush' checks `font-lock-mode' itself — and jit-lock makes
+#   the per-chunk cost of leaving them on a redisplay-time job, not a
+#   per-insertion re-scan.
+# - A chat buffer therefore gets its colors at DISPLAY time, not creation:
+#   `agent-org-buffer-create' runs inside an acp handshake callback, so the
+#   buffer is always hidden then and ambient `global-font-lock-mode' can never
+#   reach it.  `agent-org-mode' adds `agent-org-buffer--ensure-font-lock' to
+#   the BUFFER-LOCAL `window-configuration-change-hook' (4th arg t, removed on
+#   off), which Emacs runs with the buffer current when it first appears in a
+#   window; the hook is an `unless', not a toggle, because it re-runs on every
+#   window change and a repeat `(font-lock-mode 1)' rebuilds jit-lock over a
+#   transcript thousands of lines long.
+# - Batch Emacs cannot turn font-lock on at all, so no test asserts faces or a
+#   successful enable.  They pin BEHAVIOUR by stubbing `font-lock-mode' and
+#   `font-lock-flush' and setting the buffer-local variable as the premise:
+#   `test-agent-org-replay-never-touches-font-lock-even-when-the-paint-errors'
+#   records the CALL SEQUENCE (no `font-lock-mode' call at all, a flush, a
+#   reporter stop) and `test-agent-org-chat-buffer-asks-for-font-lock-when-displayed'
+#   runs the buffer-local hook the way a window would.
 # - Restored turns use the SAME rendering primitives as typed ones; never
 #   add a second renderer for replay, or the two will drift.
 # - The header line shows exactly ONE status string, and for `starting'/

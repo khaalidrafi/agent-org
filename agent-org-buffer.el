@@ -25,7 +25,10 @@
 ;; Org-native chat buffer: each turn is a level-1 headline and chunks
 ;; stream with font-lock left on, so Org colors stay live throughout the
 ;; turn (only the freshly appended region is fontified, never the whole
-;; buffer).
+;; buffer).  No render path switches font-lock OFF, because an OFF is
+;; restorable and an ON is not in a hidden buffer; `agent-org-mode' instead
+;; asks for colors once, when the buffer first appears in a window
+;; (`agent-org-buffer--ensure-font-lock').
 ;;
 ;; Tool calls render as one `- KEYWORD N. title' line of a `:tool:' drawer
 ;; under the current `* Agent' heading, using the per-file keyword set
@@ -559,6 +562,25 @@ index scan."
       (when (and heading (not (string-empty-p heading)))
         (substring-no-properties heading)))))
 
+(defun agent-org-buffer--ensure-font-lock ()
+  "Ask for Org colors in this chat buffer, once it is on display.
+A chat buffer is created inside an acp handshake callback, so NO window shows
+it yet, and `font-lock-mode' cannot be enabled in such a buffer: measured in a
+live Emacs, `(font-lock-mode 1)' there leaves the buffer-local variable nil
+without an error, a warning or any trace, and `turn-on-font-lock' does the
+same.  That is why ambient `global-font-lock-mode' never reaches a chat: the
+global minor mode only acts on buffers when they are created or shown while it
+is on, and the creation happened in the dark.  Emacs runs
+`window-configuration-change-hook' with the buffer current the moment it first
+appears in a window, which is the earliest point the request can succeed, so
+`agent-org-mode' installs this there.
+
+`unless', not a toggle: the hook re-runs on EVERY window change, and a second
+`(font-lock-mode 1)' would tear down and rebuild jit-lock over a transcript
+that can be thousands of lines long, for nothing."
+  (unless font-lock-mode
+    (font-lock-mode 1)))
+
 (define-minor-mode agent-org-mode
   "Minor mode for `agent-org' Org chat buffers.
 Type at the live `* User' prompt at the end of the buffer.
@@ -576,9 +598,15 @@ Keys:
           (setq header-line-format
                 '(:eval (agent-org-buffer--render-header-line))))
         (setq-local add-log-current-defun-function
-                    #'agent-org-buffer--which-function))
+                    #'agent-org-buffer--which-function)
+        ;; Buffer-local (the 4th arg), so this hook entry dies with the chat
+        ;; and never runs in a buffer that only wants Org's own colors.
+        (add-hook 'window-configuration-change-hook
+                  #'agent-org-buffer--ensure-font-lock nil t))
     (kill-local-variable 'header-line-format)
-    (kill-local-variable 'add-log-current-defun-function)))
+    (kill-local-variable 'add-log-current-defun-function)
+    (remove-hook 'window-configuration-change-hook
+                 #'agent-org-buffer--ensure-font-lock t)))
 
 ;;;; Session metadata block (Org-native, agent-shell bootstrapping)
 

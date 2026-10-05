@@ -329,10 +329,11 @@ agent produced first is drawn first.
 
 Fold state is driven **directly** with `org-fold-region`, never
 `org-fold-hide-drawer-toggle`.  Reason (documented in our source, discovered
-the hard way): while a turn streams we keep `font-lock-mode` off, so the
-`org-element` cache that `org-fold-hide-drawer-toggle` validates is stale and
-it signals `"Not at a drawer"`.  `org-fold-region` works on positions alone
-and is safe on the hot path.
+the hard way): `org-fold-hide-drawer-toggle` validates the `org-element` cache
+before it acts, and while a turn streams that cache is stale — the drawer lines
+are rewritten underneath it by the render path — so it signals
+`"Not at a drawer"` and the fold silently does not happen.  `org-fold-region`
+works on positions alone and is safe on the hot path.
 
 A drawer the user manually opened stays open across updates: we detect
 `invisible-p` on the body, unfold → swap → refold, preserving intent.
@@ -464,8 +465,9 @@ about resume gets a private renderer.
 The contract that keeps it cheap on a slow machine:
 
 * Conversational updates (`agent-org--replay-kinds`) arriving while
-  `:loading` is set are **buffered**, never painted.  Painting per chunk would
-  re-fontify the whole buffer for every chunk of a 200-turn session.
+  `:loading` is set are **buffered**, never painted.  Every render site rewrites
+  a whole drawer and re-protects its region, so painting per chunk would redo
+  that work hundreds of times for history nobody can read until the pass ends.
 * The `session/load` **response is not the flush point**.  The protocol puts
   history before it, but live qoder answers first and streams the replay
   right after — flushing on the response silently dropped every agent turn,
@@ -478,6 +480,16 @@ The contract that keeps it cheap on a slow machine:
 * The render runs as one insertion pass with `buffer-undo-list t`, then the
   load response's modes/config still reach the header line (kept in
   `:replay-response`).
+* **It does not switch `font-lock-mode` off for that pass.**  The bulk-paint
+  intuition is wrong here, because the restore is not symmetric: the OFF works
+  anywhere, but `(font-lock-mode 1)` in a buffer no window is showing does
+  nothing at all (§16), and a resume very often paints into exactly such a
+  buffer.  Suppress-and-restore therefore *permanently* removed a chat's
+  colours — the user's second "colors gone again!" — and an update raising
+  mid-paint removed them even from a shown buffer, silently, since acp swallows
+  errors in its response callbacks.  The paint now only `font-lock-flush`es
+  afterwards, inside the `unwind-protect` that also stops the progress
+  reporter.
 * `:loading` means *not yet typable*: `agent-org-send` refuses while it is
   set, and `agent-org--session-ready` will not insert a prompt on top of
   history still arriving.
@@ -830,6 +842,40 @@ That is the same order as the 3–15 ms a transcript boundary write costs (§14)
 it is paid per LINE, never per character.  Nothing here justifies defaulting the
 switch off; if a future rule makes it expensive, the test's ceiling (1 s for 400
 lines) fails first.
+
+---
+
+## 16. Org colours: a chat buffer asks for them when it is SHOWN
+
+`font-lock-mode` cannot be enabled in a buffer no window is showing.  This is
+not a theory, it was measured in the live session: `(font-lock-mode 1)` in a
+hidden buffer leaves the buffer-local variable `nil` — no error, no warning, no
+trace — and `turn-on-font-lock` does the same, while in a buffer that IS
+displayed the very same call sticks and the colors appear.
+
+Everything follows from that asymmetry:
+
+* **A chat buffer is born hidden.**  `agent-org-buffer-create` runs inside an
+  acp handshake callback, before any window shows it, so nothing at creation
+  can give it colors — not `org-mode`, not the ambient `global-font-lock-mode`,
+  which only acts when a buffer is created or displayed.  Hence
+  `agent-org-mode` adds `agent-org-buffer--ensure-font-lock` to the
+  **buffer-local** `window-configuration-change-hook` (the 4th argument, `t`,
+  so the entry dies with the chat and is removed when the mode is turned off).
+  Emacs runs that hook with the buffer current when it first appears in a
+  window: the earliest moment the request can succeed.
+* **The hook is an `unless`, not a toggle.**  It re-runs on *every* window
+  change, and a repeat `(font-lock-mode 1)` would tear down and rebuild
+  jit-lock over a transcript that can be thousands of lines long, for nothing.
+* **No render path may switch font-lock off** to "save" time — see §9.  An OFF
+  is restorable and an ON is not, so suppression is a one-way door whenever
+  the paint happens to land in the background.
+* **Batch Emacs is the hidden case forever**, so no test may assert that
+  enabling works or check a face.  They stub `font-lock-mode`/`font-lock-flush`
+  and pin the *calls*: `test-agent-org-replay-never-touches-font-lock-even-when-the-paint-errors`
+  (the paint must not call `font-lock-mode` at all, not even to restore it) and
+  `test-agent-org-chat-buffer-asks-for-font-lock-when-displayed` (the
+  buffer-local hook is installed, and running it is what asks).
 
 ---
 

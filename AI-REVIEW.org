@@ -1191,12 +1191,15 @@ leave the properties on the mode line), and that killing the local on
 
 ** TODO Read the =unwind-protect= in =agent-org--render-replay= (agent-org.el)
 
-Font-lock goes off for the paint and on after it; that restore was a tail form, so
-any update that raised left the chat unfontified *permanently and silently*,
-because acp wraps response callbacks in =condition-case-unless-debug=.  The review
-question is whether anything else in this package suppresses a buffer-local
-display mode across a bulk operation without an unwind -- grep for
-=(font-lock-mode -1)=.
+The replay no longer touches =font-lock-mode= at all, but it still wraps the paint
+in an =unwind-protect=, and that is the part to judge: acp wraps response callbacks
+in =condition-case-unless-debug=, so an update that raises mid-paint is swallowed
+unless the unwind re-raises it — meaning without the =unwind-protect= the flush
+would be skipped and the "Restoring" progress line would leak, silently, on a
+buffer the user is looking at.  Check that the cleanup forms (flush, then
+=agent-org--progress-stop=) are the whole tail and that nothing was left behind
+from when the unwind also had to restore font-lock.  Then grep for
+=(font-lock-mode -1)=: the answer must stay empty.
 
 ** TODO Read =agent-org-log-traffic='s default and the global it sets (agent-org.el)
 
@@ -1428,3 +1431,67 @@ the turn's =*=; the tool drawer sits BELOW the text that arrived before it, neve
 above; and TAB on the metadata block still folds it.  Then ~M-x customize-variable
 agent-org-convert-markdown~ nil and ask again — the agent's bytes should land
 verbatim, which is the escape hatch.
+
+* A chat buffer's colors now arrive when it is shown, and nothing takes them away
+
+User report, the second one: "colors gone again!"  Two separate causes, one
+shared root fact, and the root fact is the thing to remember about Emacs:
+=font-lock-mode= cannot be *enabled* in a buffer no window is showing.  Measured
+live, in this very session: =(font-lock-mode 1)= in a hidden buffer leaves the
+buffer-local variable =nil= — no error, no warning, no trace — and
+=turn-on-font-lock= behaves identically; the same call in a displayed buffer
+sticks.  So the fix could not be "turn it on harder at creation".
+
+** TODO Read =agent-org-buffer--ensure-font-lock= and its hook (agent-org-buffer.el)
+
+Three decisions in five lines, each of which a later refactor can quietly undo:
+the hook is *buffer-local* (=(add-hook 'window-configuration-change-hook … nil t)=,
+and the matching =remove-hook … t= in the off branch) because the global hook
+belongs to every window in the session; it runs on *display*, because that is
+the first moment the request can succeed and =agent-org-buffer-create= always
+runs hidden, inside an acp callback; and the body is an =unless=, because
+=window-configuration-change-hook= fires on every window change and a repeat
+=(font-lock-mode 1)= rebuilds jit-lock over a transcript thousands of lines
+long.  Judge whether you also want =font-lock-flush= there: it is absent because
+=font-lock-mode= sets up jit-lock, and jit-lock fonts at redisplay, which is
+immediately after this hook — adding a flush would fontify the same text twice.
+
+** TODO Read the deletion in =agent-org--render-replay= (agent-org.el)
+
+The old code suppressed font-lock for the bulk paint and restored it in the
+=unwind-protect=.  The suppression is gone, and the reason is the asymmetry
+above: the OFF worked anywhere, the ON did not, so a resume that painted into a
+*background* chat — the ordinary case when you resume while looking at another
+window — switched the colors off and could never switch them back.  That was the
+"again".  What remains is =(font-lock-flush)= plus the reporter stop, still
+inside the unwind.  Two things to check: that the flush is unconditional is safe
+(the real =font-lock-flush= checks =font-lock-mode= itself, so a hidden or
+font-lock-less buffer pays nothing), and that leaving font-lock *on* for
+hundreds of insertions does not visibly slow a long resume on this machine — the
+hunch is that it cannot, because jit-lock defers to redisplay and the replay
+paints into a buffer that is not being redisplayed until the pass ends.  Time
+=M-x agent-org-resume-session= on the longest session you have before believing
+that.
+
+** TODO Read the two tests that replaced the one that lied
+
+=test-agent-org-replay-restores-font-lock-when-the-paint-errors= (fd40cb0) proved
+the =unwind= by asserting a *restore*.  That assertion was only ever satisfiable
+in batch Emacs, where nothing can enable font-lock, so it pinned a behaviour
+that in a live Emacs destroys what it claims to protect.  It is replaced by
+=test-agent-org-replay-never-touches-font-lock-even-when-the-paint-errors=, which
+stubs =font-lock-mode= to *record calls* and fails on any =mode= entry — the paint
+may not call it at all, not even to put it back.  Note the =car-safe=: the
+progress-stop marker is pushed as a bare symbol, and =assq=/=car= over that
+element is itself an error (=wrong-type-argument listp stop=), which is how the
+first run of the new test failed for a reason unrelated to the fix.
+
+** TODO Check the live case a test cannot reach
+
+=M-x agent-org-start= in a frame where the chat opens in a *new* window: colors
+should be there as soon as it appears.  Then, with the chat in a background
+window, =M-x agent-org-resume-session= for another session and switch back — the
+restored history must be colored, which is exactly what used to vanish.  Finally
+kill the chat buffer and confirm =(symbol-value 'window-configuration-change-hook)=
+in some *other* buffer does not mention =agent-org-buffer--ensure-font-lock=: the
+entry was buffer-local.

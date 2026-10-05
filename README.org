@@ -241,8 +241,11 @@ agent's own replay cannot contain them, because it never saw them).
 Resume is cheap on purpose (this is a 4 GB machine): the replayed
 ~session/update~ notifications are buffered while the load is in
 flight and painted in one pass with undo recording off, so a long
-history costs one insertion run instead of a re-fontification per
-chunk.  The echo area reports both halves: a spinner while the updates
+history costs one insertion run instead of a full redraw per chunk.
+Org colours are never switched off for that pass — a buffer that is
+not on screen cannot have them put back, so suppressing them to save
+time is how a resumed chat lost them for good.
+The echo area reports both halves: a spinner while the updates
 arrive (~Restoring session history... |~) and then a percentage for the
 single paint pass, because that pass is the one that knows how many
 turns there are (~Restoring session history...42%~).  Nothing runs on a

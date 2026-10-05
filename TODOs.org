@@ -412,6 +412,34 @@ found by the cost probe rather than a hang report), and a detached marker
 that still answers ~markerp~ (the chunk after one ending in a newline
 crashed on ~goto-char~).
 
+** DONE Org colours: a chat buffer gets them at display time, and keeps them
+User report, second occurrence: "colors gone again!"  The root fact, measured
+in the live Emacs rather than assumed: ~font-lock-mode~ cannot be *enabled* in a
+buffer no window is showing — ~(font-lock-mode 1)~ there leaves the
+buffer-local variable ~nil~ with no error and no trace, and ~turn-on-font-lock~
+does the same, while in a displayed buffer it sticks.
+
+Two consequences, both now pinned:
+- The replay's "suppress font-lock for the bulk paint, restore it afterwards"
+  was a one-way door: the ~OFF~ works anywhere, the ~ON~ does not, so a resume
+  that painted into a background chat — the ordinary case — removed the
+  colours permanently.  The suppression is gone; ~agent-org--render-replay~
+  only ~font-lock-flush~es, inside the ~unwind-protect~ that stops the
+  progress report (CONVENTIONS.md §9).
+- A chat buffer is created inside an acp callback, hence always hidden, so
+  ambient ~global-font-lock-mode~ can never reach it.  ~agent-org-mode~ now adds
+  ~agent-org-buffer--ensure-font-lock~ to the *buffer-local*
+  ~window-configuration-change-hook~, which Emacs runs with the buffer current
+  the first time a window shows it (§16).
+
+Two tests replace the one that lied: ~…-replay-restores-font-lock-when-the-paint-errors~
+asserted a *restore*, which only batch Emacs can even simulate, so it pinned the
+very behaviour that destroys the colours live.  In its place
+~test-agent-org-replay-never-touches-font-lock-even-when-the-paint-errors~
+records the calls and fails on any ~font-lock-mode~ one at all, and
+~test-agent-org-chat-buffer-asks-for-font-lock-when-displayed~ runs the
+buffer-local hook the way a window would.  Suite: 236 green.
+
 * TODO Later --- still worth porting, not "basic"
 ** TODO Steer --- inject into the live turn
 agent-shell's =agent-shell-prompt-steer= sends a mid-turn message via

@@ -52,9 +52,11 @@
 ;; Everything here is written for a low-spec machine: streaming turns
 ;; keep font-lock on so Org colors stay live (only the append path
 ;; fontifies, never the whole buffer), restored history is buffered and
-;; painted in ONE pass with font-lock suppressed for the bulk run (see
-;; `agent-org--render-replay'), and the metadata block above the
-;; conversation is only rebuilt when its rendered text actually changed.
+;; painted in ONE pass that also never toggles font-lock -- an OFF is
+;; restorable, an ON is not in a buffer no window is showing (see
+;; `agent-org--render-replay' and `agent-org-buffer--ensure-font-lock') --
+;; and the metadata block above the conversation is only rebuilt when its
+;; rendered text actually changed.
 
 ;;; Code:
 
@@ -1733,19 +1735,22 @@ to count down to some stride."
     (setf (plist-get session :replay) nil)
     (agent-org--progress-start session "Restoring session history" :total total)
     (with-current-buffer buffer
-      (let ((buffer-undo-list t)
-            ;; A replay is the one bulk paint: hundreds of insertions in
-            ;; a synchronous run.  Fontifying each would re-scan the
-            ;; whole buffer per chunk, so suppress during the pass and
-            ;; flush once at the end -- the same one-shot the streaming
-            ;; path deliberately does NOT do.  `font-lock-mode' is
-            ;; buffer-local, so this reads this buffer's own state.
-            (font-lock-was font-lock-mode))
-        (when font-lock-was (font-lock-mode -1))
-        ;; UNWIND, not a tail call: an update that raises here is swallowed
-        ;; by acp's own `condition-case-unless-debug', so nothing would ever
-        ;; put the colors back -- the chat would stay unfontified for the
-        ;; rest of the session, silently.
+      (let ((buffer-undo-list t))
+        ;; Font-lock is NOT suppressed for this pass, whatever the bulk-paint
+        ;; intuition says: `font-lock-mode' cannot be RE-enabled in a buffer no
+        ;; window is showing, so the old off-then-restore lost the chat's
+        ;; colors permanently on every resume that painted in the background
+        ;; (`agent-org--flush-user' and `--buffer-update' keep font-lock on too;
+        ;; see `agent-org-buffer--ensure-font-lock' for how a buffer first gets
+        ;; it).  A flush at the end is still right: hundreds of lines landed at
+        ;; once and the visible part should be redrawn in one go, not chunk by
+        ;; chunk.  It is harmless when colors are off -- the real function
+        ;; checks `font-lock-mode' itself.
+        ;;
+        ;; UNWIND, not a tail call: an update that raises here is swallowed by
+        ;; acp's own `condition-case-unless-debug', so the flush and the report
+        ;; stop would never run -- the chat would sit unfontified with a
+        ;; "Restoring" line still on screen, silently.
         (unwind-protect
             (progn
               (dolist (update updates)
@@ -1759,9 +1764,7 @@ to count down to some stride."
                   (agent-org--buffer-update buffer update)))
               (agent-org--flush-user buffer pending)
               (agent-org-buffer-end-agent-turn buffer))
-          (when font-lock-was
-            (font-lock-mode 1)
-            (font-lock-flush))
+          (font-lock-flush)
           (agent-org--progress-stop session))))))
 
 (defun agent-org--on-notification (session notification)

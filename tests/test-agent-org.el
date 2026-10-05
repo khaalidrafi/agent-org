@@ -2200,8 +2200,8 @@ batched pass when the load response arrives."
 
 (ert-deftest test-agent-org-render-replay-builds-history ()
   "The batched replay paints User/Agent turns, the tool drawer and the
-thinking drawer in history order, closes all turns, and restores
-font-lock exactly once."
+thinking drawer in history order, closes all turns, and leaves font-lock
+alone."
   (let* ((pair (ao--make-test-session "replay"))
          (buf (car pair))
          (session (cdr pair)))
@@ -2235,28 +2235,70 @@ font-lock exactly once."
           (should (string-match-p "^:thinking:$" s))
           (should (string-match-p "^:tool:$" s)))
         (should-not agent-org-buffer--streaming-p)
-        ;; A replay suppresses font-lock while painting and restores it
-        ;; afterwards.  Batch sessions can never enable font-lock at all,
-        ;; so the honest pin is that the value came back to what it was.
+        ;; A replay never suppresses font-lock (see
+        ;; `test-agent-org-replay-never-touches-font-lock'): the paint pass leaves
+        ;; the buffer's own state exactly as it found it.  Batch Emacs can never
+        ;; enable font-lock, so this reads as nil in both cases -- what is pinned is
+        ;; that the replay changed nothing.
         (should (eq font-lock-mode font-lock-was))
         (should (null (plist-get session :replay)))))
     (kill-buffer buf)))
 
+;;;; A chat buffer gets its colors when it is SHOWN
+
+(ert-deftest test-agent-org-chat-buffer-asks-for-font-lock-when-displayed ()
+  "A chat buffer must ask for font-lock at display time, not at creation.
+`font-lock-mode' cannot be enabled in a buffer NO window is showing: measured in
+a live Emacs, `(font-lock-mode 1)' in a hidden buffer leaves the variable nil
+with no error and no trace, and so does `turn-on-font-lock'.  Chat buffers are
+created hidden (`agent-org-buffer-create' is called from a handshake callback),
+so the ambient `global-font-lock-mode' can never reach them and they open with
+no Org colors at all.  `agent-org-mode' therefore adds
+`agent-org-buffer--ensure-font-lock' to this buffer's
+`window-configuration-change-hook', which Emacs runs with the buffer current
+when it first appears in a window.
+
+Batch Emacs is the hidden case, so the stub plays the part of a displayed
+buffer: it records the request and sets the variable, which is what a window
+would have made Emacs do."
+  (let ((b (agent-org-buffer-create "flshow"))
+        (asked nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'font-lock-mode)
+                   (lambda (&optional arg)
+                     (push arg asked)
+                     (when arg (setq-local font-lock-mode t))))
+                  ((symbol-function 'font-lock-flush)
+                   (lambda (&rest _) nil)))
+          (with-current-buffer b
+            ;; the premise: creation left it off, exactly as a live hidden buffer
+            (should-not font-lock-mode)
+            ;; the mode really did install itself on THIS buffer's display hook
+            (should (memq #'agent-org-buffer--ensure-font-lock
+                          (symbol-value 'window-configuration-change-hook)))
+            ;; Emacs' own display path: the buffer-local hook, buffer current
+            (run-hooks 'window-configuration-change-hook)
+            (should font-lock-mode)
+            (should (memq 1 asked))
+            ;; and asking again costs nothing: it is an `unless', not a toggle
+            (let ((before (length asked)))
+              (run-hooks 'window-configuration-change-hook)
+              (should (equal before (length asked))))))
+      (kill-buffer b))))
+
 ;;;; A failed replay must not cost the buffer its colors
 
-(ert-deftest test-agent-org-replay-restores-font-lock-when-the-paint-errors ()
-  "Font-lock comes back even when one replayed update raises.
-A replay is the one bulk paint: font-lock is switched OFF so hundreds of
-insertions do not each re-fontify the buffer, and switched back on after.
-Without an `unwind-protect' an error in the middle leaves the chat buffer
-permanently unfontified -- and acp swallows errors raised in its response
-callbacks (`condition-case-unless-debug'), so nothing announces it.  The
-symptom is a chat with no Org colors at all, for the rest of the session
-(the user's \"All fontification gone!\").
+(ert-deftest test-agent-org-replay-never-touches-font-lock-even-when-the-paint-errors ()
+  "No render path may switch font-lock off, because its OFF is restorable and
+its ON is not: in a live Emacs `(font-lock-mode 1)' in a buffer no window is
+showing does nothing at all.  So a replay that suppressed font-lock and restored
+it afterwards lost the chat's colors forever whenever the resume painted into a
+background buffer -- the user's second \"colors gone again!\" -- and an error in
+the middle lost them even in a shown one.
 
-Font-lock itself is stubbed: in a batch run Emacs refuses to turn it on at
-all, so the honest pin is the SEQUENCE of calls the paint pass makes, plus
-the buffer's own state, not whether display faces really appeared."
+The whole suppression is therefore gone: a replay leaves `font-lock-mode'
+untouched and only flushes.  The honest batch pin is the SEQUENCE of calls: the
+paint may not call `font-lock-mode' at all, not even to put it back."
   (let* ((pair (ao--make-test-session "flerr"))
          (buf (car pair))
          (session (cdr pair))
@@ -2276,10 +2318,7 @@ the buffer's own state, not whether display faces really appeared."
                  (setq raised t)
                  (signal 'error '("paint boom"))))
               ((symbol-function 'font-lock-mode)
-               (lambda (&optional arg)
-                 (push (list 'mode arg) calls)
-                 (with-current-buffer buf
-                   (setq font-lock-mode (if arg t nil)))))
+               (lambda (&optional arg) (push (list 'mode arg) calls)))
               ((symbol-function 'font-lock-flush)
                (lambda (&rest a) (push (cons 'flush a) calls)))
               ((symbol-function 'agent-org--progress-stop)
@@ -2290,8 +2329,11 @@ the buffer's own state, not whether display faces really appeared."
     (should raised)                    ; the paint really did raise
     (should errored)                   ; …and the error propagated to acp
     (with-current-buffer buf
-      (should font-lock-mode)          ; …and the colors came back anyway
-      (should (assq 'flush calls))     ; re-ON without a flush paints nothing
+      ;; CAR-SAFE, not CAR: the stop marker is pushed as the bare symbol
+      ;; `stop', and `car' (or `assq') over that element errors.
+      (should (null (seq-filter (lambda (c) (eq (car-safe c) 'mode)) calls)))
+      (should font-lock-mode)          ; nothing could have taken it away
+      (should (seq-filter (lambda (c) (eq (car-safe c) 'flush)) calls))
       (should (memq 'stop calls)))     ; the Restoring report cannot leak
     (kill-buffer buf)))
 
