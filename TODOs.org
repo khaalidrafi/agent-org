@@ -384,13 +384,33 @@ read-back, the clearing on drain, the resume that restores and sends, and two
 negatives (no drawer, no file) — because a phantom turn would spend tokens
 the user never asked for.
 
-** TODO Markdown → Org for user and agent replies (default on, off-able)
-agent-shell only renders markdown to /faces/, never to Org, so this is
-beyond parity: convert headings, emphasis, lists, fences and tables of
-each reply into real Org markup, defcustom-gated.  Keep it a cheap
-in-buffer transform on the hot path (no pandoc per chunk).  Per the
-user: compute the overhead and report it, asking for a switch if the
-cost says so.
+** DONE Markdown → Org for user and agent replies (default on, off-able)
+agent-shell only renders markdown to /faces/, never to Org, so this was
+beyond parity: ~agent-org-convert-markdown~ (default on) turns a reply's
+headings, emphasis, star bullets, fences, dividers and table rules into
+real Org markup, and the user's own echoed prompt with the same rules —
+the agent still receives the markdown as typed, so it is rendering, not
+translation (CONVENTIONS.md §15).  A heading shifts /one level down/
+because level 1 belongs to the conversation; an unclosed fence is closed,
+because an open ~#+begin_src~ would swallow the buffer and the transcript.
+
+Overhead, computed as asked: ~110 µs per markup-dense line, ~17 µs per
+plain line, printed by ~test-agent-org-markdown-conversion-cost-per-line~.
+A 50-line answer is ~2 ms once; a 2000-line replay ~230 ms inside the pass
+that replay already is.  That is the same order as a transcript boundary
+write (§14), so the switch ships ON and no cost-based ask is needed — the
+escape hatch is there for preference, not for price.
+
+The streaming design changed on the way: holding the unfinished line until
+its newline (the first cut) made a one-line reply — which usually never
+sends a newline — invisible until the turn ended.  Now every chunk is
+written and the last line is provisional, rewritten in place by the next
+one, frozen at each boundary that draws a drawer below the turn's text.
+Fifteen tests, including the two bugs that design caught: a helper's
+~string-match~ clobbering the scan's global match data (an infinite loop,
+found by the cost probe rather than a hang report), and a detached marker
+that still answers ~markerp~ (the chunk after one ending in a newline
+crashed on ~goto-char~).
 
 * TODO Later --- still worth porting, not "basic"
 ** TODO Steer --- inject into the live turn
@@ -417,9 +437,12 @@ buffer-local accept/deny affordance would keep the chat responsive.
 
 ** TODO Tool-call grouping
 agent-shell has =--group-tool-calls= (agent-shell.el:2763): consecutive
-calls of one kind fold under a summary heading.  In agent-org the calls
-are headlines already, so =outline-minor-mode= folding plus a count in
-the * Agent* heading gets most of the way.
+calls of one kind fold under a summary heading.  Calls are drawer lines
+here now, one per =toolCallId= under a =:tool:= heading-free drawer
+(CONVENTIONS.md §3), so grouping is a rendering choice in
+=agent-org-buffer--redraw-drawer=: consecutive same-title calls could
+collapse to one line carrying a count, with each call's own =:tool-N:=
+output drawer kept.  Nothing about the fold state today depends on that.
 
 ** TODO Copy session id command
 agent-shell's =agent-shell-copy-session-id= (agent-shell.el:2033):

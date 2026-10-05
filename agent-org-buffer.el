@@ -78,6 +78,14 @@
 ;;     append log.  One renderer, so the file can never disagree with the
 ;;     chat: a tool line that changed TODO→DONE in place is DONE in the
 ;;     file, and twenty chunks of an answer cost no writes at all.
+;;   - A reply arrives in Markdown and is stored as Org
+;;     (`agent-org-convert-markdown'): `# Title' would be an Org comment
+;;     and `* item' a level-1 headline, so structure is rewritten on the
+;;     way in — headings shifted one level down, star bullets to dashes,
+;;     fences to `#+begin_src' — and the last, still-arriving line is
+;;     rewritten by the next chunk rather than held back, so a one-line
+;;     answer appears as it is typed.  The agent still receives the
+;;     Markdown the user sent: this is rendering, not translation.
 
 ;;; Code:
 
@@ -126,6 +134,27 @@ provider's catalog naming into their notes.
 Only the heading TEXT changes: every placement still goes through the
 turn anchor and `agent-org-buffer--render-end', so no code finds a turn by
 its heading."
+  :type 'boolean
+  :group 'agent-org-buffer)
+
+(defcustom agent-org-convert-markdown t
+  "When non-nil, Markdown in a reply becomes real Org markup.
+Agents answer in Markdown and the chat body is Org, and the two syntaxes
+disagree in ways that are STRUCTURAL in Org rather than merely cosmetic:
+\"# Title\" is an Org COMMENT (it vanishes from every export), \"* item\" is a
+level-1 HEADLINE (it cuts the turn in two), \"---\" under a sentence is a
+headline too, and \"**bold**\" is only stars on the screen.  So the turn's
+text and the user's own echo are converted on the way in
+(`agent-org-buffer--markdown-line'): structure first, inline markup in ONE
+pass, and an unterminated code fence closed rather than left to swallow the
+rest of the buffer.
+
+Nil is the escape hatch: the agent's bytes land verbatim, exactly as this
+package did before.  Nothing on the wire changes either way -- the agent still
+receives the Markdown the user typed, so this is rendering, not translation.
+The cost is a handful of regexps per LINE (never per character), paid once as
+each line completes; the measured number is printed by
+`test-agent-org-markdown-conversion-cost-per-line'."
   :type 'boolean
   :group 'agent-org-buffer)
 
@@ -885,8 +914,16 @@ Signals a `user-error' when no box is open or nothing has been typed."
 (defun agent-org-buffer-insert-user (buffer text)
   "Insert a frozen User heading with TEXT into BUFFER (programmatic use).
 Lands above the live type-ahead box when one is open, so a drained queue
-prompt renders in history order rather than underneath the draft."
+prompt renders in history order rather than underneath the draft.
+
+The echo is a complete message, so it converts in one pass
+(`agent-org-buffer--markdown-convert') rather than the streaming feed --
+but with the SAME rules, which is why one reply reads alike on both sides of
+the exchange.  The agent still receives the Markdown as typed: the conversion
+belongs to the rendering, never to the wire."
   (with-current-buffer buffer
+    (when agent-org-convert-markdown
+      (setq text (agent-org-buffer--markdown-convert text)))
     (let ((inhibit-read-only t))
       (save-excursion
         (goto-char (agent-org-buffer--render-end))
@@ -894,6 +931,285 @@ prompt renders in history order rather than underneath the draft."
           (agent-org-buffer--separator)
           (insert (format "* User\n\n%s\n" text))
           (agent-org-buffer--protect beg (point)))))))
+
+;;;; Markdown -> Org on the reply body
+
+(defconst agent-org-buffer--md-inline-regexp
+  "\\*\\{1,2\\}[^*\n]+?\\*\\{1,2\\}\\|`[^`\n]+`\\|\\[[^]\n]*\\](\\([^)\n]*\\))"
+  "One alternation for every inline Markdown markup this converter knows.
+The pass must be SINGLE scan, not a chain of rewrites: turning `**b**' into
+`*b*' and then running the `*i*' rule over the RESULT italicises the bold it
+just made.  Scanning left to right and consuming each match means markup is
+rewritten exactly once and never sees its own output.
+
+Order inside the alternation is the order of preference at one position; the
+link alternative captures its URL because that is the only part a renderer
+needs grouped -- the rest is read back off the match string.")
+
+(defvar-local agent-org-buffer--md-fragment nil
+  "Last line of the streaming Agent turn, still incomplete and still Markdown.
+A chunk stops wherever the model's tokenizer stopped, so `**bold' can end one
+chunk and `**' open the next.  The fragment's Org rendering IS in the buffer —
+provisionally, at `agent-org-buffer--md-tail' — and the next chunk rewrites it,
+which is what makes a split construct reach the buffer once, as markup, while
+still letting the user watch the answer arrive.")
+
+(defvar-local agent-org-buffer--md-tail nil
+  "Marker at the start of the provisional last line of the streaming turn.
+The region from here to `agent-org-buffer--render-end' is the only text
+`agent-org-buffer--markdown-receive' ever rewrites: everything before it is
+finished, and anything drawn at a boundary (`:tool:', `:thinking:') is finished
+too, because `agent-org-buffer--markdown-flush-here' freezes the tail first.
+Nil while no line is pending.")
+
+(defvar-local agent-org-buffer--md-src-p nil
+  "Non-nil while the streaming Agent turn is inside a fenced code block.
+Its body is CODE, so no conversion rule may fire on it (`# comment' in a
+shell sample is not a heading) -- and an unclosed block must be shut at turn
+end, because an open `#+begin_src' swallows everything after it in the buffer
+AND in the transcript.")
+
+(defun agent-org-buffer--md-table-rule (line)
+  "Org column rule for the Markdown table separator LINE.
+Measured with `org-export-string-as': `|---|---|' after a header row IS
+Org's separator (it exports a `thead'), but Markdown's alignment form
+`|:--|:-:|--:|' is not -- the colons make it an ordinary cell, so the table
+loses its header AND the row exports as data, with `--:' turned into an
+em-dash.  So every rule line becomes Org's own writer shape `|---+---|',
+which carries no colons to misread.  Leading indent is kept: a table inside
+a list item stays inside it."
+  (let ((cells (seq-remove #'string-empty-p
+                           (mapcar #'string-trim (split-string line "|")))))
+    (concat (and (string-match "^[ \t]+" line) (match-string 0 line))
+            "|" (mapconcat (lambda (_) "---") cells "+") "|")))
+
+(defun agent-org-buffer--md-emphasis-p (match line start)
+  "Non-nil when the `*' run MATCH at START in LINE really emphasises.
+Markdown will not make emphasis of `2*3*4' or of `* list': its opening
+delimiter may not be preceded by an alphanumeric, and its body may not begin
+or end in whitespace.  Without those two checks a stray star in arithmetic
+turns into italics, which is a corruption of the reply, not a rendering."
+  (let ((lead (string-match "[^*]" match))
+        (tail (string-match "\\*+\\'" match)))
+    (and lead tail
+         (or (zerop start)
+             (not (string-match-p "[[:alnum:]_]" (string (aref line (1- start)))))
+             ;; at line begin there is nothing to clash with
+             )
+         (> tail lead)
+         (not (string-match-p "[ \t]" (substring match lead (1+ lead))))
+         (not (string-match-p "[ \t]" (substring match (1- tail) tail))))))
+
+(defun agent-org-buffer--md-inline-render (match)
+  "Org markup for one inline MATCH of `agent-org-buffer--md-inline-regexp'."
+  (cond
+   ((string-prefix-p "`" match)
+    (concat "=" (substring match 1 (1- (length match))) "="))
+   ((string-prefix-p "*" match)
+    (let ((lead (string-match "[^*]" match))
+          (tail (string-match "\\*+\\'" match)))
+      (if (> lead 1)
+          (concat "*" (substring match lead tail) "*")
+        (concat "/" (substring match lead tail) "/"))))
+   (t
+    (let ((link-end (string-match "\\](\\([^)\n]*\\))" match)))
+      (format "[[%s][%s]]"
+              (substring match (+ link-end 2) (1- (length match)))
+              (substring match 1 link-end))))))
+
+(defun agent-org-buffer--md-inline (line)
+  "Org inline markup for LINE's Markdown inline markup, in one left-to-right pass."
+  (let ((out nil) (pos 0))
+    (while (string-match agent-org-buffer--md-inline-regexp line pos)
+      ;; Take everything the scan needs BEFORE the helpers run: both
+      ;; `--md-emphasis-p' and `--md-inline-render' call `string-match'
+      ;; themselves and the match data is global, so `match-end' read after
+      ;; them is the helper's last match, not this one.  (That is what made the
+      ;; scan loop forever on `**bold** *emph*': it advanced to a position
+      ;; BEHIND the match it had just consumed.)
+      (let ((start (match-beginning 0))
+            (end (match-end 0))
+            (match (match-string 0 line)))
+        (if (and (string-prefix-p "*" match)
+                 (not (agent-org-buffer--md-emphasis-p match line start)))
+            ;; Not emphasis after all.  Skip the whole run of stars, not one
+            ;; character: a rejected match starts at the run's FIRST star, so
+            ;; resuming just past it finds a match beginning there and rejects
+            ;; it again, and the scan never passes it.  Advancing past the run
+            ;; also stops `* a' being rewritten as a bullet two characters
+            ;; later.
+            (progn (push (substring line pos end) out)
+                   (setq pos end))
+          (push (substring line pos start) out)
+          (push (agent-org-buffer--md-inline-render match) out)
+          (setq pos end))))
+    (push (substring line pos) out)
+    (mapconcat #'identity (nreverse out) "")))
+
+(defun agent-org-buffer--md-structure (line)
+  "Org structural markup for the Markdown LINE, before inline rules run.
+Only what starts at column 0 is structure: `#' there is an Org comment and
+`*' there is a headline, which is the whole reason this function exists.
+A Markdown heading is shifted ONE level down (`#' -> `**') because level 1 in
+this buffer belongs to the conversation -- a reply's `# Title' must nest
+inside its own turn, not become a sibling of it."
+  (cond
+   ((string-match "^\\(#+\\) \\(.*\\)" line)
+    (concat (make-string (1+ (length (match-string 1 line))) ?*) " "
+            (agent-org-buffer--md-inline (match-string 2 line))))
+   ((string-match "^\\([ \t]*\\)\\* \\(.*\\)" line)
+    ;; Exactly ONE star: `* item' is Markdown's bullet and an Org headline, but
+    ;; `** not emphasis' is neither, and a looser `\\*+ ' would have rewritten it
+    ;; as a bullet before any inline rule got the chance to say so.
+    (concat (match-string 1 line) "- "
+            (agent-org-buffer--md-inline (match-string 2 line))))
+   (t (agent-org-buffer--md-inline line))))
+
+(defun agent-org-buffer--markdown-line (line src-p)
+  "Org version of one Markdown LINE, threading the fence state SRC-P.
+Return (ORG-LINE . SRC-P).  The three cases the reply body actually needs, in
+the order that keeps them from overlapping: a fence line flips the state and
+becomes a source block marker; inside a block everything is verbatim, because
+a shell sample full of `#' and `*' is code, not markup; and outside one, a
+divider line is indented one space (`---' under a paragraph is an Org
+headline) and a table rule gains its column groups before
+`agent-org-buffer--md-structure' handles headings, bullets and inline markup.
+
+The rules are deliberately few and each is either STRUCTURAL (getting it wrong
+corrupts the document) or the two emphasis forms agents write constantly.
+`_text_' is left alone: in Org the underscore is emphasis only between
+non-word characters anyway, and rewriting it would eat `foo_bar_baz'.
+`~~text~~' is left alone because it reads as written and is only cosmetic."
+  (let ((case-fold-search nil))
+    (cond
+     ((string-match "^[ \t]*```\\([A-Za-z0-9_+.-]*\\)[ \t]*$" line)
+      (cons (if src-p "#+end_src"
+                (format "#+begin_src %s" (match-string 1 line)))
+            (not src-p)))
+     (src-p (cons line src-p))
+     ((string-match-p "^[ \t]*\\(?:-\\{3,\\}\\|\\*\\{3,\\}\\|_{3,}\\)[ \t]*$" line)
+      (cons (concat " " line) src-p))
+     ((and (string-match-p "^[ \t]*|[-: |]*|[ \t]*$" line)
+           (string-match-p "-" line))
+      (cons (agent-org-buffer--md-table-rule line) src-p))
+     (t (cons (agent-org-buffer--md-structure line) src-p)))))
+
+(defun agent-org-buffer--markdown-convert-lines (lines src-p)
+  "Org text of the Markdown LINES, starting in fence state SRC-P.
+Return (TEXT . SRC-P).  LINE-BY-LINE is the whole design: a fence is a state
+that begins on one line and ends on another, so nothing else can thread it."
+  (let ((out nil))
+    (dolist (line lines)
+      (let ((rendered (agent-org-buffer--markdown-line line src-p)))
+        (setq src-p (cdr rendered))
+        (push (car rendered) out)))
+    (cons (mapconcat #'identity (nreverse out) "\n") src-p)))
+
+(defun agent-org-buffer--markdown-convert (text)
+  "Org markup for the complete Markdown TEXT of one message.
+Closes a fence the author left open: one `#+begin_src' without its
+`#+end_src' hides the rest of the turn, the rest of the buffer and the rest
+of the transcript file, and an agent that hit its token limit can send one."
+  (let ((result (agent-org-buffer--markdown-convert-lines
+                 (split-string text "\n") nil)))
+    (if (cdr result)
+        (concat (car result) "\n#+end_src")
+      (car result))))
+
+(defun agent-org-buffer--markdown-write (frozen partial)
+  "Rewrite this buffer's provisional tail as FROZEN lines then one PARTIAL line.
+FROZEN is the Org rendering of the lines this chunk completed (nil when it
+completed none); PARTIAL is the Org rendering of the line still arriving (nil
+when nothing is pending).  Run it in the chat buffer.
+
+The region replaced is exactly the one the previous PARTIAL wrote, so nothing
+that was already finished — and no drawer drawn at a boundary — can be touched
+by a later chunk."
+  (when (or (and frozen (not (string-empty-p frozen)))
+            (and partial (not (string-empty-p partial)))
+            (markerp agent-org-buffer--md-tail))
+    (let ((inhibit-read-only t))
+      (save-excursion
+        ;; Read the position BEFORE detaching: `set-marker' with nil leaves the
+        ;; variable holding a perfectly live marker OBJECT whose
+        ;; `marker-position' is nil, and `markerp' cannot tell the two apart
+        ;; (measured: the chunk after one that ended with a newline crashed with
+        ;; `integer-or-marker-p nil' on the way to `goto-char').
+        (let* ((tail-pos (and (markerp agent-org-buffer--md-tail)
+                              (marker-position agent-org-buffer--md-tail)))
+               (beg (or tail-pos (agent-org-buffer--render-end))))
+          (when (markerp agent-org-buffer--md-tail)
+            (set-marker agent-org-buffer--md-tail nil)
+            (setq agent-org-buffer--md-tail nil))
+          (goto-char beg)
+          (delete-region beg (max beg (agent-org-buffer--render-end)))
+          (when (and frozen (not (string-empty-p frozen)))
+            (let ((start (point)))
+              (insert frozen "\n")
+              (agent-org-buffer--protect start (point))))
+          (when (and partial (not (string-empty-p partial)))
+            (let ((start (point)))
+              (insert partial)
+              (move-marker (setq-local agent-org-buffer--md-tail (make-marker))
+                           start)
+              (agent-org-buffer--protect start (point)))))))))
+
+(defun agent-org-buffer--markdown-receive (text)
+  "Take one streamed Agent TEXT chunk into this buffer, converting as it arrives.
+Nothing waits for a newline: the line still arriving is written as provisional
+text and rewritten by the next chunk (`agent-org-buffer--md-tail'), so a
+one-line answer that never sends a newline appears AS the agent sends it rather
+than all at once when the turn closes.  The rewrite is why the fragment is kept:
+a construct split across two chunks (`**bold' + `**') is converted from the
+joined string, so it reaches the buffer once, as markup.
+
+Run it in the chat buffer, after the turn's heading exists."
+  (let* ((combined (concat agent-org-buffer--md-fragment text))
+         (parts (split-string combined "\n"))
+         (tail (car (last parts)))
+         (done (butlast parts))
+         (frozen nil))
+    (when done
+      (let ((result (agent-org-buffer--markdown-convert-lines
+                     done agent-org-buffer--md-src-p)))
+        (setq agent-org-buffer--md-src-p (cdr result)
+              frozen (car result))))
+    (agent-org-buffer--markdown-write
+     frozen
+     ;; The partial line is converted WITHOUT keeping the state it reports: a
+     ;; fence opener seen early would otherwise put the rest of the turn inside
+     ;; a code block before its newline ever arrived.
+     (when (and tail (not (string-empty-p tail)))
+       (car (agent-org-buffer--markdown-line tail agent-org-buffer--md-src-p))))
+    (setq agent-org-buffer--md-fragment tail)))
+
+(defun agent-org-buffer--markdown-flush-here ()
+  "Freeze the converter's provisional line in this buffer.
+The text is already there — streaming writes every chunk — so this ends the
+line, closes a fence the agent never closed, and FORGETS the state.  Forgetting
+is load-bearing, not tidiness: a provisional region must not outlive a
+boundary, because the next chunk would rewrite everything from its marker to
+`agent-org-buffer--render-end', which by then holds the drawer drawn here.  So
+a paragraph may be split across a drawer, which is what the drawer is for;
+nothing is ever rewritten twice.
+
+Called at every boundary that draws below the turn's text — `append-thought',
+`insert-tool', `end-agent-turn'."
+  (when (or agent-org-buffer--md-fragment agent-org-buffer--md-src-p
+            (markerp agent-org-buffer--md-tail))
+    (let ((inhibit-read-only t))
+      (save-excursion
+        (when (markerp agent-org-buffer--md-tail)
+          (set-marker agent-org-buffer--md-tail nil)
+          (setq agent-org-buffer--md-tail nil))
+        (setq agent-org-buffer--md-fragment nil)
+        (goto-char (agent-org-buffer--render-end))
+        (let ((start (point)))
+          (unless (bolp) (insert "\n"))
+          (when agent-org-buffer--md-src-p
+            (insert "#+end_src\n")
+            (setq agent-org-buffer--md-src-p nil))
+          (agent-org-buffer--protect start (point)))))))
 
 ;;;; Streaming (the hot path)
 
@@ -952,7 +1268,16 @@ ABOVE the box instead of inside it."
           (setq agent-org-buffer--streaming-p t
                 agent-org-buffer--stream-start (point)
                 agent-org-buffer--tools nil
-                agent-org-buffer--thought nil))))))
+                agent-org-buffer--thought nil
+                ;; markdown->org is turn-local too: a held half line from the
+                ;; previous turn must not open this one, and a fence left
+                ;; unclosed by a truncated reply must not hide this turn's
+                ;; text inside a code block.  The provisional tail goes with
+                ;; them — it points into the PREVIOUS turn's text, and
+                ;; rewriting from there would delete it.
+                agent-org-buffer--md-fragment nil
+                agent-org-buffer--md-src-p nil
+                agent-org-buffer--md-tail nil))))))
 
 (defun agent-org-buffer-end-agent-turn (buffer)
   "Finish the streaming Agent turn in BUFFER.
@@ -964,6 +1289,10 @@ draft, and point belongs with the user, not on the box's anchor."
     (save-excursion
       (let ((inhibit-read-only t))
         (when agent-org-buffer--streaming-p
+          ;; End the line the converter still owns and close a fence the agent
+          ;; never closed; the text itself is already in the buffer, so this is
+          ;; bookkeeping, not a paint (see the flush's docstring).
+          (agent-org-buffer--markdown-flush-here)
           (goto-char (agent-org-buffer--render-end))
           (unless (bolp) (insert "\n"))
           (setq agent-org-buffer--streaming-p nil
@@ -971,16 +1300,24 @@ draft, and point belongs with the user, not on the box's anchor."
 
 (defun agent-org-buffer-append-chunk (buffer text session)
   "Append TEXT chunk from agent into BUFFER.
-Starts a new Agent heading if not already streaming."
+Starts a new Agent heading if not already streaming.
+
+With `agent-org-convert-markdown' (the default) the chunk goes to
+`agent-org-buffer--markdown-receive', which converts it and keeps only the last,
+still-arriving line provisional — so what the buffer holds is always what the
+user reads, and the transcript mirrors that.  Without it the agent's bytes land
+verbatim, exactly as this package behaved before the option existed."
   (when (and text (not (string-empty-p text)))
     (agent-org-buffer-start-agent-turn buffer session)
     (with-current-buffer buffer
-      (let ((inhibit-read-only t))
-        (save-excursion
-          (goto-char (agent-org-buffer--render-end))
-          (let ((beg (point)))
-            (insert text)
-            (agent-org-buffer--protect beg (point))))))))
+      (if agent-org-convert-markdown
+          (agent-org-buffer--markdown-receive text)
+        (let ((inhibit-read-only t))
+          (save-excursion
+            (goto-char (agent-org-buffer--render-end))
+            (let ((beg (point)))
+              (insert text)
+              (agent-org-buffer--protect beg (point)))))))))
 
 ;;;; Auto-folded per-turn structure (tool and thinking drawers)
 
@@ -1099,6 +1436,10 @@ own drawer."
     (with-current-buffer buffer
       (unless agent-org-buffer--streaming-p
         (agent-org-buffer-start-agent-turn buffer nil))
+      ;; the drawer lands below the turn's text, so freeze the line the
+      ;; converter still owns first: a provisional tail must not outlive this
+      ;; boundary or the next chunk would rewrite the drawer
+      (agent-org-buffer--markdown-flush-here)
       (setq agent-org-buffer--thought
             (concat agent-org-buffer--thought text))
       (agent-org-buffer--redraw-drawer
@@ -1223,6 +1564,9 @@ agent's id.  A call that reports no output gets no drawer."
       (with-current-buffer buffer
         (unless agent-org-buffer--streaming-p
           (agent-org-buffer-start-agent-turn buffer nil))
+        ;; same reason as the thought drawer: the board is drawn below the
+        ;; turn's text, so a line still in the converter must go in first
+        (agent-org-buffer--markdown-flush-here)
         (let ((entry (cdr (assoc id agent-org-buffer--tools))))
           (unless entry
             ;; every key pre-exists so `plist-put' below always mutates in

@@ -16,7 +16,9 @@ answered it (~* MiniMax M3~; see ~agent-org-use-model-headings~), with that
 turn's tool calls as one numbered line per call in an open ~:tool:~ drawer
 (its state written as ~TODO~/~DOING~/~DONE~/~CANCELLED~), what each call
 printed in a folded ~:tool-N:~ drawer of its own, and its extended thinking in
-a folded ~:thinking:~ drawer under the same heading, plus one auto-managed
+a folded ~:thinking:~ drawer under the same heading — the text of a reply
+converted from the agent's Markdown into Org markup on the way in (see
+[[*What the agent wrote becomes Org]]) — plus one auto-managed
 metadata block at the very top (see
 [[#session-metadata][Session metadata]]) — and, by default, that whole body is mirrored to one
 Org file per session, so a chat leaves you a document rather than a
@@ -395,6 +397,52 @@ a real org file under version control does not want a second copy
 appearing behind it.  A project that has no use for the files can add
 ~/.agent-org/~ to its ~.gitignore~; this repo does.
 
+* What the agent wrote becomes Org
+
+Agents answer in Markdown, and this buffer is Org, where the two syntaxes
+disagree /structurally/: a ~#~ heading at column 0 is an Org comment (it
+disappears from every export), a ~*~ bullet is a level-1 headline (it cuts the
+turn in two), and a line of dashes under a paragraph is a headline too.  So a
+reply's text — and your own echoed prompt — is rewritten on the way in
+(~agent-org-convert-markdown~, default on):
+
+#+begin_example
+  # Heading     ** Heading      one level down
+  * item        - item
+  **bold**      *bold*          one marker, not two
+  *italic*      /italic/
+  `code`        =code=
+  [t](URL)      [[URL][t]]
+  ---            ---            one space of indent
+  ``` sh        #+begin_src sh
+  |:--|--:|     |---+---|       Org's column groups
+#+end_example
+
+- The heading shift is the point: a reply that starts its own outline nests
+  /inside/ its turn instead of becoming a sibling of it, which would cut the
+  rest of the answer off into a new section.
+- A fence becomes a real source block and its body is left alone — a shell
+  sample full of ~#~ and ~*~ is code, not markup.  A fence the agent never
+  closed is closed for it, because an open one hides the rest of the buffer
+  and the rest of the transcript file.
+- A table's separator row gains Org's column groups, which is what keeps a
+  header row a header: the alignment-colon form is not Org's separator, so
+  with it the header is lost and the alignment markers export as dashes.
+
+Numbered lists and ~- [ ]~ checkboxes already mean the same thing in both
+syntaxes, so no rule touches them; neither does anything touch a ~_word_~,
+whose Org reading needs non-word characters around it and whose rewrite would
+eat ~foo_bar_baz~, or a strikethrough, which is only cosmetic.  The rewrite
+runs while the reply streams: every chunk is written at once and only the
+last, still-arriving line is rewritten by the next chunk, so a construct
+split across two chunks reaches the buffer once, as markup, instead of first
+as stars.
+
+What the /agent/ receives is unchanged — your Markdown goes out exactly as you
+typed it — so this is rendering, not translation.  Set
+~agent-org-convert-markdown~ to nil to get the agent's bytes verbatim, which is
+what this package did before the option existed.
+
 * Configuration
 
 - ~agent-org-use-header-line~ — when nil, status messages go to the
@@ -406,6 +454,9 @@ appearing behind it.  A project that has no use for the files can add
   buried or the file is re-read.  Nil keeps the stable heading for anyone
   who would rather a provider's catalog naming not appear in their notes;
   an agent that advertises no model gets ~* Agent~ either way.
+- ~agent-org-convert-markdown~ — when non-nil (the default) Markdown in a
+  reply, and in your own echoed prompt, becomes real Org markup: see
+  [[*What the agent wrote becomes Org]].  Nil leaves the agent's bytes verbatim.
 - ~agent-org-default-provider~ — provider ~agent-org-resume-session~ uses when
   you call it with no prefix argument (qoder by default: it answers
   ~session/list~, goose does not).

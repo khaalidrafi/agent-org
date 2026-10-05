@@ -442,8 +442,9 @@ bypass `read-only` properties and would corrupt heading boundaries.
 From `info "(org) Headlines` (§2.1):
 
 * Headlines start at the **left margin** with one or more `*` + a space.
-  Our levels: `*` = turn (User/Agent), and nothing deeper — a tool call is a
-  drawer line, not a heading (§3).
+  Our levels: `*` = turn (User/Agent), and a deeper level only where a
+  Markdown heading in a reply was converted (§15) — a tool call is a drawer
+  line, not a heading (§3).
 * **An empty line after a subtree is part of it** and is hidden when the
   subtree folds; two or more empty lines leave one visible separator.  Our
   `agent-org-buffer--separator` inserts exactly the one blank line that keeps
@@ -736,6 +737,102 @@ body is skipped in 0.02–3.4 ms.  The per-chunk append model this replaced cost
 
 ---
 
+## 15. Markdown in a reply becomes Org structure
+
+Agents answer in Markdown; the chat body is Org.  `agent-org-convert-markdown`
+(default on) rewrites the reply's text — and the user's own echo — on the way
+into the buffer, because the two syntaxes disagree in ways that are STRUCTURAL
+in Org, not cosmetic.  Every claim below is what
+`org-element-parse-buffer` reported for the unconverted bytes:
+
+| Markdown as written | What Org makes of it | Consequence |
+|---+---+---|
+| `# Title` | an Org **comment** | the heading vanishes from every export |
+| `* item` (bullet) | a **level-1 headline** | it cuts the turn in two, and joins the conversation's own `* User` / `* Agent` siblings |
+| `---` under a paragraph | a **headline** | same, with no title |
+| `\|:--\|--:\|` (Markdown's alignment rule) | an ordinary **data row** | the table loses its header, and `--:` even exports as an em-dash |
+| `**bold**` | bold inside bold | `*bold*` is Org's one marker; two is nesting |
+
+* **A heading is shifted ONE level down** (`#` → `**`, `###` → `*****`), never
+  rewritten in place: level 1 in this buffer belongs to the conversation (§8),
+  so a reply's `# Title` must nest inside its own turn, not become a sibling of
+  it.  That keeps the transcript's outline honest — `C-c C-t TAB` on a chat still
+  shows turns, not fragments of one answer.
+* **One scan, not a chain of rewrites.** Converting `**b**` to `*b*` and then
+  running the `*i*` rule over the *result* italicises the bold it just made.  So
+  all inline forms live in one alternation
+  (`agent-org-buffer--md-inline-regexp`) and one left-to-right pass consumes each
+  match exactly once.
+* **A `*` run has to prove it is emphasis.** Markdown's own rule: the opening
+  delimiter may not be preceded by an alphanumeric, and the body may not begin or
+  end in whitespace.  Without that check `2*3*4` becomes italics — which is a
+  corruption of the reply, not a rendering of it.  A rejected match is emitted
+  literally and the scan resumes one character later (re-reading the same position
+  would loop forever).
+* **A code fence is a state, so it threads line by line.** `agent-org-buffer`
+  keeps it buffer-local and turn-local (`--md-src-p`): inside a block nothing is
+  converted, because a shell sample full of `#` and `*` is code.  And an
+  unterminated `#+begin_src` is always closed — by `--markdown-convert` for a
+  whole message and by `--markdown-flush-here` at a boundary — because an open one
+  swallows the rest of the buffer *and* the rest of the transcript file, and an
+  agent that hit its token limit can send exactly that.
+* **Streaming converts as the text arrives, and rewrites only the last line.**
+  A chunk stops wherever the model's tokenizer stopped, so `**bold` can end one
+  chunk and `**` open the next.  Holding the unfinished line until its newline
+  (the first design) made a one-line reply — which usually never sends a newline
+  — invisible until the turn ended, so the user watched an empty buffer while the
+  agent answered.  Now every chunk is written, and the line still arriving is
+  *provisional*: `agent-org-buffer--markdown-write` replaces the region from
+  `--md-tail` to `--render-end` with the conversion of everything received so far
+  in that line.  The rewrite is why a split construct reaches the buffer once, as
+  markup, instead of first as stars.
+* **A chunk that ends on a newline leaves nothing provisional.**  It is the
+  common stop, not an edge case — a model emits `say this\n` and starts the next
+  line in the following chunk.  `split-string` keeps the empty field after a
+  trailing separator, so the completed line lands in `done` and the pending
+  fragment is empty: nothing is stored to be concatenated without its newline.
+  (Assumed otherwise during development, and measured otherwise: the fragment
+  variable is never `("say this")`, which is what gluing two lines together
+  would have needed.  Pinned by
+  `test-agent-org-markdown-chunk-ending-with-newline-starts-a-new-line`.)
+* **A provisional region must not outlive a boundary.**  `--md-tail` marks text
+  the next chunk is allowed to delete.  Anything drawn after a boundary — a
+  `:thinking:` drawer, the tool board, the end of the turn — is finished text, so
+  `agent-org-buffer--markdown-flush-here` runs at each of those three sites: it
+  ends the line, closes an open fence, and FORGETS the state.  Forgetting is
+  load-bearing rather than tidy: a stale marker would put the next chunk's
+  `delete-region` straight through the drawer.  So a paragraph may be split by a
+  drawer (which is what the drawer is for), and nothing is ever rewritten twice.
+* **The wire never changes.** The agent receives the Markdown the user typed; the
+  conversion belongs to the rendering, never to the request.  Both sides of the
+  exchange use the same rules, so one reply reads alike above and below its
+  heading.
+* **`_text_` and `~~text~~` are deliberately left alone.** In Org the underscore
+  is emphasis only between non-word characters anyway, and rewriting it would eat
+  `foo_bar_baz`; strikethrough reads as written and is purely cosmetic.  Numbered
+  lists and `- [ ]` checkboxes need no rule — they already mean the same thing in
+  both syntaxes — but inline code does: a backtick is not Org markup at all, so
+  `` `code` `` becomes `=code=` like every other form.  That is why this converter
+  is a handful of regexps rather than a parser.
+
+Nil for `agent-org-convert-markdown` is the escape hatch: the agent's bytes land
+verbatim, exactly as this package behaved before the option existed.  No test
+depends on the conversion — the Markdown tests pin both directions, so the
+default can be argued about without touching a renderer.
+
+Cost, measured on this machine (spinning disk, 4 GB RAM, `emacs -Q --batch`,
+`test-agent-org-markdown-conversion-cost-per-line`): 400 markup-DENSE lines
+(`**bold** *emph* and `code` see [docs](...)`) in 42–55 ms, i.e. **~110 µs per
+line**, and plain prose in 7 ms — **~17 µs per line**.  So a 50-line answer costs
+about 2 ms once, a 2000-line replay about 230 ms inside the one synchronous pass a
+replay already is, and the streaming path adds one small delete+insert per chunk.
+That is the same order as the 3–15 ms a transcript boundary write costs (§14), and
+it is paid per LINE, never per character.  Nothing here justifies defaulting the
+switch off; if a future rule makes it expensive, the test's ceiling (1 s for 400
+lines) fails first.
+
+---
+
 ## Manual nodes referenced
 
 * `(org) Headlines` — §2.1 structure, left margin, separator lines.
@@ -744,6 +841,10 @@ body is skipped in 0.02–3.4 ms.  The per-chunk append model this replaced cost
 * `(org) Drawers` — §2.7, "anything but a headline and another drawer".
 * `(org) Properties and Columns` — the `PROPERTIES` drawer.
 * `(org) Per-file keywords` — §5.2.5, column-0 `#+TODO:` line.
+* `(org) Emphasis and Set Tags` — §15: the five markers, and what may or may not
+  surround them.
+* `(org) Plain Lists` / `(org) Tables` — §15: what a `-`/`1.`/`|` line has to
+  look like to be read as one.
 
 Keep this file honest: if you change how buffers are rendered, update the
 rule here **and** the test that pins it.

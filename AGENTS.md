@@ -427,3 +427,40 @@ emacs -Q --batch \
 #   box open, `:loading' gone), and it drains rather than stranding the queue,
 #   because nothing else drains a session that is not busy.  An empty queue renders
 #   NO drawer: that absence is what stops a prompt being sent twice.
+# - Agents answer in Markdown and the body is Org, and the disagreement is
+#   STRUCTURAL, not cosmetic: `# Title' is an Org COMMENT (it vanishes from every
+#   export), `* item' is a level-1 HEADLINE (it cuts the turn in two), `---' under
+#   a paragraph is a headline too, and Markdown's alignment rule `|:--|--:|' is not
+#   Org's separator row (measured: the table loses its header and `--:' exports as
+#   an em-dash).  So `agent-org-convert-markdown' (default t) renders a reply — and
+#   the user's own echo — through `agent-org-buffer--markdown-line': a heading
+#   shifts ONE level down (level 1 belongs to the conversation), star bullets
+#   become dashes, and the two emphasis forms are rewritten in a SINGLE
+#   left-to-right pass — rewrite `**b**' to `*b*' and then run the `*i*' rule over
+#   the RESULT and you have italicised the bold you just made.  `_text_' and
+#   `~~text~~' are deliberately untouched (the first would eat `foo_bar_baz', the
+#   second is cosmetic).  Nothing on the wire changes: the agent receives the
+#   Markdown as typed, so this is rendering, not translation, and nil is the
+#   verbatim escape hatch.
+# - A code fence is a STATE, so conversion is line-by-line with it threaded
+#   (`agent-org-buffer--md-src-p', buffer-local and turn-local): inside a block
+#   nothing converts, because a shell sample full of `#' and `*' is code, and an
+#   open `#+begin_src' swallows the rest of the buffer AND the rest of the
+#   transcript file — which an agent that hit its token limit can send.  So every
+#   close path (`--markdown-convert', `--markdown-flush-here') shuts it.
+# - Streaming converts AS TEXT ARRIVES and rewrites only the last line.  A chunk
+#   stops wherever the model's tokenizer stopped, so `**bold' may end one and `**'
+#   open the next; the fix is NOT to hold the line until its newline (that made a
+#   one-line reply — which usually never sends one — invisible until the turn
+#   ended) but to write the partial line and let the next chunk replace that
+#   region (`agent-org-buffer--markdown-write', from `--md-tail' to
+#   `--render-end').  So a provisional region must never outlive a boundary that
+#   draws below the turn's text: `agent-org-buffer--markdown-flush-here' runs at
+#   `append-thought', `insert-tool' and `end-agent-turn' and FORGETS the state —
+#   a stale marker would put the next chunk's `delete-region' through the drawer.
+#   Two traps measured here: a marker detached with `set-marker' still answers
+#   `markerp' t while `marker-position' is nil (the chunk AFTER one ending in a
+#   newline crashed on `goto-char'), and a helper that calls `string-match'
+#   clobbers the global match data the scan is built on.
+#   Cost is a few regexps per line plus one small delete+insert per chunk:
+#   `test-agent-org-markdown-conversion-cost-per-line' prints the number.

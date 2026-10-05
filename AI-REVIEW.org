@@ -1346,3 +1346,85 @@ drawer line opens the body.  Judge the ergonomics, not the code: on a long
 chat UI would normally show?  (This project's answer, in the docstrings: yes --
 folding is the affordance, and a record that quietly lost its middle is worse
 than a long one.)
+
+* Markdown in a reply becomes Org structure, line by line
+
+=agent-org-convert-markdown= (default on) rewrites a reply's text — and the
+user's own echoed prompt — on the way into the buffer.  The rules and the
+measured cost are in CONVENTIONS.md §15; what is worth a human eye is the
+streaming machinery around them.
+
+** TODO Read =agent-org-buffer--markdown-write= and its one invariant
+
+Every chunk rewrites the region from =agent-org-buffer--md-tail= to
+=agent-org-buffer--render-end=, because that region holds only the line still
+arriving.  The invariant that makes a delete-region safe is therefore: nothing
+else is ever drawn inside it.  =agent-org-buffer--markdown-flush-here= is what
+keeps it true — it freezes the tail (and FORGETS the state, which is the
+load-bearing half: a stale marker would point into the previous turn's text) at
+every boundary that draws a =:thinking:= drawer, a =:tool:= board, or the end of
+the turn.  Question for review: find a render site that draws below the turn's
+text and does not go through the flush.  If one exists, the next chunk deletes
+that site's text.
+
+** TODO Read the fix for a hang, and grep for the same shape elsewhere
+
+=agent-org-buffer--md-inline= must capture =match-beginning=, =match-end= and the
+match string BEFORE calling =--md-emphasis-p= or =--md-inline-render=: both call
+=string-match= themselves and the match data is global, so reading =match-end=
+afterwards returned the helper's last match.  Symptom was not a wrong string, it
+was Emacs never returning — the scan advanced to a position BEHIND the match it
+had just consumed and found it again forever, on a line no reply would find
+strange — pinned by =test-agent-org-markdown-two-emphasis-runs-terminate=:
+
+#+begin_example
+**bold** *emph* and `code`
+#+end_example
+
+Worth a grep of the rest of the package for a =match-end= or =match-string=
+read after a function call.
+
+** TODO Judge the rule set against the answers you actually get
+
+Converted and skipped, as the rules stand:
+
+#+begin_example
+  converted  # Heading  * item  **bold**  *emph*  `code`  [t](URL)
+             ```lang    ---     |:--|--:|
+  skipped    _text_      ~~text~~      1. list     - [ ] task
+#+end_example
+
+The four skipped forms are the four that need no rule: underscore emphasis is
+only Org emphasis between non-word characters anyway, and rewriting it eats
+~foo_bar_baz~; strikethrough is cosmetic; and numbered lists and checkboxes
+already mean the same thing in both syntaxes.
+
+Two judgement calls to revisit with real usage: a reply that starts its own
+outline with a hash heading puts a two-star heading inside a turn whose own
+heading is one star, which is right for the outline but makes a long answer
+foldable in a way you may not want; and a reply that puts a star bullet and
+star emphasis on the same line relies on =--md-emphasis-p='s "may not be
+preceded by an alphanumeric" rule to tell them apart.
+
+** TODO Look at the cost numbers before you argue about the default
+
+Printed by =test-agent-org-markdown-conversion-cost-per-line= on this machine
+(Celeron, spinning disk, whole-buffer runs so the fixed costs are amortized the
+way a real reply amortizes them): 400 markup-DENSE lines in ~43 ms (~107 us per
+line), 400 lines of plain prose in ~7 ms (~17 us per line).  A 50-line answer is
+therefore ~2 ms at worst, once, and a 2000-line replay ~210 ms in the one
+synchronous pass that replay already is — against the 3-15 ms a transcript
+boundary write costs (CONVENTIONS.md §14).  The streaming path additionally
+rewrites the last line once per chunk, so a very chatty agent costs one small
+delete+insert per chunk; that is the part to watch live, not the regexps.
+
+** TODO Try it live, in the order a bug would show
+
+=M-x agent-org-start=, then ask: "reply with a markdown table, a ~python~ code
+fence, a ~# Heading~, and a bullet list, then say 'done' with no trailing
+newline".  Check: the table has a header row when you ~C-c C-c~ it; the fence is
+a ~#+begin_src~ block you can ~C-c '~ out of; the reply's heading is =**=, under
+the turn's =*=; the tool drawer sits BELOW the text that arrived before it, never
+above; and TAB on the metadata block still folds it.  Then ~M-x customize-variable
+agent-org-convert-markdown~ nil and ask again — the agent's bytes should land
+verbatim, which is the escape hatch.

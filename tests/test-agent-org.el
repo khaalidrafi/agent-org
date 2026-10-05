@@ -5327,6 +5327,280 @@ file would be a regression for every user who never queued a prompt."
                                     :state)))
           (kill-buffer buf))))))
 
+;;;; Markdown -> Org in the reply body
+
+(defun ao--md (line &optional src-p)
+  "Org line that `agent-org-buffer--markdown-line' makes of LINE.
+The SRC-P return value is dropped: these tests ask what a reader sees."
+  (car (agent-org-buffer--markdown-line line src-p)))
+
+(ert-deftest test-agent-org-markdown-headings-nest-under-the-turn ()
+  "Markdown ATX levels become Org stars, shifted by one.
+A turn heading is level 1 and belongs to the CONVERSATION, so a response's
+own `# Title' may not land beside it -- it would cut the rest of the reply
+off into a new section and read as a lost turn.  Shifting every level down
+one (`##' -> `***') files the reply's outline INSIDE its turn, which is
+what an outline viewer should show.  `#' at column 0 is an Org COMMENT, so
+doing nothing would hide the heading from every export instead."
+  (should (equal "** Ship it" (ao--md "# Ship it")))
+  (should (equal "*** Plan" (ao--md "## Plan")))
+  (should (equal "******* Deep" (ao--md "###### Deep")))
+  ;; no space after the hashes is not a markdown heading (and `#' stays a comment)
+  (should (equal "#hashtag" (ao--md "#hashtag")))
+  ;; an indented heading is a code-ish line, not a heading in either syntax
+  (should (equal "  ## not a heading" (ao--md "  ## not a heading"))))
+
+(ert-deftest test-agent-org-markdown-star-bullets-become-dashes ()
+  "`* item' is a level-1 HEADLINE in Org, not a bullet.
+Measured with `org-element-parse-buffer': two `* item' lines report two
+headlines and no list -- so an agent's ordinary bullet list would shred the
+turn around it.  `- ' is the bullet both syntaxes agree on."
+  (should (equal "- item" (ao--md "* item")))
+  (should (equal "- a\n- b" (concat (ao--md "* a") "\n" (ao--md "* b"))))
+  (should (equal "  - nested" (ao--md "  * nested")))
+  ;; already-Org bullets, ordered lists and checkboxes are left alone
+  (should (equal "- keep" (ao--md "- keep")))
+  (should (equal "+ keep" (ao--md "+ keep")))
+  (should (equal "1. keep" (ao--md "1. keep")))
+  (should (equal "- [ ] todo" (ao--md "- [ ] todo"))))
+
+(ert-deftest test-agent-org-markdown-emphasis-becomes-org-markup ()
+  "One star means italic in Org and bold in Markdown, so `**' must go first.
+The pass is single-scan, not two rewrites: converting `**b**' to `*b*' and
+then running the `*i*' rule over the RESULT would italicise the bold.
+Backquoted code becomes `=' verbatim (Org's own inline-code marker), and
+underscores are never touched -- `foo_bar_baz' is an identifier, and a
+second pass over it would print it as emphasis."
+  (should (equal "*bold* text" (ao--md "**bold** text")))
+  (should (equal "/emph/ here" (ao--md "*emph* here")))
+  (should (equal "a =b= c" (ao--md "a `b` c")))
+  (should (equal "*a* /b/ =c=" (ao--md "**a** *b* `c`")))
+  (should (equal "snake_case_stays" (ao--md "snake_case_stays")))
+  (should (equal "** not emphasis" (ao--md "** not emphasis"))))
+
+(ert-deftest test-agent-org-markdown-link-becomes-org-link ()
+  "Brackets first, description second: `[[URL][TEXT]]'.
+Org's own syntax, in the order the org-syntax reference pins -- a Markdown
+link left alone exports as text plus a bare autolink."
+  (should (equal "[[https://x.org][docs]]" (ao--md "[docs](https://x.org)")))
+  (should (equal "see [[file:a.el][a]] now" (ao--md "see [a](file:a.el) now"))))
+
+(ert-deftest test-agent-org-markdown-fence-becomes-a-src-block ()
+  "The fence line and its SRC-P flag travel together.
+A fenced block is the one place where markdown markup is TEXT, so the state
+flag decides which lines get converted at all -- and inside the block the
+`#' and `*' rules must not fire (an Org comment marker or a headline in the
+middle of a code sample would corrupt the sample).  `#+end_src' is emitted
+for the closing fence, whatever language the opening one named."
+  (let ((open (agent-org-buffer--markdown-line "```sh" nil)))
+    (should (equal "#+begin_src sh" (car open)))
+    (should (equal t (cdr open)))
+    (let ((body (agent-org-buffer--markdown-line "# a shell comment" (cdr open))))
+      (should (equal "# a shell comment" (car body)))
+      (should (equal t (cdr body))))
+    (let ((close (agent-org-buffer--markdown-line "```" (cdr open))))
+      (should (equal "#+end_src" (car close)))
+      (should (equal nil (cdr close))))))
+
+(ert-deftest test-agent-org-markdown-table-rule-becomes-org-columns ()
+  "Markdown's alignment rule is not Org's separator row.
+Measured with `org-export-string-as': `|---|---|' after a header does give a
+`thead', but `|:--|:-:|--:|' does not -- the table loses its header and the
+rule exports as a data row (`--:' becomes an em-dash).  So every rule line
+becomes Org's own writer shape `|---+---|', which has no colons to misread."
+  (should (equal "|---+---|" (ao--md "|---|---|")))
+  (should (equal "|---+---+---|" (ao--md "|:--|:-:|--:|")))
+  (should (equal "| a | b |" (ao--md "| a | b |"))))
+
+(ert-deftest test-agent-org-markdown-horizontal-rule-stays-inert ()
+  "`---' under a paragraph is a HEADLINE in Org.
+Org reads `Some text' + `---' as one level-2 heading, so markdown's
+divider would swallow the sentence above it.  One space of indent takes
+that reading away (a headline must start at column 0) and still reads as a
+divider in the buffer."
+  (should (equal " ---" (ao--md "---")))
+  (should (equal " ***" (ao--md "***")))
+  (should (equal " -----  " (ao--md "-----  "))))
+
+(ert-deftest test-agent-org-markdown-conversion-off-leaves-text-verbatim ()
+  "The switch is the way out: nil and the agent's bytes land as sent."
+  (let ((agent-org-convert-markdown nil)
+        (buf (agent-org-buffer-create "mdoff")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-append-chunk buf "# Title\n* item\n" nil)
+    (let ((text (with-current-buffer buf (buffer-string))))
+      (should (string-match-p "^# Title$" text))
+      (should (string-match-p "^\* item$" text)))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-markdown-streaming-writes-every-chunk-once ()
+  "A line appears as it arrives and is converted when it stops being partial.
+Chunks stop wherever the model's tokenizer stopped, so `**bold' can end one and
+`**' open the next.  Holding the line until its newline (the first design) made
+a one-line reply invisible until the turn ended — the user watched an empty
+buffer while the agent answered.  So the last line is written as PROVISIONAL
+text and the next chunk rewrites that region: the stars are on screen only while
+they are still the whole truth, the converted form appears exactly once, and in
+the same place."
+  (let ((buf (agent-org-buffer-create "mdsplit")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-append-chunk buf "say **bold" nil)
+    (with-current-buffer buf
+      ;; nothing waits for a newline: the answer is on screen mid-word
+      (should (string-match-p "say \\*\\*bold" (buffer-string))))
+    (agent-org-buffer-append-chunk buf "** alpha\n" nil)
+    (with-current-buffer buf
+      (should (string-match-p "say \\*bold\\* alpha" (buffer-string)))
+      (should-not (string-match-p "\\*\\*bold\\*\\*" (buffer-string)))
+      ;; REWRITTEN, not appended: one copy of the words that were provisional.
+      ;; (`ao--count-substrings' is case-INsensitive, which is why the probe word
+      ;; is not something the buffer's own `#+TODO: TODO DOING | DONE CANCELLED'
+      ;; line contains.)
+      (should (equal 1 (ao--count-substrings "say")))
+      (should (equal 1 (ao--count-substrings "alpha"))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-markdown-two-emphasis-runs-terminate ()
+  "A line with TWO markup runs converts and does not hang the scan.
+The helpers read the global match data after calling `string-match' themselves,
+which is how `**bold** *emph*' made `agent-org-buffer--md-inline' advance to a
+position BEHIND the match it had just consumed and rescan it forever.  Asserted
+as a conversion result, because the bug's other symptom was an Emacs that never
+came back."
+  (should (equal "*bold* /emph/ done"
+                 (ao--md "**bold** *emph* done")))
+  (should (equal "*a* b *c*" (ao--md "**a** b **c**")))
+  ;; and arithmetic stars still survive the scan whole
+  (should (equal "2*3*4 plus 5*6*7" (ao--md "2*3*4 plus 5*6*7"))))
+
+(ert-deftest test-agent-org-markdown-turn-end-flushes-the-last-line ()
+  "Nothing may be held when the turn closes, and an open fence must close.
+The final line of a reply usually arrives with no trailing newline, so a
+streaming-only rule would drop it; and a `#+begin_src' left open swallows
+everything after it in the buffer AND in the transcript, which is the one
+corruption this feature must never cause."
+  (let ((buf (agent-org-buffer-create "mdflush")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-append-chunk buf "## Tail" nil)
+    (agent-org-buffer-end-agent-turn buf)
+    ;; `##' is a level-2 markdown heading, so the shift-by-one rule files it at
+    ;; level 3 -- and it is in the buffer BEFORE the turn closes, because a
+    ;; reply's last line usually never sends a newline.
+    (should (string-match-p "^\\*\\*\\* Tail$"
+                            (with-current-buffer buf (buffer-string))))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-append-chunk buf "```sh\nls" nil)
+    (agent-org-buffer-end-agent-turn buf)
+    (let ((text (with-current-buffer buf (buffer-string))))
+      ;; `\\+' because in an Emacs regexp `+' is an interval operator, so
+      ;; "^#+begin" asks for one-or-more hashes and never matches the keyword.
+      (should (string-match-p "^#\\+begin_src sh$" text))
+      (should (string-match-p "^#\\+end_src$" text))
+      (with-current-buffer buf
+        (should (org-element-map (org-element-parse-buffer) 'src-block
+                  (lambda (e) t) nil 'first-match))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-markdown-chunks-after-a-newline-still-write ()
+  "A chunk that ENDS a line must not leave the converter holding a dead marker.
+The line a chunk completes is the last thing the provisional region held, so
+the next chunk looks for its marker to rewrite it -- and a marker detached with
+`set-marker' but still stored in the variable answers `markerp' t and
+`marker-position' nil, which reaches `goto-char' as nil.  Reproduced by feeding
+three chunks in order, because two is not enough to hit it: the crash happens on
+the chunk AFTER the one that ended a line."
+  (let ((buf (agent-org-buffer-create "mdthree")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (dolist (chunk (list "first " "line\nsecond " "line\nthird"))
+      (agent-org-buffer-append-chunk buf chunk nil))
+    (agent-org-buffer-end-agent-turn buf)
+    (with-current-buffer buf
+      (should (string-match-p "first line" (buffer-string)))
+      (should (string-match-p "second line" (buffer-string)))
+      (should (string-match-p "third" (buffer-string)))
+      ;; and the lines are in the order they arrived, one copy each ("line"
+      ;; appears twice: once in "first line", once in "second line")
+      (should (equal 2 (ao--count-substrings "line"))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-markdown-chunk-ending-with-newline-starts-a-new-line ()
+  "A chunk that ENDS on a newline must not glue the next chunk onto that line.
+Tokenizer stops land ON newlines constantly, so `say this\n' is an ordinary
+chunk.  `split-string' drops the empty string after a trailing separator, which
+makes an all-complete chunk look like one whose last line is still arriving --
+and since the stored fragment is what the next chunk is concatenated to, the
+newline vanished and `next that' joined `say this' as one line.  Asserted on the
+buffer rather than on the fragment variable, because what a reader sees is the
+contract."
+  (let ((buf (agent-org-buffer-create "mdglue")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-append-chunk buf "say this\n" nil)
+    (agent-org-buffer-append-chunk buf "next that\n" nil)
+    ;; a heading arriving as its own chunk is the same case, and the one a user
+    ;; would notice: a line of stars welded to the prose above it is not a
+    ;; heading at all
+    (agent-org-buffer-append-chunk buf "# Heading" nil)
+    (agent-org-buffer-end-agent-turn buf)
+    (with-current-buffer buf
+      (should (string-match-p "^say this$" (buffer-string)))
+      (should (string-match-p "^next that$" (buffer-string)))
+      (should (string-match-p "^\\*\\* Heading$" (buffer-string)))
+      (should-not (string-match-p "thisnext" (buffer-string))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-markdown-converts-the-user-echo-too ()
+  "Both sides of the conversation are Org text to a reader.  The echo is one
+whole message, so it converts in a single pass, and the agent still receives
+the markdown the user typed -- the conversion is rendering, never the wire."
+  (let ((buf (agent-org-buffer-create "mduser")))
+    (agent-org-buffer-insert-user buf "# Asking\n* please")
+    (let ((text (with-current-buffer buf (buffer-string))))
+      (should (string-match-p "^\\*\\* Asking$" text))
+      (should (string-match-p "^- please$" text))
+      (should-not (string-match-p "^# Asking$" text))
+      (should-not (string-match-p "^\* please$" text)))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-markdown-converted-text-is-still-frozen ()
+  "Rewriting the text must not lose the read-only property.  Every render
+site protects the region it inserted; the converter changes what is inserted,
+not where or under what property."
+  (let ((buf (agent-org-buffer-create "mdfrozen")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-append-chunk buf "# H\n**b**\n" nil)
+    (agent-org-buffer-end-agent-turn buf)
+    (with-current-buffer buf
+      (goto-char (point-min))
+      (should (re-search-forward "^\\*\\* H$" nil t))
+      (should (get-text-property (match-beginning 0) 'read-only)))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-markdown-conversion-cost-per-line ()
+  "The overhead the porting note asked to measure, printed and pinned as a ceiling.
+A reply is tens of lines and a replay is thousands, all painted in one
+synchronous pass on a 4 GB machine -- if this ever cost more than about a
+millisecond per line the switch should default off rather than make the user
+wait.  Measured here (Celeron, spinning disk): 115 us per markup-DENSE line,
+and plain prose is several times cheaper, so a 50-line answer is ~2 ms and a
+2000-line replay ~230 ms -- against the 3-15 ms a transcript boundary write
+already costs (CONVENTIONS.md §14).  The ceiling is loose on purpose (a flaky
+bound is worse than none) and the printed numbers are the report."
+  (let* ((dense "**bold** *emph* and `code` see [docs](https://x.org)\n")
+         (plain "The quick brown fox jumps over the lazy dog, for scale.\n")
+         (n 400))
+    (dolist (spec (list (cons "dense" dense) (cons "plain" plain)))
+      (let* ((text (let ((out ""))
+                     (dotimes (_ n) (setq out (concat out (cdr spec))))
+                     out))
+             (lines (length (split-string text "\n" t)))
+             (start (float-time)))
+        (agent-org-buffer--markdown-convert text)
+        (let ((elapsed (- (float-time) start)))
+          (princ (format "\nmarkdown->org %s: %d lines in %.1f ms (%.1f us/line)\n"
+                         (car spec) lines (* elapsed 1000)
+                         (/ (* elapsed 1000000) lines)))
+          (should (< elapsed 1.0)))))))
+
 (provide 'test-agent-org)
 ;;; test-agent-org.el ends here
 
