@@ -16,8 +16,10 @@ Start a session with PROVIDER and open its Org chat buffer.
 When called interactively, prompt for the provider.  What \"start\"
 means is `agent-org-session-strategy''s business: with the default
 `prompt' the agent is asked what this directory already holds and you
-choose from that, or from `New session'.  A prefix argument forces `new'
-for this call, skipping the listing.
+choose from that, or from `New session'.  One prefix argument forces
+`new' for this call, skipping the listing; two force `latest', which
+opens the most recently modified session without asking -- the same
+16-and-up reading `agent-org-resume-session' uses for its second tier.
 
 (fn PROVIDER)" t)
 (autoload 'agent-org-switch-buffer "agent-org" "\
@@ -32,6 +34,22 @@ afterwards can match nothing.
 `C-x b' already reaches every buffer; this is the short list of the ones
 that have an agent behind them, which is also why it takes its rows from
 the registry rather than from a mode-name scan of the buffer list." t)
+(autoload 'agent-org-show-traffic "agent-org" "\
+Show the raw JSON BUFFER's chat exchanged with its agent.
+BUFFER defaults to the current buffer.  One line per message — time,
+direction, kind, method — and RET on a line pretty-prints that message's
+object, which is the only way to read what the agent actually sent rather
+than what the chat shows: the transcript, the header line and the drawers
+are all renderings of a chosen subset, and a discrepancy between what an
+agent answered and what the chat recorded is settled only by the bytes on
+the wire.  `n' and `p' step between messages; `C-x C-s' saves the lot as
+ Lisp data for a fixture.
+
+The log is acp's own `acp-traffic-mode' buffer for this chat's client, so
+it holds every request we sent and every response and notification that
+came back, including the ones no part of agent-org consumes.
+
+(fn &optional BUFFER)" t)
 (autoload 'agent-org-resume-session "agent-org" "\
 Resume an existing session with PROVIDER, replaying its history.
 With no prefix argument PROVIDER is `agent-org-default-provider'; one
@@ -68,9 +86,11 @@ and id, so it comes back looking like the one that was replaced.
 
 The old buffer must be gone before the load: `agent-org--load-session'
 refuses to `session/load' an id a live buffer already holds and would
-switch to it instead.  Queued prompts die with the buffer — they were
-never sent, and a restart is the user's way of saying the agent's
-state is wrong." t)
+switch to it instead.  A prompt that was queued but never sent comes
+back, because it lives in the transcript's =:QUEUE:= drawer rather than
+in the buffer, and a restart goes through resume: the fresh agent gets
+the prompts the old one never saw.  Worth knowing before restarting a
+session you want to leave alone." t)
 (autoload 'agent-org-set-session-model "agent-org" "\
 Switch the current agent-org session to MODEL.
 Interactively, complete over the models the agent advertises.  From lisp
@@ -90,17 +110,64 @@ While a turn streams the same act merely queues the draft -- see
 turn ends successfully.  This type-ahead model is agent-shell's: the
 prompt is always in the buffer, never in the minibuffer, so watching a
 turn and preparing the next message happen in the same window." t)
-(autoload 'agent-org-queue-view "agent-org" "\
-List the prompts queued for this session, oldest first.
-The listing lives in a read-only ` *agent-org queue*' buffer; the queue
-itself is session state, and `agent-org-queue-remove' drops entries." t)
-(autoload 'agent-org-queue-remove "agent-org" "\
-Drop a queued prompt of this session, chosen by number from the queue." t)
 (autoload 'agent-org-queue-edit "agent-org" "\
-Re-read the most recently queued prompt, replacing it with the edit.
-The old text is the minibuffer default, so RET keeps it and typing
-replaces it.  The edited prompt goes back at the end of the queue, the
-place it came from." t)
+Edit the prompts waiting for this session, and put them in new order.
+Entry 1 is the prompt that goes out when the current turn ends.  The list
+is editable as Org text: `M-UP'/`M-DOWN' move an entry, `C-c C-d' kills
+one, `C-c C-a' adds one, `C-c C-c' applies the result and `C-c C-k'
+abandons the whole edit.  Applying writes ONE thing — the session's
+`:pending-prompts' — and the header count, the chat buffer's `:QUEUE:'
+drawer and the transcript file all read that, so they cannot disagree.
+
+A SEPARATE buffer rather than editing the chat's own `:QUEUE:' drawer in
+place, because that drawer is part of the metadata block and the block is
+deleted and reinserted on every usage update: a cursor and a half-typed
+word in it would be destroyed mid-turn.  The drawer is for reading, this is
+for working.
+
+Called twice, this switches to the editor that is already open rather than
+redrawing it: a refresh would silently drop the edits that were never
+applied.  An empty queue is not an error either — the editor opens with one
+blank entry, which is also how to compose a prompt to send later." t)
+(autoload 'agent-org-queue-apply "agent-org" "\
+Make this buffer's entries the session's queue, everywhere at once.
+Reconciliation, in this order: entries the agent sent while the editor was
+open are removed BY TEXT (`agent-org-queue--drop-sent'), then prompts that
+arrived while the editor was open go back on the end, in arrival order.
+So the editor is never the sole writer of a list it has not seen — and an
+entry the user edited after it went out is the one case that does get sent
+again, because the agent never saw those words.
+The buffer stays open and is repainted from the result, which is what makes
+an apply a save rather than a close: keep editing, apply again." t)
+(autoload 'agent-org-queue-cancel "agent-org" "\
+Abandon this editor: the session's queue never saw a byte of the edit.
+That is the whole contract, and the reason apply is the only writer.  The
+chat is shown before the kill so no window is left pointing at a buffer
+that just went away." t)
+(autoload 'agent-org-queue-move-up "agent-org" "\
+Move the entry at point one place nearer the front of the queue.
+Org's own subtree move, so the text travels with its headline.  At entry 1
+Org refuses and nothing moves — which is the right answer, since nothing is
+already in front of it." t)
+(autoload 'agent-org-queue-move-down "agent-org" "\
+Move the entry at point one place further back in the queue." t)
+(autoload 'agent-org-queue-insert-entry "agent-org" "\
+Append an empty entry and leave point inside it, ready to type.
+AT THE END, because the queue is FIFO and a prompt typed now waits behind
+the ones already waiting — the same place `agent-org--queue-enqueue' puts
+a send from the type-ahead box, so the editor and the box agree.  `M-UP'
+takes it anywhere else.
+The number on the new headline is provisional: it is what position
+`agent-org-queue--renumber' would print, and the next move or kill
+recomputes every one anyway." t)
+(autoload 'agent-org-queue-kill-entry "agent-org" "\
+Kill the entry at point, headline and body, onto the kill ring.
+A KILL and not a delete, because this is the queue command with no
+confirmation and dropping a prompt you meant to keep is the mistake worth
+making recoverable: `C-y' puts the whole entry back.
+Killing entry 1 kills the prompt that was FIRST in the list you were shown,
+whatever its number says now — `agent-org-queue--renumber' follows so the
+remaining numbers stay contiguous with the order they describe." t)
 (register-definition-prefixes "agent-org" '("agent-org-"))
 
 

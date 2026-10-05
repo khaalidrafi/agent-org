@@ -2446,10 +2446,13 @@ Keys:
   M-UP     Move the entry at point one place nearer the front
   M-DOWN   Move it one place further back"
   :group 'agent-org
-  (setq-local truncate-lines t)
   ;; The entries are the whole document and there are never many of them,
-  ;; so nothing here should be hidden or scrolled sideways: an entry the
-  ;; user cannot see is an entry they cannot reorder.
+  ;; so nothing here should be hidden: an entry the user cannot see is an
+  ;; entry they cannot reorder.  Wrapping is what delivers that — and it is
+  ;; `org-startup-truncated' that decides it, because `org-mode' applies its
+  ;; own startup visibility AFTER a derived mode's body has run (measured
+  ;; live: a `(setq-local truncate-lines t)' here was still nil by the time
+  ;; the buffer was displayed).
   (setq-local org-startup-folded nil)
   (setq-local org-startup-truncated nil))
 

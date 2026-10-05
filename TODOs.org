@@ -27,6 +27,9 @@ Ported to agent-org as:
 - =agent-org-queue-view= (transient listing), =agent-org-queue-remove=
   (drop one, completion), =agent-org-queue-edit= (pull the last queued
   prompt back into the minibuffer prompt read).
+  /Superseded:/ [[*The queue editor: edit and re-order the waiting prompts]].
+  All three of those commands are gone; one =agent-org-queue-edit= is now a
+  real editor, not a minibuffer pull.
 - Header status shows the pending count while busy (convention: header
   line only, never the body, never the mode line).
 
@@ -55,8 +58,9 @@ Ported as the persistent type-ahead box:
   typed text in place.
 - =agent-org-send= is now one gesture: idle sends the draft (frozen echo
   above the box, turn on the wire), streaming queues it.  No minibuffer
-  for new prompts; =agent-org-queue-edit= still uses one (the entry has
-  left the input area).
+  for new prompts; =agent-org-queue-edit= used one then too (the entry has
+  left the input area) --- it is a buffer now, see
+  [[*The queue editor: edit and re-order the waiting prompts]].
 - Drained prompts render as frozen echoes above the box, and a draft
   typed while a drained turn runs is untouched.
 - =start/end-agent-turn= wrapped in =save-excursion=: a render must never
@@ -384,13 +388,16 @@ User order: "Save queued prompts to transcripts and reload them on
 resume."  Nothing else in the package can do this: a queued prompt was
 never sent, so it is absent from the agent's =session/load= replay, from
 the fresh buffer and from any =* User= heading — the transcript is its only
-surviving copy.  It goes in a folded =:QUEUE:= drawer at the end of the
-auto-managed metadata block, one line per prompt oldest first, escaped flat
+surviving copy.  It goes in a =:QUEUE:= drawer at the end of the
+auto-managed metadata block (folded as first built; it arrives open now, and
+is uncapped — see [[*The queue editor: edit and re-order the waiting prompts]]),
+one line per prompt oldest first, escaped flat
 by =agent-org-buffer--queue-encode= (a drawer cannot hold a blank line, and
 a prompt that /is/ =:END:= must not close its own drawer — hence the =- =
 prefix).  =agent-org--queue-refresh= is the single choke point: it mirrors
 session =:pending-prompts= into the status, the block and the file, so
-enqueue, remove, edit and drain are boundaries of their own and a mid-turn
+every queue mutation --- enqueue, drain, and the editor's apply --- is a
+boundary of its own and a mid-turn
 quit costs nothing.
 
 =agent-org--finish-replay= reads the drawer /before/ rendering and applies it
@@ -625,6 +632,39 @@ Fixed as three changes in agent-org.el:
 
 Option order is left as the agent sent it, and the prompt still blocks the
 process filter --- both unchanged here; the second is =TODO Later= below.
+
+** DONE The queue editor: edit and re-order the waiting prompts
+User order: "Add a complete queue editing feature where I can edit each
+prompt in the queue and re-order them.  Show the prompt queue within the
+buffer."  The three commands that existed could list, drop and re-read one
+entry --- nothing could re-order, and =queue-edit= was a minibuffer pull.
+They are deleted; =agent-org-queue-edit= (=C-c C-q=) is one command that
+opens the queue in its own buffer, where each waiting prompt is one Org
+subtree:
+
+- edit the body, =M-UP= / =M-DOWN= to re-order (=org-move-subtree-up/down=),
+  =C-c C-a= to add an entry, =C-c C-d= to kill one, =C-c C-c= to apply,
+  =C-c C-k= to abandon.
+- A separate buffer because the chat's =:QUEUE:= drawer cannot be edited in
+  place: =refresh-metadata= deletes and re-inserts the whole block on every
+  usage update, and tokens arrive per chunk.  One writer per region.
+- Reconciliation is by /text/, not position: the editor remembers what the
+  agent already sent (=--note-sent= from the drain) and what was queued while
+  it was open (=--note-added= from enqueue), and apply drops one occurrence of
+  each sent string then appends the added ones.  By position an edited-but-sent
+  prompt loses its edit and a prompt queued mid-session goes out twice.
+- Show it in the buffer: =:QUEUE:= is the one drawer of the metadata block that
+  arrives open (per-kind default, =agent-org-buffer--metadata-open-drawers=),
+  and it lost the 50-line cap the reference drawers keep --- a capped queue is
+  a queue that stops showing prompts, and the transcript is what a resume
+  reads.  The reader only takes ="- "= lines, so an old =… (+3 more)= line can
+  never be restored as a prompt.
+
+22 queue tests (16 new), 260 total green, six mutation checks in
+[[file:AI-REVIEW.org][AI-REVIEW]] --- including three pre-written tests that were wrong while the
+implementation was right (=org-move-subtree-down= is a one-place move, not a
+rotation; two tests prepended text they meant to append; one transcript
+fixture doubled its backslash and so tested a literal backslash).
 
 ** TODO Later --- still worth porting, not "basic"
 ** TODO Steer --- inject into the live turn

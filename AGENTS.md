@@ -485,11 +485,55 @@ emacs -Q --batch \
 #   of the auto-managed metadata block — one line per prompt, oldest first,
 #   escaped by `agent-org-buffer--queue-encode' (newline and backslash; the `- '
 #   prefix keeps a prompt that IS `:END:' from closing its own drawer), read back
-#   by `agent-org-buffer-transcript-queue'.  Set `:queued' on the status, never
+#   by `agent-org-buffer-transcript-queue', which takes ONLY `- ' lines: an older
+#   build's `… (+N more)' tail or a line a person typed while poking at the file
+#   would otherwise come back as a phantom prompt.  Set `:queued' on the status, never
 #   write the drawer by hand: `agent-org--queue-refresh' is the single choke
 #   point that mirrors session `:pending-prompts' into the block AND the file, so
-#   every queue command (enqueue, remove, edit, drain) is a boundary of its own —
-#   a mid-turn quit must not swallow what the user typed.
+#   every queue change (enqueue, drain, and every editor apply) is a boundary of
+#   its own — a mid-turn quit must not swallow what the user typed.  QUEUE is the
+#   one drawer with NO line cap (`agent-org-buffer--metadata-drawer' takes CAP and
+#   QUEUE passes nil) and the one that ARRIVES OPEN
+#   (`agent-org-buffer--metadata-open-drawers'): COMMANDS/MODES/CONFIG are a
+#   preview of something the agent can be asked for again, so truncating or folding
+#   them costs a look; the queue is the record the transcript keeps, so hiding part
+#   of it destroys a prompt and folding it makes it invisible exactly when it is
+#   news (the user's "Show the prompt queue within the buffer").  Both are
+#   defaults for CREATION: a drawer the user folded by hand stays folded.
+# - The queue has ONE command, `agent-org-queue-edit' (C-c C-q): a buffer of its
+#   own, in `agent-org-queue-mode' (derived from `org-mode'), where an entry is a
+#   prompt.  `agent-org-queue-view' (read-only listing), `agent-org-queue-remove'
+#   (minibuffer number-pick) and the old `agent-org-queue-edit' (last entry only,
+#   via `read-string') are GONE — three pagers for one list, and none of them
+#   could re-order it, which is the one thing a queue of prompts needs.  Never
+#   edit the queue's text in the chat buffer's own drawer: that drawer belongs to
+#   the metadata block, which is deleted and reinserted on every usage update, so
+#   a cursor and a half-typed word would be destroyed mid-turn.
+# - Queue entries: headline `* N' where N is the position in the SEND ORDER, and
+#   the prompt on the lines below with ONE space in front of each
+#   (`agent-org-queue--indent' / `--dedent', an exact inverse that keeps blank
+#   lines).  The indent is load-bearing, not cosmetic: a prompt is the user's own
+#   words and those words can be an Org document, and a `*' at column 0 is a
+#   headline that would cut one prompt into two entries — and
+#   `agent-org-queue--headline-re' matches a bare `* <number>' line only, so the
+#   preamble and any hand-typed heading are never an entry and cannot be sent by
+#   accident.  `agent-org-queue--renumber' MUST follow every move, insert and
+#   kill (a number that lies about its place is worse than no number), and
+#   `agent-org-queue--parse' DROPS a blank entry (`agent-org-send' refuses an
+#   empty draft; the queue must not smuggle one past it).
+# - The editor is never the sole writer of a list the session has changed under
+#   it.  A turn can end, or a prompt arrive, while the editor is open, so
+#   `agent-org--drain-queue' and `agent-org--queue-enqueue' tell it through the
+#   chat -> editor link (`agent-org-queue--editor', read with
+#   `agent-org-queue--editor-for', which checks `buffer-live-p' so a killed
+#   editor needs no cleanup hook).  `agent-org-queue-apply' then removes the sent
+#   entries BY TEXT (`agent-org-queue--drop-sent`, first occurrence only) and
+#   appends what arrived, in arrival order.  BY POSITION IS A CORRUPTION BUG: the
+#   drain takes the front of the SESSION's list and the user may have moved that
+#   entry anywhere, so dropping positionally resends a prompt the agent already
+#   answered and loses an edited one.  An entry edited after it went out is the
+#   one case that does go again — the agent never saw those words.  `C-c C-c'
+#   apply is the only write; `C-c C-k' abandon writes nothing.
 # - `agent-org--finish-replay' reads that drawer BEFORE rendering, and applies it
 #   after `agent-org--session-ready'.  Both halves are load-bearing: session-ready
 #   mirrors the freshly replayed buffer over the transcript, and a replayed buffer

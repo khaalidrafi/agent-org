@@ -136,9 +136,14 @@ NonGNU ELPA.
    folded ~:thinking:~ drawer under the same heading.
    Sending while the agent is still responding /queues/ the draft
    (~agent-org-queue-when-busy~, on by default — agent-shell's type-ahead
-   model): queued prompts go out FIFO as each turn ends successfully,
-   and ~agent-org-queue-view~ / ~agent-org-queue-edit~ /
-   ~agent-org-queue-remove~ manage what is waiting.  What is waiting is
+   model): queued prompts go out FIFO as each turn ends successfully.
+   ~C-c C-q~ (~agent-org-queue-edit~) is the one command that manages what
+   is waiting: it opens the queue in its own buffer, where every waiting
+   prompt is one Org subtree — edit its body, ~M-UP~ / ~M-DOWN~ to
+   re-order, ~C-c C-a~ to add, ~C-c C-d~ to drop, ~C-c C-c~ to apply,
+   ~C-c C-k~ to abandon.  The same list is shown in the chat: ~:QUEUE:~ is
+   one drawer of the auto-managed block at the top, and it is the one
+   drawer that arrives open.  What is waiting is
    also on disk, in the transcript's ~:QUEUE:~ drawer, so quitting Emacs
    mid-turn does not swallow it (see [[#transcript-file][Transcript file]]).
 
@@ -371,11 +376,14 @@ refreshes itself as the session reports new facts:
   the agent has issued one, Mode, Model, Context, Cost, Tokens),
 - a ~#+TITLE:~ keyword line (provider — session title),
 - ~:COMMANDS:~ (available ~/slash-commands~), ~:MODES:~ and
-  ~:CONFIG:~ drawers listing everything the agent advertised.
+  ~:CONFIG:~ drawers listing everything the agent advertised, and
+  ~:QUEUE:~ listing the prompts waiting for their turn.
 
-No heading is used — ~* ~ lines belong to the conversation.  Every
-drawer starts folded so the block is just four marker lines; ~TAB~ on
-a drawer line opens or closes it.  The block is deleted and re-inserted
+No heading is used — ~* ~ lines belong to the conversation.  The
+reference drawers start folded, so the block is a few marker lines, and
+~TAB~ on a drawer line opens or closes it. ~:QUEUE:~ is the exception, and
+arrives open: what you typed and has not been answered yet is the one list
+worth reading without asking for it, and it is never shortened. The block is deleted and re-inserted
 on every update, so it never duplicates and never disturbs the
 conversation below it.
 
@@ -413,8 +421,10 @@ write is a note in the echo area, never a broken turn.
 One thing in the file is /not/ conversation: prompts you sent into a busy
 session, which are waiting their turn.  They have no heading yet, and the
 agent has never seen them, so its own history cannot give them back on a
-resume.  They are recorded one per line in a folded ~:QUEUE:~ drawer of the
-metadata block at the top of the transcript, and ~agent-org-resume-session~
+resume.  They are recorded one per line in the ~:QUEUE:~ drawer of the
+metadata block at the top of the transcript — every waiting prompt, with no
+length cap, because a queue is the one list you cannot afford to hear
+about — and ~agent-org-resume-session~
 reads them from there — reloading them and sending the first, the way the
 end of a turn would have.  An empty queue writes no drawer, which is what
 stops a prompt being sent twice.

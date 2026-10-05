@@ -1806,3 +1806,178 @@ restores the copy in =unwind-protect= — so an answer, a quit, or a raise all
 leave the bar where it was.  Asserted in both
 =test-agent-org-permission-quit-sends-cancelled= (quit) and
 =test-agent-org-permission-prompt-offers-option-names= (a real answer).
+
+* The queue editor: one buffer, one command, reconciliation by text
+
+The order was "Add a complete queue editing feature where I can edit each
+prompt in the queue and re-order them.  Show the prompt queue within the
+buffer."  Three commands existed (=queue-view=, =queue-remove=, a minibuffer
+=queue-edit=) and none of them could reorder anything, so all three are gone
+and =agent-org-queue-edit= (=C-c C-q=) is the whole feature.  What is waiting
+is also visible without asking: =:QUEUE:= in the chat's metadata block, shown
+open and never capped.
+
+** TODO Read =agent-org-queue-apply= and the reason it is text, not position
+
+=agent-org.el:2530=.  The core question is what to do with a prompt the agent
+already answered while the editor was open: the drain ran, removed it from
+=:pending-prompts=, and the buffer still shows it at position 1.  Two candidate
+rules:
+
+- /Position./  "Drop the first N entries, N = how many the editor saw when it
+  opened."  Cheap, and wrong twice over: an /edited/ entry that was already
+  sent is dropped so the edit is lost, and a /new/ prompt queued while open
+  shifts into the range of a sent one and is dropped too — or, if you protect
+  the tail, the sent prompt survives and goes out a second time.
+- /Text./  =agent-org-queue--drop-sent= (=agent-org.el:2323=) removes one
+  occurrence of each =:sent= string with =seq-position= + =seq-remove-at-position=,
+  then =append=s the reversed =:added= list, so an entry the user edited is no
+  longer in =:sent= and stays, and a prompt queued while the editor was open
+  is not in the parse yet and lands at the end.
+
+The cost of text-matching is the collision it cannot see: two identical
+waiting prompts, one sent, one not.  That is /accepted/ and it is the correct
+acceptance — =:sent= records exactly one removal per send, so the counts still
+balance; you cannot lose the second copy any more than you can lose the first.
+=agent-org-queue--note-sent= / =--note-added= (2402, 2411) are the only writers
+of those two lists, called from the real mutation sites (=--drain-queue=,
+=--queue-enqueue=), not from the editor, and both lists are cleared on apply so
+a second apply cannot re-drop the same text.
+
+** TODO Read the entry grammar, and the one function that must stay its inverse
+
+An entry is =* N= plus a body where every non-blank line carries /exactly one
+leading space/ (=agent-org-queue--indent=, 2273; =--dedent=, 2287).  The space
+is not formatting: an unindented =*= line would be /another headline/ and an
+unindented =:END:= or property line would close a drawer that is not there, so
+a prompt containing Org structure is only safe inside an entry because of that
+one character.  =--dedent= splits with =(split-string ... "\n" t)= — the nil
+that /keeps/ empty strings, so a prompt with blank lines round-trips; =-indent=
+skips the space on a blank line, because trailing whitespace on an Org line is
+its own problem.  The pair is tested as a pair by
+=test-agent-org-queue-editor-round-trips-every-entry= on a prompt built to
+attack it (headline, drawer end, blank lines, backslash, newline).
+
+Two consequences worth checking by eye:
+
+- The headline is matched by =agent-org-queue--headline-re= (2241), a literal
+  ="^\\* [0-9]+[ \t]*$"=, /never/ by =org-at-heading-p= — the editor is an
+  =org-mode= buffer, so Org's own notion of a heading would also match a
+  headline the user typed in a prompt body… except the indent already prevents
+  that.  The regex is the belt.
+- =agent-org-queue--entry-positions= (2250) returns =(match-beginning 0)=, not
+  the search's return value.  That is the standing AGENTS.md trap (a match's
+  END is inside the next line's body) and here it would misplace every entry
+  boundary by one line.
+
+** TODO Judge the per-kind fold default, which is a /design/ change
+
+Previously "every drawer of the metadata block starts folded".  Now the block
+decides per kind: =agent-org-buffer--metadata-open-drawers= = '("QUEUE")=, so
+COMMANDS/MODES/CONFIG keep their default and QUEUE arrives open — and, pinned
+by =test-agent-org-queue-drawer-arrives-open-and-stays-when-folded=, a QUEUE the
+user /closed/ stays closed.  The rule is "the drawer's default, not a one-time
+instruction", the same rule the =:tool:= board already follows, and it is why
+the fold capture needed the extra =member= test rather than a special case at
+creation.
+
+Alongside it =:QUEUE:= lost its 50-line cap (the other three drawers keep
+ theirs, =agent-org-buffer--metadata-drawer-cap=).  A capped queue is a queue
+that silently stops showing prompts, and the transcript mirror is the file a
+resume reads.  The reader is defensive anyway:
+=agent-org-buffer-transcript-queue= filters to lines starting ="- "=, so a
+=… (+3 more)= residue line from an older build can never be restored as a
+prompt.  Mutation check: widen that filter to "any non-blank line" and
+=test-agent-org-transcript-queue-reads-its-own-lines-only= fails,
+restoring 3 entries where 2 are real.
+
+** TODO Why the editor is a separate buffer, and why apply keeps it open
+
+The obvious alternative was to edit =:QUEUE:= in the chat buffer itself.  It
+cannot work: =agent-org-buffer-refresh-metadata= deletes and re-inserts the
+whole block on /every/ usage update, so a cursor in that drawer is a cursor in
+a region about to be recreated, and tokens/cost arrive per chunk.  The editor
+is therefore its own buffer (=agent-org-queue--editor=, a buffer-local alist
+chat→editor) and the chat drawer stays auto-managed — one writer each, which
+is the same rule as the rest of the block.
+
+=C-c C-c= apply is a /save/, not a close: the queue is session state, the
+buffer stays open so you can keep working the list, and =--repaint= preserves
+point's line and column rather than resetting to the top.  =C-c C-k= cancel is
+the only discard.
+
+** DONE Six mutation checks, and the three tests that were wrong
+
+Every rule above was verified by breaking the source and naming the test that
+catches it (each restored byte-exact, md5-compared):
+
+1. =--drain-queue= stops calling =--note-sent= → =-drops-what-the-agent-already-sent=.
+2. Drop sent entries by position instead of text → the same test.
+3. =--repaint= stops indenting → =-round-trips-every-entry=.
+4. QUEUE takes the 50-line cap → =-drawer-shows-every-waiting-prompt=.
+5. The new drawer arrives folded → both =-drawer-arrives-open…= tests.
+6. Reader accepts any non-blank line → =-transcript-queue-reads-its-own-lines-only=.
+
+Also worth recording: /three of the pre-written tests were wrong and the
+implementation was right/, which is the useful direction for a mistake.
+
+- =-numbers-and-moves-entries= expected a rotation; =org-move-subtree-down= is
+  a one-place move, so the two expectation lists were swapped.
+- =-apply-writes-session-and-buffer= and =-reopens-with-its-edits= typed
+  =" better"= at point after =(forward-line 1)=, which prepends; the gesture
+  intended is append, so both needed =(end-of-line)=.
+- The transcript fixture had =- keep\\\\ntoo= where =- keep\\ntoo= is the
+  encoding of a real newline; the /reader/ was fine, the fixture doubled the
+  backslash and so tested a literal backslash.
+- And a package-level fact learned here: =define-derived-mode= creates no
+  =agent-org-queue-mode-p= predicate, so a test asserting =derived-mode-p= is
+  not being pedantic — the obvious call is void.  Same file,
+  =set-keymap-parent= to =org-mode-map= is required, because the generated
+  =agent-org-queue-mode-map= has a nil parent and would otherwise offer no
+  Org keys at all (=M-UP= / =M-DOWN= are bound explicitly, but =C-a=, =M-e=
+  and friends are the parent's).
+
+** DONE The live run, and the one line it deleted
+
+Batch proves logic; only a displayed buffer proves an editor.  Against a real
+=qoder --acp= session (=agent-org-session-strategy= bound to =new= so nothing
+prompts), three prompts queued under a streaming turn, then the whole gesture:
+edit entry 2's body, =M-UP=, =C-c C-a=, type, =C-c C-c=.  The session's
+=:pending-prompts= came back in the /edited, re-ordered/ shape, the chat's
+=:QUEUE:= drawer mirrored it, and the turns that followed went out as
+=BRAVO. EDITED → ALPHA → CHARLIE → DELTA= — the reorder reached the /wire/,
+which is the claim this feature makes.  =C-c C-k= on an edited queue wrote
+nothing and cleared the chat's editor reference.
+
+It also caught one line of mine that was a lie: =(setq-local truncate-lines t)=
+in =agent-org-queue-mode-'s= body measured =nil= once the buffer was displayed,
+because =org-mode= applies its own startup visibility /after/ a derived mode's
+body has run, and the very next line set =org-startup-truncated= nil.  Wrapping
+was the intent, so the contradictory line is gone rather than the setting that
+wins.  The lesson for a derived mode: a buffer-local set in the body is only
+yours if the parent's startup does not recompute it.
+
+One behaviour the run made visible and left alone: reopening the editor after
+the queue has drained shows the entries that /were/ waiting, because a live
+editor is never clobbered (=--editor-for= answers the live buffer and
+=agent-org-queue-edit= only pops it).  That is not a bug the apply can spread:
+those strings are exactly what =:sent= holds, so applying drops them and the
+queue ends up right.  Editing a stale list is confusing for one moment; losing
+an in-progress edit every time a turn ends would be worse.
+
+** TODO What this does NOT do
+
+- /No live undo history./  =--repaint= binds =buffer-undo-list= nil, so =C-c C-c=
+  after an edit sequence cannot be undone as one step — the repaint /is/ the
+  record.  Undo still works on the edits themselves while the buffer is
+  unbent.  If you want apply to be undoable, the change is in =--repaint=, and
+  it has to survive the =front-sticky read-only= properties the entry bodies
+  carry (measured: =delete-region= needs =buffer-undo-list t= to work there, not
+  =inhibit-read-only=).
+- /Renumbering is cosmetic./  The =* N= number is never the identity of an
+  entry; =--parse= reads bodies in buffer order and =--renumber= rewrites the
+  numbers after a move.  So a hand-edited number is a display bug, not a lost
+  prompt.
+- /Queue commands are not in the editor's way./  Enqueue while the editor is
+  open works (=--note-added=, and the prompt appears at the end on the next
+  repaint); the =M-x= queue list is gone, so =C-c C-q= is the only way in.

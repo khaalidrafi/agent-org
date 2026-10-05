@@ -128,10 +128,15 @@ fixed by two manual rules:
   conversation only.  The block spans `point-min` up to the first `* ` line,
   which is what `refresh-metadata` deletes-and-reinserts to stay idempotent.
 
-The block is folded by default.  Per `info "(org) Initial visibility`
-(§2.2.2), first-visit folding is normally driven by `#+STARTUP:` — but these
-buffers are created programmatically and never "visited", so we fold the
-drawers directly (see §5) rather than relying on a startup line.
+The block is folded by default — with one exception, decided per kind.  Per
+`info "(org) Initial visibility` (§2.2.2), first-visit folding is normally
+driven by `#+STARTUP:` — but these buffers are created programmatically and
+never "visited", so we fold the drawers directly (see §5) rather than relying
+on a startup line, and `agent-org-buffer--metadata-open-drawers` is the list
+of kinds that arrive UNFOLDED.  Today that is QUEUE: a queue that appears in
+the middle of a turn is news, and folded it is invisible exactly when it
+matters.  A drawer the user folded by hand stays folded — the list is a
+default for creation, never an instruction to every repaint.
 
 **`:QUEUE:` is the one volatile drawer, and it comes last.**  COMMANDS, MODES
 and CONFIG are reference the agent advertised once; QUEUE holds the prompts
@@ -143,7 +148,9 @@ thing its `session/load` replay cannot give back.  One escaped line per
 prompt, oldest first (`agent-org-buffer--queue-encode`: newline and backslash
 flattened, `- ` prefixed so a prompt that *is* `:END:` cannot close its own
 drawer); an empty queue renders **no** drawer, because that absence is what
-stops a resume re-sending a prompt that already went out.
+stops a resume re-sending a prompt that already went out.  It is also the only
+drawer with no line cap (§17), and editing it is `agent-org-queue-edit`'s job
+in a buffer of its own — never typing inside this drawer (§17).
 
 Rebuilds are cheap-checked: `refresh-metadata` renders the block first and
 compares it against `agent-org-buffer--metadata-cache`, doing nothing when it
@@ -951,6 +958,85 @@ Everything follows from that asymmetry:
   (the paint must not call `font-lock-mode` at all, not even to restore it) and
   `test-agent-org-chat-buffer-asks-for-font-lock-when-displayed` (the
   buffer-local hook is installed, and running it is what asks).
+
+---
+
+## 17. The prompt queue: one command, one editor, text-not-position
+
+A queue of prompts is a LIST, and the only interesting thing about a list of
+things you are about to say is its ORDER.  The first port had three commands
+and none of them could reorder: `agent-org-queue-view` printed a read-only
+listing in a hidden buffer, `agent-org-queue-remove` picked a number in the
+minibuffer, and `agent-org-queue-edit` re-read the LAST entry only through
+`read-string`.  All three are the same list seen three ways, so all three are
+now one command — `agent-org-queue-edit` on `C-c C-q` — that opens a buffer
+where an entry is a prompt (`agent-org-queue-mode`, derived from `org-mode`).
+One action, one name in `M-x`, same rule as §10's command naming.
+
+* **A separate buffer, never the chat's own `:QUEUE:` drawer.**  That drawer is
+  part of the metadata block, and the block is deleted and reinserted on every
+  `usage_update` (§5).  A cursor and a half-typed word inside it would be
+  destroyed mid-turn.  So the drawer is for READING and the editor is for
+  WORKING, and both are driven by the same session list.
+* **Entry grammar.**  Headline `* N`, where N is the position in the send order;
+  the prompt on the lines below it, EVERY line indented by one space
+  (`agent-org-queue--indent`, with `--dedent` as its exact inverse).  The indent
+  is not decoration: a prompt is the user's own words, those words can be an Org
+  document, and a `*` at column 0 is a headline — which would cut one prompt
+  into two entries and send half of each.  `agent-org-queue--headline-re`
+  matches a bare `* <number>` line and nothing else, so the preamble and any
+  heading a user types are not entries and cannot be sent by accident.
+  `agent-org-queue--renumber` MUST run after every move, insert and kill: a
+  number that lies about its place is worse than no number, because the number
+  IS the order the user is choosing.
+* **An empty entry is dropped, never sent.**  `agent-org-send` refuses an empty
+  draft, so the queue must not be able to smuggle one through by leaving a
+  headline bare.  That is also why an empty queue opens with one blank entry:
+  the buffer doubles as the place to compose the next prompt, and a blank entry
+  costs nothing.
+* **The editor is never the sole writer of a list that moved under it.**  A turn
+  can end, or a prompt can arrive, while the editor is open.  So
+  `agent-org--drain-queue` and `agent-org--queue-enqueue` tell it (chat → editor
+  through `agent-org-queue--editor`, read with `agent-org-queue--editor-for`,
+  which checks `buffer-live-p` so a killed editor needs no cleanup hook), and
+  `agent-org-queue-apply` reconciles: sent entries removed BY TEXT, first
+  occurrence only, then newly arrived ones appended in arrival order.
+  Removing by POSITION would be simpler and would be a corruption bug — the
+  drain takes the front of the SESSION's list, and the user may have moved that
+  entry anywhere in the editor, so positional dropping resends a prompt the
+  agent already answered while losing an edited one.  An entry edited AFTER it
+  went out is the one case that does go again: the agent never saw those words.
+* **`C-c C-c` is the only write; `C-c C-k` writes nothing.**  Applying still
+  writes ONE thing — the session's `:pending-prompts` — and
+  `agent-org--queue-refresh` (§14) mirrors it into the header count, the
+  chat's drawer and the transcript file, so those three cannot disagree.  The
+  editor stays open after apply and is repainted from the result: applying is a
+  SAVE in the middle of work, not a close.  Re-opening an open editor switches
+  to it instead of repainting, because a refresh would silently drop edits that
+  were never applied.
+* **Killing an entry is a KILL.**  `agent-org-queue-kill-entry` uses
+  `kill-region`, so a mis-press is `C-y` away — the one queue command with no
+  confirmation, and dropping a prompt the user meant to keep is the mistake
+  worth making recoverable.
+* **QUEUE has no line cap.**  `agent-org-buffer--metadata-drawer` takes CAP and
+  QUEUE passes `nil`, while COMMANDS/MODES/CONFIG pass
+  `agent-org-buffer--metadata-drawer-cap` (50).  Reference drawers are a
+  preview of something the agent can be asked for again, so truncation costs a
+  look; the queue is the record, the only copy of a prompt that survives a
+  crash — and its `… (+N more)` marker would then be read back as a phantom
+  prompt.  The reader is defensive about the same boundary:
+  `agent-org-buffer-transcript-queue` accepts only `- ` lines, so a marker left
+  by an older build, or a line a person typed while looking at the file, cannot
+  become a prompt on resume.
+
+Tests: 16 in `tests/test-agent-org.el` (`test-agent-org-queue-editor-*`,
+`test-agent-org-queue-drawer-*`, `…-transcript-queue-reads-its-own-lines-only`),
+all seen failing before the implementation.  The reconciliation is pinned by
+`-drops-what-the-agent-already-sent` (a real drain through the real
+`agent-org--drain-queue`) and `-keeps-prompts-queued-while-open` (a real
+enqueue), and the escape round trip by `-round-trips-every-entry`, whose
+fixtures are a multi-line prompt with an indented line and a `*` at column 0,
+and one that starts `:END:` with a blank line inside it.
 
 ---
 
