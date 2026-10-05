@@ -2002,7 +2002,7 @@ in the user's type-ahead box across the turn boundary."
                      (agent-org--drain-queue session buffer)
                      (agent-org-buffer-refresh-metadata buffer)
                      ;; the turn's second and last boundary: the answer,
-                     ;; its tool headings and its thought are all frozen
+                     ;; its tool drawer and its thought are all frozen
                      ;; into the buffer by now, so one mirror call puts
                      ;; the whole turn on disk
                      (agent-org-buffer-transcribe buffer)

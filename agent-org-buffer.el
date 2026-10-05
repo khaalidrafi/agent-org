@@ -27,21 +27,23 @@
 ;; turn (only the freshly appended region is fontified, never the whole
 ;; buffer).
 ;;
-;; Tool calls render as level-2 `** KEYWORD title [id]' subheadings
+;; Tool calls render as one `- KEYWORD title' line of a `:tool:' drawer
 ;; under the current `* Agent' heading, using the per-file keyword set
 ;; declared by the metadata block (`#+TODO: TODO DOING | DONE
 ;; CANCELLED'): pending→TODO, in_progress→DOING, completed→DONE,
-;; failed→CANCELLED.  Thoughts keep the folded :thinking: drawer (a
-;; drawer can hold no headings, so tools never shared that model).
+;; failed→CANCELLED.  Thoughts keep the folded :thinking: drawer, drawn by
+;; the same primitive; the tool drawer is created OPEN (progress is what
+;; the user came to watch) and the thought drawer FOLDED.  A drawer can
+;; hold no headings, which is why a call is a line and not a `**'.
 ;;
 ;; All status, progress and error feedback is shown in the buffer's
 ;; `header-line' (the top bar), the same way `gptel' and `agent-shell'
 ;; surface state.  The mode line is left untouched (no lighter).  The
-;; body holds conversation (User/Agent turns, tool-call subheadings,
-;; thoughts) plus one auto-managed metadata block at the very top: a
-;; PROPERTIES drawer first, then the `#+TITLE:' keyword line (the
-;; harness's own session title, verbatim), then the `#+TODO:' setup
-;; line declaring the tool-heading keyword set, then
+;; body holds conversation (User/Agent turns, per-turn :tool: and
+;; :thinking: drawers) plus one auto-managed metadata block at the very
+;; top: a PROPERTIES drawer first, then the `#+TITLE:' keyword line (the
+;; harness's own session title, verbatim), then the `#+TODO:' setup line
+;; declaring the tool-call keyword set, then
 ;; COMMANDS/MODES/CONFIG drawers — drawers folded by default, and no
 ;; heading, since `* ' lines belong to the conversation.
 ;;
@@ -63,7 +65,7 @@
 ;;   - The session's Org file (see `agent-org-transcribe') is a MIRROR of
 ;;     this buffer's frozen body, rewritten at turn boundaries — not an
 ;;     append log.  One renderer, so the file can never disagree with the
-;;     chat: a tool heading that changed TODO→DONE in place is DONE in the
+;;     chat: a tool line that changed TODO→DONE in place is DONE in the
 ;;     file, and twenty chunks of an answer cost no writes at all.
 
 ;;; Code:
@@ -269,8 +271,11 @@ session and says nothing about the session's state."
 ;; as a free-variable reference.
 (defconst agent-org-buffer--todo-setup "#+TODO: TODO DOING | DONE CANCELLED"
   "Per-file keyword set (`org-set-regexps-and-options' reads it from
-the metadata block) backing tool-call headings: pending→TODO,
-in_progress→DOING, completed→DONE, failed→CANCELLED.")
+the metadata block) naming the tool-call states: pending→TODO,
+in_progress→DOING, completed→DONE, failed→CANCELLED.  The keywords now
+open a `:tool:' drawer LINE rather than a heading -- Org forbids
+headlines inside drawers -- so this declares the vocabulary a reader of
+a transcript sees, and keeps `C-c C-t' able to retarget them.")
 
 ;;;; Buffer creation
 
@@ -340,14 +345,17 @@ box stays typeable.  nil when no box is open.")
 
 (defvar-local agent-org-buffer--turn-anchor nil
   "Marker at the start of the streaming `* Agent' heading, if any.
-Tool headings and the :thinking: drawer are located relative to this
-anchor, not to the buffer end, because `**' tool headings make the
-Agent heading no longer the last heading of the turn.")
+The turn's drawers are located relative to this anchor, not to the
+buffer end, because the body trails it: the type-ahead box, the
+`:thinking:' drawer and the `:tool:' drawer all live after the heading,
+so the heading is never the last thing in the turn.")
 
 (defvar-local agent-org-buffer--tools nil
-  "Ordered alist ((ID :marker MARKER :title TITLE :status STATUS) ...)
-for the current Agent turn; each ID owns one `**' tool heading, and
-`agent-org-buffer-insert-tool' rewrites it in place via MARKER.")
+  "Ordered alist ((ID :title TITLE :status STATUS) ...) for the current
+Agent turn; each ID owns one line of the turn's `:tool:' drawer.  The
+whole drawer is redrawn from this list on every update
+(`agent-org-buffer-insert-tool'), so no marker per call: the list IS
+the record, and its order is the order the agent made the calls.")
 
 (defvar-local agent-org-buffer--thought nil
   "Thinking text accumulated for the current Agent turn, rendered into
@@ -834,12 +842,9 @@ ABOVE the box instead of inside it."
             (move-marker (setq-local agent-org-buffer--turn-anchor
                                      (make-marker))
                          beg))
-          ;; turn-local tool state: drop the previous turn's markers so a
-          ;; reused toolCallId (e.g. after `resume') cannot rewrite its
-          ;; old heading
-          (dolist (e agent-org-buffer--tools)
-            (when-let* ((m (plist-get (cdr e) :marker)))
-              (set-marker m nil)))
+          ;; turn-local tool state: the drawer is rebuilt from scratch
+          ;; under a new heading, so the previous turn's entries (and any
+          ;; reused toolCallId arriving after `resume') start fresh
           (setq agent-org-buffer--streaming-p t
                 agent-org-buffer--stream-start (point)
                 agent-org-buffer--tools nil
@@ -873,7 +878,7 @@ Starts a new Agent heading if not already streaming."
             (insert text)
             (agent-org-buffer--protect beg (point))))))))
 
-;;;; Auto-folded per-turn structure (tool headings, thinking drawer)
+;;;; Auto-folded per-turn structure (tool and thinking drawers)
 
 (defun agent-org-buffer--live-mark (marker)
   "Position of MARKER, or nil when it points into no buffer.
@@ -883,14 +888,18 @@ inactive, which is nearly always the case for a bookkeeping marker."
        (marker-buffer marker)
        (marker-position marker)))
 
-(defun agent-org-buffer--redraw-drawer (buffer name lines)
+(defun agent-org-buffer--redraw-drawer (buffer name lines &optional fold)
   "Replace the current turn's :NAME: drawer in BUFFER with LINES (list of strings).
-Creates the drawer at the end of the turn region (folded) when absent;
-when present, swaps the body in place and restores the fold state, so
-a drawer the user opened stays open.  The search is bounded by the
-turn anchor, not the last heading, because `**' tool headings make the
-Agent heading no longer the buffer's last heading.  Fold state is
-driven with `org-fold-region' directly:
+Creates the drawer at the end of the turn region when absent -- folded
+when FOLD is non-nil, open when it is nil -- and, when the drawer is
+already there, swaps the body in place and restores the fold state, so a
+drawer the user opened stays open and one they closed stays closed.  FOLD
+therefore describes only a drawer that does not exist yet: the
+`:thinking:' drawer is born folded (the raw reasoning is not the point of
+the turn), the `:tool:' drawer born open (what the agent is DOING right
+now is).  The search is bounded by the turn anchor, not the last heading,
+because the turn's drawers and body lines all trail that heading.  Fold
+state is driven with `org-fold-region' directly:
 `org-fold-hide-drawer-toggle' validates the org-element cache, which
 is stale for the just-streamed region until it is re-fontified, and
 raises \"Not at a drawer\"."
@@ -918,11 +927,12 @@ raises \"Not at a drawer\"."
                 (let ((beg (point)))
                   (insert (format ":%s:\n%s\n:end:\n" name body))
                   (agent-org-buffer--protect beg (point))
-                  (goto-char beg)
-                  (forward-line 1)
-                  (let ((content (point)))
-                    (re-search-forward "^:end:$")
-                    (org-fold-region content (line-end-position) t 'drawer))))
+                  (when fold
+                    (goto-char beg)
+                    (forward-line 1)
+                    (let ((content (point)))
+                      (re-search-forward "^:end:$")
+                      (org-fold-region content (line-end-position) t 'drawer)))))
             (let* ((content (save-excursion
                               (goto-char drawer-beg)
                               (forward-line 1)
@@ -958,7 +968,7 @@ own drawer."
             (concat agent-org-buffer--thought text))
       (agent-org-buffer--redraw-drawer
        buffer "thinking"
-       (split-string agent-org-buffer--thought "\n")))))
+       (split-string agent-org-buffer--thought "\n") t))))
 
 (defconst agent-org-buffer--label-width 60
   "Characters of agent-supplied text shown on a single line.")
@@ -980,45 +990,24 @@ its own — the full detail is the agent's to keep."
         flat
       (concat (substring flat 0 (1- agent-org-buffer--label-width)) "…"))))
 
-(defun agent-org-buffer--goto-tool-heading-position ()
-  "Point where the next tool heading of the current turn belongs.
-After everything already in the turn, but before the :thinking: drawer
-so tool headings stay grouped above the thought fold.  The turn runs
-from `agent-org-buffer--turn-anchor' to `agent-org-buffer--render-end'
-(the live type-ahead box trails it while a turn streams).  The drawer
-search runs in `save-excursion': a failed `re-search-forward' leaves
-point somewhere in the scanned region, not back at the start.
-
-Take the match's BEGINNING: `re-search-forward' returns its end, which
-for `^:thinking:$' is the newline that ends the marker line — the
-beginning of the drawer's body.  Inserting a heading there puts it
-INSIDE the drawer, and `agent-org-buffer--redraw-drawer' replaces the
-whole body on the next thought chunk, deleting it.  A live qoder turn
-that way lost three of its four tool calls.  (`line-beginning-position'
-cannot rescue this: it only returns a position, it does not move
-point.)"
-  (goto-char (or (agent-org-buffer--live-mark
-                  agent-org-buffer--turn-anchor)
-                 (agent-org-buffer--render-end)))
-  (let ((drawer (save-excursion
-                  (when (re-search-forward "^:thinking:$"
-                                           (agent-org-buffer--render-end) t)
-                    (match-beginning 0)))))
-    (if drawer
-        (goto-char drawer)
-      (goto-char (agent-org-buffer--render-end)))))
-
 (defun agent-org-buffer-insert-tool (buffer content)
-  "Record the tool call or update CONTENT in BUFFER as a `**' subheading.
+  "Record the tool call or update CONTENT in BUFFER as a `:tool:' drawer line.
 CONTENT is the tool-call alist from the ACP notification.  Each
-toolCallId owns exactly one heading `** KEYWORD title' under the current
-`* Agent' heading, KEYWORD mapping the ACP status onto the per-file TODO
-set (`agent-org-buffer--todo-setup'); later updates rewrite that heading
-in place via its stored marker.  The id never appears in the heading
-text — it is the agent's bookkeeping, and the marker found under it
-already owns the line.  Tool calls are headlines, so they cannot live
-in a drawer (Org forbids headlines inside drawers) and instead fold with
-TAB like any heading."
+toolCallId owns exactly one line `- KEYWORD title' of the current turn's
+`:tool:' drawer, KEYWORD mapping the ACP status onto the per-file TODO set
+(`agent-org-buffer--todo-setup').  Later updates overwrite the stored
+title/status and the WHOLE drawer is redrawn from `agent-org-buffer--tools',
+so an id can never sprout a second line and no per-call marker can go stale
+-- the list is the record, its order the order the agent made the calls.
+The id never appears on the line: it is the agent's bookkeeping, and the
+entry looked up under it already owns the line.
+
+LINES, not headings: Org forbids headlines inside drawers (info \"(org)
+Drawers\"), so a call that wants to sit in a `:tool:' drawer cannot be a
+`**' heading.  That is the user's order -- \"Tool calls should be inside
+:tool: drawers\" -- and the reason `**' disappeared from the turn: the
+Agent heading is now the turn's only heading, and its tool calls fold
+open beside a folded `:thinking:' drawer."
   (let ((id (map-elt content 'toolCallId))
         (title (or (map-elt content 'title) (map-elt content 'toolName)))
         (status (map-elt content 'status)))
@@ -1026,45 +1015,28 @@ TAB like any heading."
       (with-current-buffer buffer
         (unless agent-org-buffer--streaming-p
           (agent-org-buffer-start-agent-turn buffer nil))
-        (let* ((entry (cdr (assoc id agent-org-buffer--tools)))
-               (keyword (agent-org-buffer--tool-keyword
-                         (or status (and entry (plist-get entry :status)))))
-               ;; render-time fallbacks, never stored, so a title-less
-               ;; update cannot downgrade the title; the label is
-               ;; flattened because a heading is exactly one line
-               (name (agent-org-buffer--label
-                      (or title (and entry (plist-get entry :title)) "tool")))
-               ;; no trailing newline: the in-place rewrite keeps the
-               ;; line's own, and the fresh insert adds one explicitly
-               (htext (format "** %s %s" keyword name)))
-          (or entry
-              (setq entry (list :marker nil :title nil :status nil)
-                    agent-org-buffer--tools
-                    (append agent-org-buffer--tools (list (cons id entry)))))
+        (let ((entry (cdr (assoc id agent-org-buffer--tools))))
+          (unless entry
+            ;; both keys pre-exist so `plist-put' below always mutates in
+            ;; place: it only prepends -- returning a NEW list -- when a
+            ;; key is absent, and `entry' here would keep the old one
+            (setq entry (list :title nil :status nil)
+                  agent-org-buffer--tools
+                  (append agent-org-buffer--tools (list (cons id entry)))))
           (when title (plist-put entry :title title))
           (when status (plist-put entry :status status))
-          (let ((inhibit-read-only t)
-                (old (plist-get entry :marker)))
-            (save-excursion
-              (if (and (markerp old) (marker-buffer old) (marker-position old))
-                  (progn
-                    ;; rewrite the existing heading line in place
-                    (goto-char old)
-                    (beginning-of-line)
-                    (delete-region (point) (line-end-position))
-                    (insert htext)
-                    (agent-org-buffer--protect
-                     (line-beginning-position) (line-end-position)))
-                (progn
-                  ;; fresh heading, then remember where it lives
-                  (agent-org-buffer--goto-tool-heading-position)
-                  (agent-org-buffer--separator)
-                  (let ((beg (point))
-                        (marker (make-marker)))
-                    (insert (concat htext "\n"))
-                    (agent-org-buffer--protect beg (point))
-                    (set-marker marker beg)
-                    (plist-put entry :marker marker)))))))))))
+          ;; render-time fallbacks, never stored, so a title-less update
+          ;; cannot downgrade the title; the label is flattened because a
+          ;; drawer entry is one line
+          (agent-org-buffer--redraw-drawer
+           buffer "tool"
+           (mapcar (lambda (e)
+                     (format "- %s %s"
+                             (agent-org-buffer--tool-keyword
+                              (plist-get (cdr e) :status))
+                             (agent-org-buffer--label
+                              (or (plist-get (cdr e) :title) "tool"))))
+                   agent-org-buffer--tools)))))))
 
 ;;;; Transcript file
 
@@ -1076,7 +1048,7 @@ whose transcript is a real org file under version control does not want
 a second copy appearing behind it.
 
 The file is a MIRROR of the buffer, not an append log.  That choice is
-forced by the tool headings: they are one line rewritten in place
+forced by the tool drawer: its line for one call is rewritten in place
 TODO→DOING→DONE, so an append-only log would keep every superseded
 state of every call in the file, and the transcript would be a
 different document from the chat that produced it.  Mirroring means one
