@@ -1954,6 +1954,103 @@ Currently supports plain text blocks only."
   (list `((type . "text")
           (text . ,text))))
 
+(defcustom agent-org-send-session-context t
+  "Whether each prompt tells the agent which model, session and agent it is.
+An agent asked \"which model are you?\" answers from its own idea of the
+default, which is wrong the moment this client has selected another model
+through `session/set_config_option' — exactly how MiniMax runs over
+OpenCode.  The session id and the harness name have the same problem: all
+three are the client's to know, and a commit trailer, a bug report or a
+config request needs them.
+With nil, agent-org sends only what you typed."
+  :type 'boolean
+  :group 'agent-org)
+
+(defun agent-org--context-field (value)
+  "Flatten VALUE to one line, without cutting it short.
+A model's label comes out of the agent's own `configOptions' and a
+provider's name out of its spec, so the standing rule applies: never trust
+a harness label to be short or single-line (AGENTS.md).  The whitespace
+collapse is `agent-org-buffer--label''s, MINUS its truncation — this string
+goes on the wire and is never displayed, and half a model name is the lie
+the block exists to prevent.  Returns nil for nothing to say, so an unknown
+fact is absent rather than `nil'."
+  (when-let* ((text (and value (format "%s" value)))
+             (flat (mapconcat #'identity
+                              (split-string text "[ \t\n\r]+" t)
+                              " ")))
+    (and (not (string-empty-p flat)) flat)))
+
+(defun agent-org--context-line (label id &optional name)
+  "One \"label: NAME (ID)\" fact, or \"label: ID\" when nothing names it.
+Both spellings go because they answer different questions — NAME is what a
+person and an agent read (\"MiniMax M3\"), ID is what a request or a trailer
+needs (\"minimax/MiniMax-M3\") — and neither derives from the other.  An
+unnamed or already-named-by-its-id value writes the value once, so no line
+reads `model: QModel (QModel)'."
+  (let* ((id (agent-org--context-field id))
+         (flat (or (agent-org--context-field name) id)))
+    (when flat
+      (format "%s: %s%s" label flat
+              (if (and id (not (string= flat id)))
+                  (format " (%s)" id)
+                "")))))
+
+(defun agent-org--context-facts (session buffer)
+  "The fact lines the agent is told about SESSION, as a list.
+Order is fixed — agent, model, session — because the block is something a
+person quotes at an agent and a test pins.  A fact the client does not know
+is ABSENT, never `nil' or \"unknown\": goose advertises no model option of
+this shape, and a `model: nil' line would be an agent told something false.
+The model lives on BUFFER's status (it is what the header line renders, and
+the only place the label and the id are stored together by
+`agent-org--ingest-config'); the agent id and the session id live on
+SESSION, because they identify the connection rather than this buffer."
+  (let ((status (buffer-local-value 'agent-org-buffer--status buffer)))
+    (seq-remove #'null
+                (list (agent-org--context-line "agent"
+                                               (plist-get session :name)
+                                               (plist-get status :provider))
+                      (agent-org--context-line "model"
+                                               (plist-get status :model)
+                                               (plist-get status :model-name))
+                      (agent-org--context-line "session"
+                                               (plist-get session
+                                                          :session-id))))))
+
+(defun agent-org--session-context-text (session buffer)
+  "The <agent-org-context> block for one turn of SESSION, as a string.
+Built PER TURN, because the middle fact changes mid-session: `C-c C-m'
+between two questions is a normal thing to do, and a block computed at
+session start would tell the agent a model that stopped being true turn one
+ago — worse than saying nothing.
+The delimiters are the point: they mark the text as the client talking about
+the connection, not the person asking for something, so an agent never
+quotes the block as the request or treats it as an instruction to act on."
+  (let ((facts (agent-org--context-facts session buffer)))
+    (concat "<agent-org-context>\n"
+            "Client metadata about this connection,"
+            " not part of the user's request.\n"
+            (mapconcat #'identity facts "\n")
+            ;; no blank line when a host gives no facts at all: a gap inside
+            ;; a fixed-format block reads as a field that failed to print
+            (and facts "\n")
+            "</agent-org-context>\n")))
+
+(defun agent-org--prompt-blocks (session buffer text)
+  "The content blocks for TEXT: the user's words, then the client's facts.
+The user's block is EXACTLY what was typed — `agent-org--make-content-blocks'
+is unchanged, because this is the one place the client adds to the wire, and
+it adds beside the request rather than inside it.  Appending LAST also keeps
+every reader of \"the first block\" honest, on our side and the agent's: the
+question stays the thing that leads.
+`agent-org-send-session-context' nil leaves just that one block."
+  (append (agent-org--make-content-blocks text)
+          (when agent-org-send-session-context
+            (list `((type . "text")
+                    (text . ,(agent-org--session-context-text session
+                                                             buffer)))))))
+
 ;;;; Usage accounting
 
 (defun agent-org--record-usage (buffer resp)
@@ -2134,7 +2231,7 @@ in the user's type-ahead box across the turn boundary."
      :client client
      :request (acp-make-session-prompt-request
                :session-id sid
-               :prompt (agent-org--make-content-blocks text))
+               :prompt (agent-org--prompt-blocks session buffer text))
      :buffer buffer
      :on-success (lambda (resp)
                    (when (eq (plist-get session :turn) turn)

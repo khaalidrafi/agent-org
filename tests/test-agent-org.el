@@ -6282,6 +6282,245 @@ bound is worse than none) and the printed numbers are the report."
                          (/ (* elapsed 1000000) lines)))
           (should (< elapsed 1.0)))))))
 
+;;;; The agent learns which model, session and agent it is
+
+(defun ao--all-prompt-blocks ()
+  "Every `session/prompt' captured by `ao--capture-wire', oldest first.
+Each entry is the list of content blocks as the wire would carry them, so
+a test can see the user's own block and the client's context block apart.
+Needs `ao--wire-prompt-texts': the mock's request builder answers NIL, and
+a NIL request would be captured under NIL and be invisible here."
+  (mapcar (lambda (entry)
+            (append (map-elt (map-elt (plist-get (cdr entry) :request) ':params)
+                             'prompt)
+                    nil))
+          (reverse (seq-filter (lambda (entry)
+                                 (equal (car entry) "session/prompt"))
+                               ao--sent))))
+
+(defun ao--sent-blocks (sent)
+  "The content blocks of every prompt in SENT, oldest first.
+The `cl-letf' idiom the queue tests use (a stubbed
+`acp-make-session-prompt-request' that hands back its `:prompt' argument),
+so this is the same view `ao--all-prompt-blocks' gives the
+`ao--capture-wire' idiom."
+  (mapcar (lambda (kw) (plist-get kw :request)) (reverse sent)))
+
+(ert-deftest test-agent-org-send-appends-a-context-block-after-the-users-words ()
+  "The prompt is two text blocks: the user's words, then the client's facts.
+The user's block stays EXACTLY what was typed — this is the one place the
+client adds to the wire, and it adds beside the request rather than inside
+it, so an agent quoting the question quotes the person.  Appending LAST is
+also what keeps every existing reader of the first block honest."
+  (let ((sent nil))
+    (cl-letf (((symbol-function 'acp-send-request)
+               (lambda (&rest kw) (push kw sent)))
+              ((symbol-function 'acp-make-session-prompt-request)
+               (lambda (&rest a) (plist-get a :prompt))))
+      (let ((pair (ao--make-test-session "ctx-first"))
+            (agent-org-send-session-context t))
+        (with-current-buffer (car pair)
+          (agent-org-buffer-insert-prompt (car pair))
+          (ao--type "What is a monad?")
+          (agent-org-send))
+        (let ((blocks (car (ao--sent-blocks sent))))
+          (should (= 2 (length blocks)))
+          (should (equal "What is a monad?" (map-elt (car blocks) 'text)))
+          (should (equal "text" (map-elt (cadr blocks) 'type)))
+          (should (string-prefix-p "<agent-org-context>"
+                                   (map-elt (cadr blocks) 'text)))
+          (should (string-suffix-p "</agent-org-context>\n"
+                                   (map-elt (cadr blocks) 'text))))
+        (kill-buffer (car pair))))))
+
+(ert-deftest test-agent-org-context-block-names-the-agent-model-and-session-id ()
+  "The block carries the three facts, in the form the agent can quote back.
+An agent asked \"which model are you?\" answers from its own idea of the
+default, which is wrong the moment the client has selected another model
+through `session/set_config_option' — the whole reason OpenCode-fronted
+MiniMax exists.  Both the label and the id go: the label is what a person
+reads, the id is what a commit trailer or a config request needs, and the
+agent cannot derive one from the other.
+The exact text is the spec here, because a format an agent has to guess at
+is a format it will misquote."
+  (ao--capture-wire
+    (ao--wire-prompt-texts
+      (let ((agent-org-send-session-context t)
+            (buf (ao--chat-on-model "minimax/MiniMax-M3" "MiniMax M3"
+                                    "7c1f-abc")))
+        (with-current-buffer buf
+          (agent-org-buffer-insert-prompt buf)
+          (ao--type "hi")
+          (agent-org-send))
+        (should (equal (map-elt (cadr (car (ao--all-prompt-blocks))) 'text)
+                       (concat
+                        "<agent-org-context>\n"
+                        "Client metadata about this connection,"
+                        " not part of the user's request.\n"
+                        "agent: Qoder (qoder)\n"
+                        "model: MiniMax M3 (minimax/MiniMax-M3)\n"
+                        "session: 7c1f-abc\n"
+                        "</agent-org-context>\n")))
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-context-block-follows-a-model-change ()
+  "The block is built per turn, because the middle fact can change mid-session.
+`C-c C-m' is a normal thing to do between two questions; a block computed
+once at session start would tell the agent a model that stopped being true
+turn one ago, which is worse than saying nothing."
+  (ao--capture-wire
+    (ao--wire-prompt-texts
+      ;; Not `ao--chat-on-model': it advertises ONE model, and a switch needs
+      ;; both ids in the option list, because `agent-org-set-session-model'
+      ;; rejects an id the agent never offered.
+      (let* ((agent-org-send-session-context t)
+             (agent-org-session-strategy 'new)
+             (models (list (cons "qmodel" "QModel")
+                           (cons "qmodel-large" "QModel Large")))
+             (buf (agent-org-start 'qoder)))
+        (ao--drive "initialize" ao--fake-init-resp)
+        (ao--drive "session/new" (ao--config-resp "qmodel" models "sid-ctx"))
+        (with-current-buffer buf
+          (agent-org-buffer-insert-prompt buf)
+          (ao--type "first")
+          (agent-org-send))
+        ;; the turn must END before the second prompt: a streaming session
+        ;; queues it, and a queued prompt drains with its own turn, its own
+        ;; block — which is a different test
+        (ao--drive "session/prompt" nil)
+        (with-current-buffer buf (agent-org-set-session-model "qmodel-large"))
+        (ao--drive "session/set_config_option"
+                   (ao--config-resp "qmodel-large" models "sid-ctx"))
+        (with-current-buffer buf
+          (agent-org-buffer-insert-prompt buf)
+          (ao--type "second")
+          (agent-org-send))
+        (let ((blocks (ao--all-prompt-blocks)))
+          (should (= 2 (length blocks)))
+          (should (string-match-p "model: QModel (qmodel)"
+                                  (map-elt (cadr (car blocks)) 'text)))
+          (should (string-match-p "model: QModel Large (qmodel-large)"
+                                  (map-elt (cadr (nth 1 blocks)) 'text)))
+          (should (equal "second" (map-elt (car (nth 1 blocks)) 'text))))
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-context-block-can-be-switched-off ()
+  "nil sends only what the user typed.
+The documented rule is that the agent receives the user's text unchanged;
+this is the escape hatch that keeps that sentence true for a person who
+does not want the client speaking for them, and the proof that the block
+is an addition and not a rewrite of the draft."
+  (let ((sent nil))
+    (cl-letf (((symbol-function 'acp-send-request)
+               (lambda (&rest kw) (push kw sent)))
+              ((symbol-function 'acp-make-session-prompt-request)
+               (lambda (&rest a) (plist-get a :prompt))))
+      (let ((pair (ao--make-test-session "ctx-off"))
+            (agent-org-send-session-context nil))
+        (with-current-buffer (car pair)
+          (agent-org-buffer-insert-prompt (car pair))
+          (ao--type "just me")
+          (agent-org-send))
+        (let ((blocks (car (ao--sent-blocks sent))))
+          (should (= 1 (length blocks)))
+          (should (equal "just me" (map-elt (car blocks) 'text))))
+        (kill-buffer (car pair))))))
+
+(ert-deftest test-agent-org-context-block-drops-the-model-line-without-a-model ()
+  "An agent that advertises no model option gets a block with no model line.
+Goose reports no `configOptions' of this shape; a `model: nil' line would
+be the agent told something false, and \"unknown\" is not a model.  The
+other two facts are still worth having, so the block goes anyway."
+  (let ((sent nil))
+    (cl-letf (((symbol-function 'acp-send-request)
+               (lambda (&rest kw) (push kw sent)))
+              ((symbol-function 'acp-make-session-prompt-request)
+               (lambda (&rest a) (plist-get a :prompt))))
+      (let ((pair (ao--make-test-session "ctx-nomodel"))
+            (agent-org-send-session-context t))
+        (with-current-buffer (car pair)
+          (agent-org-buffer-insert-prompt (car pair))
+          (ao--type "hello")
+          (agent-org-send))
+        (let ((ctx (map-elt (cadr (car (ao--sent-blocks sent))) 'text)))
+          ;; `^' in an Elisp regexp is the string's start, not the line's, so
+          ;; the check is on the lines themselves.
+          (should-not (seq-some (lambda (line) (string-prefix-p "model:" line))
+                                (split-string ctx "\n" t)))
+          (should (string-match-p "session: sid-test" ctx))
+          ;; the label is the buffer's own provider name — this fixture was
+          ;; created with "ctx-nomodel" rather than started, so that is what
+          ;; a person would read on its header line — and the id in brackets
+          ;; is the session's, which is the point of sending both
+          (should (string-match-p "agent: ctx-nomodel (test)" ctx))
+          ;; five lines, not six: the absent fact leaves no gap
+          (should (= 5 (length (split-string ctx "\n" t)))))
+        (kill-buffer (car pair))))))
+
+(ert-deftest test-agent-org-drained-prompt-carries-the-same-context-block ()
+  "A prompt that waited its turn is sent through the same door, so it
+carries the same facts.  `agent-org--send-turn' is the single choke point
+for typed and drained prompts alike; a context block built in
+`agent-org-send' instead would go out on the first question of a session
+and never again, which is exactly the turn a re-ordered queue makes most
+different."
+  (let ((sent nil))
+    (cl-letf (((symbol-function 'acp-send-request)
+               (lambda (&rest kw) (push kw sent)))
+              ((symbol-function 'acp-make-session-prompt-request)
+               (lambda (&rest a) (plist-get a :prompt))))
+      (let* ((pair (ao--make-test-session "ctx-drain"))
+             (buf (car pair))
+             (session (cdr pair))
+             (agent-org-send-session-context t))
+        (setf (plist-get session :streaming) t)
+        (with-current-buffer buf
+          (agent-org-buffer-set-status buf :state 'streaming :message "Sending…")
+          (agent-org-buffer-insert-prompt buf)
+          (ao--type "queued one")
+          (agent-org-send))                       ; queued: no send yet
+        (should (= 0 (length sent)))
+        (setf (plist-get session :streaming) nil)
+        (agent-org--drain-queue session buf)
+        (let ((blocks (car (ao--sent-blocks sent))))
+          (should (equal "queued one" (map-elt (car blocks) 'text)))
+          (should (string-match-p "session: sid-test"
+                                  (map-elt (cadr blocks) 'text))))
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-context-block-flattens-an-agent-supplied-label ()
+  "A model label is agent text, and agent text can contain newlines.
+One newline inside the block is a line the reading code — and the agent
+quoting it back — has to guess about, so each value goes on exactly one
+line.  Flattening must not TRUNCATE: a half-model-name on the wire is the
+lie this block exists to prevent, and the standing rule is never to trust
+a harness label to be short (AGENTS.md)."
+  (ao--capture-wire
+    (ao--wire-prompt-texts
+      (let* ((agent-org-send-session-context t)
+             (long (make-string 80 ?x))
+             (buf (ao--chat-on-model "m\n2" (format "Big\nModel %s" long)
+                                    "sid-flat")))
+        (with-current-buffer buf
+          (agent-org-buffer-insert-prompt buf)
+          (ao--type "hi")
+          (agent-org-send))
+        (let ((ctx (map-elt (cadr (car (ao--all-prompt-blocks))) 'text)))
+          (should (equal 6 (length (split-string ctx "\n" t))))
+          ;; one line, so the whole value sits between "model: " and the
+          ;; closing tag with no break in it
+          (should (equal 1 (length (seq-filter (lambda (line) (string-prefix-p "model:" line))
+                                               (split-string ctx "\n" t)))))
+          (should (string-match-p (concat "model: Big Model " long
+                                          " (m 2)")
+                                  ctx))
+          ;; the id is flattened too, and it is still there in full: the
+          ;; agent may need to name it in a request
+          (should-not (string-match-p "m\n2" ctx))
+          (should-not (string-match-p "Big\n" ctx))
+          (should-not (string-match-p "…" ctx)))
+        (kill-buffer buf)))))
+
 (provide 'test-agent-org)
 ;;; test-agent-org.el ends here
 
