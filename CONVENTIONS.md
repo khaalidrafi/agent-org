@@ -212,11 +212,16 @@ last one, silently.  Live qoder replayed four tool calls and the buffer showed o
 
 As items of their own drawer, calls and thoughts are drawn by ONE primitive, the
 ordering trap cannot recur, and each kind gets its own fold: the `:tool:` drawer is
-born OPEN (what the agent is doing right now is what the user came to watch) and the
-`:thinking:` drawer born folded (raw reasoning is not the point of the turn), with
-`agent-org-buffer--redraw-drawer`'s FOLD argument describing only a drawer that does
-not exist yet — one the user has already opened stays open.  The board's INDENT is
-itself measured: §3.1.
+OPEN (what the agent is doing right now is what the user came to watch) and the
+`:thinking:` drawer folded (raw reasoning is not the point of the turn).  The FOLD
+argument of `agent-org-buffer--redraw-drawer` is that drawer's **default**, not a
+one-time instruction: a folded-default drawer keeps whatever fold it is in (one the
+user opened stays open), while the open-default board is left open by every paint —
+Org re-hides drawers on paths no variable guards, and a board that stayed collapsed
+after that would hide the agent's next action.  `agent-org-mode` therefore also sets
+`org-hide-drawer-startup` nil buffer-locally: Org's own startup visibility ends with
+a call that folds every drawer in the buffer (`org-cycle.el:643`).  The board's
+INDENT is itself measured: §3.1.
 
 What the headline shape bought is partly given back: a keyword on a drawer line is
 **text**, not an Org TODO state, so `C-c C-t` does not cycle it (`org-toggle-todo`
@@ -369,9 +374,9 @@ in place.  This is the legitimate drawer use from §2.7: plain content, no
 headlines inside — but thinking is markdown-flavoured prose, so a `* ` bullet in
 it is a headline to Org; its body goes through the same
 `agent-org-buffer--drawer-safe-lines` guard as a tool output (§3.2).  A tool call is an item of a SEPARATE `:tool:` drawer (§3), so
-the two kinds of agent activity each get their own fold — the thought is born
-folded, the calls and their output born visible — and neither can erase the
-other, because
+the two kinds of agent activity each get their own fold — the thought folded by
+default, the calls and their output open by default (§5) — and neither can erase
+the other, because
 `agent-org-buffer--redraw-drawer` searches for its own `^:NAME:$` bounded by the
 turn.  Drawer order within a turn is arrival order: whichever of the two the
 agent produced first is drawn first.
@@ -389,7 +394,24 @@ are rewritten underneath it by the render path — so it signals
 works on positions alone and is safe on the hot path.
 
 A drawer the user manually opened stays open across updates: we detect
-`invisible-p` on the body, unfold → swap → refold, preserving intent.
+`invisible-p` on the body, unfold → swap → refold, preserving intent.  That is
+the rule for a drawer whose **default** is folded (`:thinking:`, and the
+metadata drawers).  A drawer whose default is open — the `:tool:` board — is
+left open by every paint, because a fold Org's machinery puts on it is not the
+user's intent: `org-mode`'s startup visibility, the prefixed global cycle and
+`org-clean-visibility-after-subtree-move` all re-hide every drawer in the
+region, one of them behind a variable and two of them behind nothing.  So
+`agent-org-mode` sets `org-hide-drawer-startup` nil **buffer-locally** (the
+variable is an alias of `org-cycle-hide-drawer-startup`, and `setq-local`
+follows an alias to its target), and `agent-org-buffer--redraw-drawer` takes
+FOLD as the drawer's default rather than as a one-time instruction at creation.
+Your own `TAB` on a finished turn still folds calls and output together and
+stays folded — nothing repaints a turn that has stopped.
+
+The unfold before a swap is guarded by `invisible-p`, not unconditional:
+`org-fold-region` walks the region it is given, and calling it on an
+already-open board of a heavy turn more than doubled the per-paint cost (the
+number `test-agent-org-one-drawer-board-redraw-cost` prints).
 
 ---
 

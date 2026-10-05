@@ -600,6 +600,57 @@ fold choice per drawer, and the two differ."
                                (point)))))
     (kill-buffer buf)))
 
+(ert-deftest test-agent-org-chat-buffer-refuses-orgs-startup-drawer-fold ()
+  "Org's startup fold is off in a chat: WE decide which drawer is open.
+`org-cycle-set-startup-visibility' -- what `org-mode' runs and what
+`C-c C-k' with a prefix runs -- ends with
+`(when org-cycle-hide-drawer-startup (org-cycle-hide-drawers (quote all)))'
+(org-cycle.el:643), so one visibility cycle re-folds every board the
+package just opened.  A default that an unrelated subsystem can take away
+is not a default, so the variable goes buffer-local NIL here and stays t
+for every other Org buffer."
+  (let ((buf (agent-org-buffer-create "startfold")))
+    (with-current-buffer buf
+      (should-not org-hide-drawer-startup)
+      (should (default-value 'org-hide-drawer-startup)))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-tool-board-opens-when-the-agent-adds-to-it ()
+  "A board the agent is still writing to is never left collapsed.
+Org re-hides drawers in the paths that are not gated by
+`org-hide-drawer-startup' (a subtree move runs
+`org-clean-visibility-after-subtree-move', org.el:7089), and any of them
+can fold a turn's board behind the user.  The next tool update expands it:
+the board is the live activity view, so a fold that is not the user's own
+TAB on the heading does not survive new activity.  A `:thinking:' drawer
+keeps the fold it has, because the package never re-folds what the user
+opened."
+  (let ((buf (agent-org-buffer-create "reopen")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool buf '((toolCallId . "tc1") (title . "shell")
+                                         (status . "completed")))
+    (agent-org-buffer-append-thought buf "a long thought\n")
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (org-cycle-hide-drawers 'all))
+      ;; the premise: Org really did fold this turn's drawers
+      (should (invisible-p (save-excursion (goto-char (point-min))
+                                           (re-search-forward "^  - COMPLETE shell$")
+                                           (point))))
+      (agent-org-buffer-insert-tool buf '((toolCallId . "tc2") (title . "tree")
+                                          (status . "pending")))
+      (should-not (invisible-p (save-excursion (goto-char (point-min))
+                                               (re-search-forward "^  - TODO tree$")
+                                               (point))))
+      (should-not (invisible-p (save-excursion (goto-char (point-min))
+                                               (re-search-forward "^  - COMPLETE shell$")
+                                               (point))))
+      ;; thinking is not the activity view: the fold it was given stays
+      (should (invisible-p (save-excursion (goto-char (point-min))
+                                           (re-search-forward "^ a long thought$")
+                                           (point)))))
+    (kill-buffer buf)))
+
 (ert-deftest test-agent-org-tool-state-resets-per-turn ()
   "A new Agent turn gets its own drawer; old ids re-appear fresh."
   (let ((buf (agent-org-buffer-create "toolturn")))

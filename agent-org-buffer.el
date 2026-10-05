@@ -36,9 +36,10 @@
 ;; (`#+TODO: TODO ONGOING | COMPLETE FAILED'): pending→TODO,
 ;; in_progress→ONGOING, completed→COMPLETE, failed→FAILED.  Thoughts keep
 ;; the folded :thinking: drawer, drawn by the same primitive; the tool
-;; drawer is created OPEN (progress is what the user came to watch) and the
-;; thought drawer FOLDED.  A drawer can hold no headings, which is why a
-;; call is an item line and not a `**'.
+;; drawer is OPEN -- created open and repainted open, so no fold of Org's
+;; own can leave the turn's activity hidden -- and the thought drawer
+;; FOLDED, keeping whatever fold the user left it in.  A drawer can hold no
+;; headings, which is why a call is an item line and not a `**'.
 ;;
 ;; What a call PRINTED is the SAME item's body, indented four columns: the
 ;; user's order was "Tool call outputs belong to the same TODO headings",
@@ -610,12 +611,21 @@ Keys:
                 '(:eval (agent-org-buffer--render-header-line))))
         (setq-local add-log-current-defun-function
                     #'agent-org-buffer--which-function)
+        ;; Org re-hides EVERY drawer when a buffer's visibility is set --
+        ;; `org-cycle-set-startup-visibility' ends with that call
+        ;; (org-cycle.el:643) and mode startup runs it, as does the
+        ;; prefixed `org-cycle-global'.  A board this package opened would
+        ;; therefore fold itself again behind the user, so the fold is
+        ;; decided here and only here: `:tool:' open, `:thinking:' folded.
+        ;; Buffer-local only: every other Org file keeps Org's default.
+        (setq-local org-hide-drawer-startup nil)
         ;; Buffer-local (the 4th arg), so this hook entry dies with the chat
         ;; and never runs in a buffer that only wants Org's own colors.
         (add-hook 'window-configuration-change-hook
                   #'agent-org-buffer--ensure-font-lock nil t))
     (kill-local-variable 'header-line-format)
     (kill-local-variable 'add-log-current-defun-function)
+    (kill-local-variable 'org-hide-drawer-startup)
     (remove-hook 'window-configuration-change-hook
                  #'agent-org-buffer--ensure-font-lock t)))
 
@@ -1407,11 +1417,14 @@ inactive, which is nearly always the case for a bookkeeping marker."
   "Replace the current turn's :NAME: drawer in BUFFER with LINES (list of strings).
 Creates the drawer at the end of the turn region when absent -- folded
 when FOLD is non-nil, open when it is nil -- and, when the drawer is
-already there, swaps the body in place and restores the fold state, so a
-drawer the user opened stays open and one they closed stays closed.  FOLD
-therefore describes only a drawer that does not exist yet: the
-`:thinking:' drawer is born folded (the raw reasoning is not the point of
-the turn), the `:tool:' drawer born open (what the agent is running right
+already there, swaps the body in place and settles the fold by the SAME
+FOLD.  FOLD is therefore the drawer's DEFAULT, not a one-time instruction
+at creation: a drawer whose default is folded keeps whatever fold it is in,
+so one the user opened stays open, while a drawer whose default is open is
+left open by every paint, because Org re-hides drawers in paths no variable
+guards and a board must not quietly collapse the agent's next action.  The
+`:thinking:' drawer's default is folded (the raw reasoning is not the point
+of the turn), the `:tool:' drawer's open (what the agent is running right
 now is).  The search is bounded by the turn anchor, not the last heading,
 because the turn's drawers and body lines all trail that heading.  Fold
 state is driven with `org-fold-region' directly:
@@ -1460,14 +1473,29 @@ raises \"Not at a drawer\"."
                    (body-end (save-excursion
                                (goto-char drawer-end)
                                (line-beginning-position)))
-                   (folded (invisible-p content)))
-              (when folded
-                (org-fold-region content drawer-end nil 'drawer))
+                   ;; A drawer whose DEFAULT is folded keeps whatever fold
+                   ;; it is in now, so one the user opened stays open.  A
+                   ;; drawer whose default is OPEN is left open by every
+                   ;; paint: Org re-hides drawers in paths no flag guards
+                   ;; (a subtree move runs
+                   ;; `org-clean-visibility-after-subtree-move',
+                   ;; org.el:7089), and a board that stayed folded after
+                   ;; that would hide what the agent is doing right now.
+                   (keep (and fold (invisible-p content))))
+              ;; Only when the body really IS folded: `org-fold-region'
+              ;; walks the region, and an unconditional call on the open
+              ;; board of a heavy turn doubled the per-paint cost (measured
+              ;; in `test-agent-org-one-drawer-board-redraw-cost').  The
+              ;; un-hide still has to happen BEFORE the delete, because a
+              ;; fold Org stores as an overlay would otherwise survive it
+              ;; and cover the freshly inserted body.
+              (when (invisible-p content)
+                (org-fold-region content drawer-end keep 'drawer))
               (delete-region content body-end)
               (goto-char content)
               (insert body "\n")
               (agent-org-buffer--protect content (point))
-              (when folded
+              (when keep
                 (org-fold-region content (line-end-position) t 'drawer)))))))))
 
 (defun agent-org-buffer-append-thought (buffer text)

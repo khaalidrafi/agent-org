@@ -557,6 +557,45 @@ file, the commits, and the suite:
 What is left is the =Later= queue below, which the user framed as "not basic", and
 nothing there is an unshipped ask.  Suite unchanged at 242 green.
 
+** DONE The board is expanded by default, and the default now survives
+User order: "Expand :tool: drawers by default."
+
+The board already /opened/ at creation, which turned out to be a different
+statement.  Org re-hides every drawer in a buffer from three sites, and only one
+of them asks a variable first:
+
+- =org-cycle-set-startup-visibility= -- what =org-mode= runs at startup and what
+  the prefixed global cycle re-runs -- ends with =(when
+  org-cycle-hide-drawer-startup (org-cycle-hide-drawers 'all))=
+  (org-cycle.el:643).  =agent-org-mode= now sets that variable NIL buffer-locally
+  (=test-agent-org-chat-buffer-refuses-orgs-startup-drawer-fold= pins both the
+  local nil and the untouched global default).  The name is an alias of
+  =org-cycle-hide-drawer-startup= since the folding rewrite and =setq-local=
+  follows an alias, so the one line works across Org versions.
+- =org-clean-visibility-after-subtree-move= (org.el:7089) and the sort path call
+  =org-cycle-hide-drawers= with no gate at all.  Nothing a variable can do, so
+  the paint does it: =agent-org-buffer--redraw-drawer='s FOLD argument is now the
+  drawer's /default/ rather than a one-time instruction -- an open-default board
+  is left open by every repaint, a folded-default drawer keeps the fold it has
+  (so =:thinking:= a person opened is still never re-folded).
+- The un-hide before a swap stays, because a fold Org stores as an /overlay/
+  survives =delete-region= and covers the new body -- but it is guarded by
+  =(invisible-p content)=.  Unconditional, it walked an already-open board and
+  the measured redraw cost went 4.5 ms → 12 ms on a 20-call × 40-line turn
+  (=test-agent-org-one-drawer-board-redraw-cost= prints the number; 5.6 ms back
+  with the guard, and a guard removal is the mutation check that it bites).
+
+What it is /not/: a turn that stopped painting keeps the fold you gave it (the
+enforcement rides a paint, and a paint means new activity), and a transcript
+=FILE= re-folds every drawer when visited, because fold state is a text property
+that never reaches the disk.  =#+STARTUP: nohidedrawers= would fix the file and
+is deliberately not written: it would open =:thinking:= and the metadata drawers
+there too, which is a different trade from the chat buffer.
+
+Two tests, both seen failing first; 244 green, byte-compile zero warnings,
+org-check clean.  Hot-loaded live: =(setq-local org-hide-drawer-startup nil)=
+reads buffer-local nil with the global default still =t=.
+
 * TODO Later --- still worth porting, not "basic"
 ** TODO Steer --- inject into the live turn
 agent-shell's =agent-shell-prompt-steer= sends a mid-turn message via

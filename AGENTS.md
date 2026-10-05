@@ -77,10 +77,26 @@ emacs -Q --batch \
 #   to stay legal, and any headline that landed inside that body was erased by
 #   the next thought chunk (measured live: qoder replayed 4 tool calls, the
 #   buffer showed 1).
-#   `agent-org-buffer--redraw-drawer' draws every kind and takes the FOLD a
-#   newly created drawer gets: `:tool:' born OPEN (what the agent is doing now
-#   is what the user came to watch), `:thinking:' born FOLDED; a drawer that
-#   already exists keeps whatever fold the user left it at.  A keyword on a
+#   `agent-org-buffer--redraw-drawer' draws every kind and takes FOLD -- the
+#   drawer's DEFAULT, not a one-time instruction at creation: `:tool:' is OPEN
+#   (what the agent is doing now is what the user came to watch), `:thinking:'
+#   FOLDED.  A folded-default drawer keeps whatever fold it is in, so one the
+#   user opened stays open; an OPEN-default drawer is left open by every paint,
+#   because Org re-hides drawers on paths no variable guards (a subtree move
+#   runs `org-clean-visibility-after-subtree-move', org.el:7089) and a board
+#   must not quietly collapse the agent's next action.  `agent-org-mode' also
+#   sets `org-hide-drawer-startup' nil BUFFER-LOCALLY:
+#   `org-cycle-set-startup-visibility' -- what `org-mode' runs at startup and
+#   what the prefixed global cycle re-runs -- ends with
+#   `(when org-cycle-hide-drawer-startup (org-cycle-hide-drawers (quote all)))'
+#   (org-cycle.el:643), which folds every board in the buffer on the spot.  The
+#   name is an ALIAS of `org-cycle-hide-drawer-startup' (it moved with the
+#   folding rewrite) and `setq-local' follows an alias to its target, so one
+#   line covers both spellings; every other Org buffer keeps Org's default.
+#   The un-hide a repaint does before swapping the body is guarded by
+#   `invisible-p' on purpose: `org-fold-region' walks the region, and calling
+#   it unconditionally more than doubled the per-paint cost of a heavy board.
+#   A keyword on a
 #   drawer line is TEXT, not an Org TODO state -- `C-c C-t' acts on headlines,
 #   so a call's state is read, not cycled.  Fold state is driven directly with
 #   `org-fold-region', NOT `org-fold-hide-drawer-toggle', whose org-element

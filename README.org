@@ -128,9 +128,11 @@ NonGNU ELPA.
    ~ONGOING~ running → ~COMPLETE~
    done / ~FAILED~ failed), redrawn in place as the state changes,
    and what the call printed appears under its own item, indented four
-   columns (~TAB~ on the turn folds calls and output together — nothing is
-   ever truncated, and a call that printed nothing gets no body lines),
-   while extended thinking accumulates in one
+   columns.  The ~:tool:~ drawer is *expanded by default* and stays
+   expanded while the turn is running — a board that collapsed would hide the
+   agent's next action — and ~TAB~ on the turn folds calls and output together
+   once it has stopped (nothing is ever truncated, and a call that printed
+   nothing gets no body lines), while extended thinking accumulates in one
    folded ~:thinking:~ drawer under the same heading.
    Sending while the agent is still responding /queues/ the draft
    (~agent-org-queue-when-busy~, on by default — agent-shell's type-ahead

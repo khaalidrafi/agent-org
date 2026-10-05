@@ -1647,15 +1647,18 @@ than trusting:
 
 ** TODO Judge the fold consequence, as the user will experience it
 
-One drawer has /one/ fold state, and =:tool:= is born OPEN because live progress
-is what a person came to watch.  Merging the bodies in therefore un-collapsed
-them: agent-shell keeps tool output collapsed by default
+One drawer has /one/ fold state, and =:tool:= is OPEN by default because live
+progress is what a person came to watch.  Merging the bodies in therefore
+un-collapsed them: agent-shell keeps tool output collapsed by default
 (=agent-shell-tool-use-expand-by-default= nil) and we no longer do.  The order
 was explicit, and =TAB= on the turn folds calls and output in one motion, which
 is also why nothing is truncated -- but /look at a real long turn/: a
-=cat= of a big file now sits in the visible board until you fold it, and if that
-reads worse than the two-drawer version did, the fix is the board's birth fold
-(=agent-org-buffer--redraw-drawer='s FOLD argument), not a second drawer.
+=cat= of a big file now sits in the visible board until you fold it.  As of the
+next section the open default is /enforced/, not merely set at creation, so the
+motion to check is: fold one board with =TAB= while the agent is still working
+-- the next update reopens it.  If that reads as fighting the user, the place
+to change is the FOLD argument at the =:tool:= call site of
+=agent-org-buffer--redraw-drawer=, not a second drawer.
 
 ** TODO Check the vocabulary has no leftover
 
@@ -1687,3 +1690,61 @@ new shape on the next boundary write -- but a transcript of a session you never
 open again stays as written.  That is the accepted cost of versioning the
 transcripts in the repo; the Org file is still legal either way, because a
 keyword the file does not declare is simply text.
+
+* A =:tool:= board is expanded by default, and nothing takes that default away
+
+The user's order: "Expand :tool: drawers by default."  The board /was/ created
+open, which turned out not to be the same as staying open: Org re-hides every
+drawer in a buffer from several places, one of them behind a variable and the
+rest behind nothing.
+
+** TODO Read the two half-fixes as one rule
+
+- =agent-org-mode= (agent-org-buffer.el) sets =org-hide-drawer-startup= nil
+  buffer-locally.  =org-cycle-set-startup-visibility= -- what =org-mode= runs at
+  startup, and what the prefixed global cycle re-runs -- ends with
+  =(when org-cycle-hide-drawer-startup (org-cycle-hide-drawers 'all))=
+  (org-cycle.el:643).  Check the /scope/, not the line: the global default is
+  still =t=, so an ordinary Org file behaves exactly as before, and
+  =test-agent-org-chat-buffer-refuses-orgs-startup-drawer-fold= asserts both
+  halves.  The name has been an alias of =org-cycle-hide-drawer-startup= since
+  the folding rewrite; =setq-local= follows an alias to its target, which is why
+  one line covers an old Org and a new one.
+- =agent-org-buffer--redraw-drawer='s FOLD argument now means the drawer's
+  /default/, not a one-time instruction at creation: an open-default board is
+  left open by every paint, while a folded-default drawer keeps whatever fold it
+  is in (a =:thinking:= drawer the user opened is still never re-folded).  The
+  path that needs this is =org-clean-visibility-after-subtree-move=
+  (org.el:7089), reachable from =M-LEFT= / =M-RIGHT= on a heading, and no
+  variable gates it.
+
+** TODO The un-hide is guarded, and the guard is the cost
+
+Before swapping a body the code un-folds the region, because Org can store a
+fold as an /overlay/, and an overlay survives =delete-region= and ends up over
+the freshly inserted text.  That call now sits behind =(invisible-p content)=:
+done unconditionally it walked an already-open board and the measured cost of a
+redraw went from ~4.5 ms to ~12 ms (20 calls x 40 lines, printed by
+=test-agent-org-one-drawer-board-redraw-cost=).  Mutation check: remove the
+guard and watch the number move -- that is the test that the guard is
+load-bearing and not superstition.
+
+** DONE Two tests, both seen failing first
+
+=test-agent-org-chat-buffer-refuses-orgs-startup-drawer-fold= and
+=test-agent-org-tool-board-opens-when-the-agent-adds-to-it=, the second folding
+the turn with the real =org-cycle-hide-drawers=, then painting a new call and
+asserting the whole board is visible again /and/ that thinking is still folded.
+244 green, byte-compile clean.
+
+** TODO What this does NOT do, and the knob left on the table
+
+- A turn that has /stopped/ painting keeps whatever fold you gave it: =TAB= on a
+  finished board stays folded.  Deliberate -- the enforcement rides the paint,
+  and a paint means new activity.
+- A transcript FILE re-folds every drawer when you visit it: fold state is a
+  text property, so it never reaches the disk.  The one-line answer is a
+  =#+STARTUP: nohidedrawers= line in the metadata block, and it is /not/ written
+  -- it would open =:thinking:= and the metadata drawers in the file as well,
+  which is a different trade from the chat buffer.  Ask for it if you want it
+  anyway.
