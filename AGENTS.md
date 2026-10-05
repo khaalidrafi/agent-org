@@ -346,3 +346,19 @@ emacs -Q --batch \
 #   launched in — measured: 22 `sid-*.org' in the package tree.  The suite now
 #   binds `agent-org-transcribe' nil at the top of tests/test-agent-org.el, and
 #   only `ao--transcript-in' turns it back on inside a temp directory.
+# - A chat buffer's `read-only' text properties must never reach the mode line.
+#   `which-function' (which-func.el) falls through to `add-log-current-defun',
+#   which copies the heading TEXT WITH PROPERTIES and hands it to
+#   `which-func-format' — `(:propertize which-func-current ...)' — and applying
+#   a property to text that carries `read-only' signals `text-read-only'.  Under
+#   `which-function-mode' + doom-modeline that error lands inside
+#   `doom-modeline-format--main', which builds its whole right half with ONE
+#   `format-mode-line' (doom-modeline-core.el), so nothing is rescued: the bar
+#   goes blank (measured live: `(doom-modeline-format--main)' signaled
+#   text-read-only, and returned a 77-char string with `inhibit-read-only'
+#   bound).  So `agent-org-mode' sets a buffer-local
+#   `add-log-current-defun-function' = `agent-org-buffer--which-function',
+#   which returns `(substring-no-properties (org-get-heading t t t t))' at a
+#   heading and nil elsewhere.  A non-nil `add-log-current-defun-function' also
+#   suppresses which-func's own imenu fallback, so this one function is the
+#   whole answer — not a hint to add a second.

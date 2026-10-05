@@ -487,6 +487,25 @@ usage or state update does no string building and no rename."
       (define-key map key #'agent-org-buffer--blocked))
     map))
 
+(defun agent-org-buffer--which-function ()
+  "The heading around point, with NO text properties, for `which-function'.
+Org's own answer (`add-log-current-defun-function' set by `org-mode') is a
+`buffer-substring' of the heading line, so in a chat buffer it carries this
+package's `read-only' property.  `which-func-format' then displays that
+string by APPLYING a face to it, and applying a property to read-only text
+is a modification: Emacs signals `text-read-only' inside
+`format-mode-line'.  doom-modeline builds its entire right half in ONE such
+call, so a single protected heading blanks the whole mode line.  Answering
+with a property-free copy keeps the bar alive without weakening the
+protection -- the buffer text itself is untouched -- and nil away from a
+heading is what `which-function' wants: it skips its imenu fallback only
+because this variable is non-nil, so a streaming chat never pays for an
+index scan."
+  (when (and (derived-mode-p 'org-mode) (org-at-heading-p))
+    (let ((heading (ignore-errors (org-get-heading t t t t))))
+      (when (and heading (not (string-empty-p heading)))
+        (substring-no-properties heading)))))
+
 (define-minor-mode agent-org-mode
   "Minor mode for `agent-org' Org chat buffers.
 Type at the live `* User' prompt at the end of the buffer.
@@ -499,10 +518,14 @@ Keys:
   :lighter nil
   :keymap agent-org-mode-map
   (if agent-org-mode
-      (when agent-org-use-header-line
-        (setq header-line-format
-              '(:eval (agent-org-buffer--render-header-line))))
-    (kill-local-variable 'header-line-format)))
+      (progn
+        (when agent-org-use-header-line
+          (setq header-line-format
+                '(:eval (agent-org-buffer--render-header-line))))
+        (setq-local add-log-current-defun-function
+                    #'agent-org-buffer--which-function))
+    (kill-local-variable 'header-line-format)
+    (kill-local-variable 'add-log-current-defun-function)))
 
 ;;;; Session metadata block (Org-native, agent-shell bootstrapping)
 

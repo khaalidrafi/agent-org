@@ -702,6 +702,48 @@ at `point-max' until the session is ready and the type-ahead box opens."
     (kill-buffer buf)
     (should-not (agent-org--session-for-buffer buf))))
 
+;;;; Mode line: `which-function-mode' must survive our read-only text
+
+(ert-deftest test-agent-org-which-function-answers-property-free ()
+  "The heading handed to `which-function' carries no text properties.
+`which-func-format' shows whatever `which-function' returns, and it shows
+it by APPLYING a face: `(:propertize which-func-current …)'.  Applying a
+property to text that carries `read-only' is a modification, so Emacs
+signals `text-read-only' -- inside `format-mode-line'.  doom-modeline builds
+its whole right-hand side in one such call, so one read-only heading blanks
+the entire bar (the user's \"doom-modeline is still blank!\").  Org's own
+`add-log-current-defun-function' answers with `buffer-substring', which
+copies properties: in a chat buffer that string is our protected heading
+line, `read-only' and all."
+  (let ((buf (agent-org-buffer-create "whichfunc")))
+    (with-current-buffer buf
+      (agent-org-buffer-insert-prompt buf)
+      (should (functionp add-log-current-defun-function))
+      (save-excursion
+        (goto-char (point-min))
+        (re-search-forward "^\\* User$")
+        (let ((name (funcall add-log-current-defun-function)))
+          (should (equal "User" name))
+          (should-not (get-text-property 0 'read-only name))
+          ;; and it is genuinely faceable: this is the call that used to
+          ;; raise `text-read-only' during mode-line construction
+          (should
+           (not (condition-case nil
+                    (progn (add-face-text-property 0 (length name) 'mode-line t name)
+                           nil)
+                  (error t)))))
+      ;; the protection itself is untouched: only the copy is clean, so
+      ;; the heading is still untypeable
+      (save-excursion
+        (goto-char (point-min))
+        (re-search-forward "^\\* User$")
+        (should (get-text-property (point) 'read-only)))))
+    ;; and turning the mode off gives the buffer back Org's own answer
+    (with-current-buffer buf
+      (agent-org-mode -1)
+      (should-not (local-variable-p 'add-log-current-defun-function)))
+    (kill-buffer buf)))
+
 ;;;; Header-line lifecycle
 
 (ert-deftest test-agent-org-mode-disable-clears-header-line ()
