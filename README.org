@@ -286,6 +286,20 @@ and ~C-x b~ says the same thing, because a chat has one display name wherever
 it is listed.  There is no key binding: ~C-x b~ already reaches every chat,
 and this is the short list of the ones with an agent behind them.
 
+* Seeing the raw wire
+
+~M-x agent-org-show-traffic~ in a chat buffer opens acp's own traffic log for
+that session's process: one line per message — time, direction, kind, method —
+with ~RET~ pretty-printing the whole JSON object under the cursor, ~n~ and ~p~
+stepping between messages, and ~C-x C-s~ writing the log as Lisp data (which is
+how a test fixture gets a real agent's shape).  It holds every request we sent
+and every response and notification that came back, /including the ones
+agent-org never reads/.  That is the point: the chat body, the header line and
+the drawers are each a rendering of a chosen subset, so "what did the agent
+actually answer?" — and any disagreement between its answer and what the buffer
+recorded — is settled only by the bytes on the wire.  A chat whose agent is not
+running has nothing to log, and says so in the echo area.
+
 * MiniMax Code
 
 MiniMax Code is its own terminal coding agent: ~mcode~, whose ~mcode acp~

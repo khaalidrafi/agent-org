@@ -536,6 +536,27 @@ failing (4 unexpected of 243), then 31 old-shape assertions retargeted: 242
 green, byte-compile clean (CONVENTIONS.md §3, §3.1, §3.2; AI-REVIEW.org "One
 drawer holds a call and its output").
 
+** DONE Audit --- every recorded ask is implemented
+The user's standing question: "Have you implemented ALL my feature requests and
+bugfixes?  Please complete ALL."  Went through the asks one by one against this
+file, the commits, and the suite:
+
+- queue while busy, reload in place, interrupt --- the first three entries here.
+- buffer name =<agent>:<project> [sid]=, no prefix, never the topic; transcripts
+  in each project's =.agent-org/=; tool calls as items of one =:tool:= drawer with
+  their output under them, in the user's keywords --- each has its entry above.
+- "doom-modeline is still blank!" and "All fontification gone!" --- both are
+  render bugs with entries above (mode line untouched, colors at display time).
+- "Keep activity order just like agent-shell handles responses" --- extraction
+  order and the board are documented in CONVENTIONS.md §3.1.
+- "Can you read the response JSON an agent receives?" --- =agent-org-show-traffic=
+  existed in the code and AI-REVIEW.org but NOT in README, so a real user could
+  not find it.  Now it has its own README section (what the log holds, the keys,
+  and why the wire settles a disagreement the chat cannot).
+
+What is left is the =Later= queue below, which the user framed as "not basic", and
+nothing there is an unshipped ask.  Suite unchanged at 242 green.
+
 * TODO Later --- still worth porting, not "basic"
 ** TODO Steer --- inject into the live turn
 agent-shell's =agent-shell-prompt-steer= sends a mid-turn message via
