@@ -18,8 +18,9 @@ Top to bottom, a session buffer is exactly:
 1. **One auto-managed metadata block** at `point-min` (see §2).
 2. A blank line separating it from the conversation.
 3. The conversation: alternating `* User` and `* Agent` level-1 headings,
-   each Agent turn optionally carrying `**` tool headings and one
-   `:thinking:` drawer.  By default the Agent heading is not the word
+   each Agent turn carrying up to two drawers — a `:thinking:` drawer of its
+   reasoning and a `:tool:` drawer with one line per tool call (see §3).
+   By default the Agent heading is not the word
    `Agent` but the model that answered — `* MiniMax M3` (see below).
 
 ```org
@@ -44,11 +45,13 @@ Top to bottom, a session buffer is exactly:
 What does agent-org-buffer.el do?
 
 * Claude Sonnet
-** TODO read_file [tc1]
-** DONE write_file [tc2]
 :thinking:
 Let me look at the buffer first…
-:END:
+:end:
+:tool:
+- TODO read_file
+- DONE write_file
+:end:
 ```
 
 Nothing else may live in the body.  Status, progress and errors never
@@ -134,18 +137,20 @@ rename from the agent therefore flows straight through on the next
 
 ---
 
-## 3. Tool calls are `** TODO` subheadings
+## 3. Tool calls are lines of a `:tool:` drawer
 
-Each ACP tool call renders as **one headline per `toolCallId`**, directly
-under the current agent-turn heading (named for the model, see §1):
+Each ACP tool call renders as **one line per `toolCallId`**, inside the current
+agent turn's `:tool:` drawer (the turn heading is named for the model, see §1):
 
 ```org
-** KEYWORD title
+:tool:
+- KEYWORD title
+:end:
 ```
 
-The `toolCallId` is *not* in the heading text — it is the agent's
-bookkeeping, and the marker stored under it already owns the line for
-in-place updates.
+The `toolCallId` is *not* in the line — it is the agent's bookkeeping, and the
+turn's `agent-org-buffer--tools` alist already owns the call, so every update
+redraws the whole drawer from that list rather than hunting for a marker.
 
 `KEYWORD` maps the ACP `status` onto a per-file TODO set:
 
@@ -156,17 +161,33 @@ in-place updates.
 | `completed`   | `DONE`      | finished ok   |
 | `failed`      | `CANCELLED` | errored/aborted |
 
-### Why headlines, not a `:tool:` drawer
+### Why a drawer line, not a `**` headline
 
-The drawer spec is explicit — `info "(org) Drawers` (§2.7):
+The drawer spec is the reason a call *cannot* be a heading inside a drawer —
+`info "(org) Drawers` (§2.7):
 
 > They can contain anything **but a headline and another drawer**.
 
-Tool calls *are* headline-shaped (a title + a state we want to cycle), so a
-drawer could never legitimately hold them without breaking Org's own content
-model.  Making them real subheadings means `C-c C-t` cycles their state, the
-agenda could one day collect them, and `TAB` folds them like any other node —
-all for free, using the manual's native machinery.
+The first version of this file therefore put calls in `**` headings *above* the
+`:thinking:` drawer, and paid twice for it: one marker per call plus a
+locate-by-search helper, and a class of bugs where a headline landed at the
+drawer's `match-end` — i.e. inside its body — so `agent-org-buffer--redraw-drawer`'s
+next wholesale rewrite (every thought chunk) erased every call except the turn's
+last one, silently.  Live qoder replayed four tool calls and the buffer showed one.
+
+As lines of their own drawer, calls and thoughts are drawn by ONE primitive, the
+ordering trap cannot recur, and each kind gets its own fold: the `:tool:` drawer is
+born OPEN (what the agent is doing right now is what the user came to watch) and the
+`:thinking:` drawer born folded (raw reasoning is not the point of the turn), with
+`agent-org-buffer--redraw-drawer`'s FOLD argument describing only a drawer that does
+not exist yet — one the user has already opened stays open.
+
+What the headline shape bought is partly given back: a keyword on a drawer line is
+**text**, not an Org TODO state, so `C-c C-t` does not cycle it (`org-toggle-todo`
+acts on headlines, and a line in a drawer is not one).  The per-file `#+TODO:` line
+stays for that same reason reversed — it names the only state a reader of a
+transcript or a chat can see for a call, and a file whose heading vocabulary is
+declared is a file Org parses the way it looks.
 
 ### The per-file keyword line
 
@@ -190,29 +211,43 @@ equivalent of the `C-c C-c` the manual tells an interactive user to press
 after editing the line.  `org-todo-keywords-1` becomes buffer-local; the global
 default is left untouched (asserted in the test suite).
 
+The set is still declared even though a call is now a drawer LINE, where its
+keyword is text rather than an Org state: the line the user reads is the record
+of what a call is doing, and a file that names its own vocabulary explains that
+record without the reader having to know this package.
+
 ### In-place updates, never duplicates
 
-`tool_call_update` for a known `toolCallId` **rewrites the existing heading
-line** via its stored marker; it must never append a second heading for the
-same call.  Markers are turn-local: `start-agent-turn` deactivates the
-previous turn's tool markers, so a reused `toolCallId` (e.g. after `resume`)
-creates a fresh heading under the *new* turn instead of reaching back into the
-old one.
+`tool_call_update` for a known `toolCallId` **redraws the turn's `:tool:` drawer
+from `agent-org-buffer--tools`**, so the call's line changes state in place and a
+second line for the same call can never appear — the alist is the only place a
+`toolCallId` is stored, and the drawer is a rendering of it.  The alist is
+turn-local: `start-agent-turn` clears it, so a reused `toolCallId` (e.g. after
+`resume`) starts fresh under the *new* turn instead of rewriting a line frozen in
+the old one.
 
 > Gotchas we've been bitten by, and pinned with tests:
-> * `plist-put` returns the **plist**, not the value — never feed it to
->   `move-marker`; set the marker, then store it.
-> * `mark` is nil unless the region is active; for bookkeeping markers read
->   `marker-buffer`/`marker-position` (helper `agent-org-buffer--live-mark`).
+> * `plist-put` **prepends a new list** when the key is absent, returning it; the
+>   entry you keep then diverges from the stored one.  Both keys of a tool entry
+>   are created up front so `plist-put` always mutates in place.
+> * `line-beginning-position` returns a position, it does not move point — and
+>   `re-search-forward` returns a match's **end**.  Inserting at either of those
+>   relative to a drawer marker put the content INSIDE the drawer body, which the
+>   next redraw deleted.  (This is the bug that hid every tool call but the last;
+>   drawing the drawer whole from a list made the class of bug unreachable.)
 
 ---
 
 ## 4. Extended thinking is a folded `:thinking:` drawer
 
-Thinking text (not tool calls) accumulates in **one** `:thinking:` drawer per
-Agent turn, updated in place.  This is the legitimate drawer use from
-§2.7: plain content, no headlines inside.  Tool headings are kept *above* the
-drawer within the turn so the foldable thought sits at the bottom.
+Thinking text accumulates in **one** `:thinking:` drawer per Agent turn, updated
+in place.  This is the legitimate drawer use from §2.7: plain content, no
+headlines inside.  A tool call is a line of a SEPARATE `:tool:` drawer (§3), so
+the two kinds of agent activity each get their own fold — the thought is born
+folded, the calls born visible — and neither can erase the other, because
+`agent-org-buffer--redraw-drawer` searches for its own `^:NAME:$` bounded by the
+turn.  Drawer order within a turn is arrival order: whichever of the two the
+agent produced first is drawn first.
 
 ---
 
@@ -236,7 +271,7 @@ Two hard rules, both from `AGENTS.md` and enforced by tests:
 
 1. **Body stays pure conversation.**  No status messages, comment blocks, or
    bullet lines are ever inserted as content.  The body holds only `* User` /
-   `* Agent` turns, `**` tool headings, the `:thinking:` drawer, and the one
+   `* Agent` turns, the turn's `:thinking:` and `:tool:` drawers, and the one
    metadata block.
 2. **Status lives in the `header-line`** (the top bar, gptel/agent-shell
    style) via `agent-org-buffer-set-status`.  We do **not** mutate the
@@ -333,7 +368,8 @@ bypass `read-only` properties and would corrupt heading boundaries.
 From `info "(org) Headlines` (§2.1):
 
 * Headlines start at the **left margin** with one or more `*` + a space.
-  Our levels: `*` = turn (User/Agent), `**` = tool call.  No deeper.
+  Our levels: `*` = turn (User/Agent), and nothing deeper — a tool call is a
+  drawer line, not a heading (§3).
 * **An empty line after a subtree is part of it** and is hidden when the
   subtree folds; two or more empty lines leave one visible separator.  Our
   `agent-org-buffer--separator` inserts exactly the one blank line that keeps
@@ -346,7 +382,7 @@ From `info "(org) Headlines` (§2.1):
 
 `agent-org-resume-session` replays a session's history into a fresh buffer.  Restored
 turns are laid out **exactly** like typed ones (`* User`, the model-named agent
-heading, `**` tool headings, `:thinking:` drawer), because the replay feeds the same
+heading, the `:thinking:` and `:tool:` drawers), because the replay feeds the same
 `agent-org-buffer-*` primitives through `agent-org--buffer-update`.  Nothing
 about resume gets a private renderer.
 
@@ -385,14 +421,16 @@ Anything the agent *names* is free text, and it arrives as such.  A live qoder
 session titled its tool calls with the whole shell command (one title was
 `which agent-shell-list ... ; echo "---"; emacsclient ...` across a dozen
 lines), and a resume `session/list` returned the entire first prompt as a
-session's `title`.  Verbatim, that is fatal to a heading: only the first line
-becomes the `**` heading, the rest falls into the body, and the in-place
-rewrite of a heading replaces a single line — so three of four replayed tool
-calls vanished from the buffer entirely.  `agent-org-buffer--label` therefore
-collapses whitespace runs and truncates to `agent-org-buffer--label-width`
-before any agent text reaches a one-line context: tool headings (`** KEYWORD
-title [id]`) and resume candidates alike, always with the id kept visible
-because the id is what identifies the thing.
+session's `title`.  Verbatim, that is fatal to a one-line context: a drawer is
+closed by a line reading `:end:`, so text carrying a newline can end the
+`:tool:` drawer early and leave the rest of the call's description to the next
+redraw; a buffer name with a newline cannot be completed in `C-x b` at all; and
+a heading takes only its first line, the remainder falling into the body.
+`agent-org-buffer--label` therefore collapses whitespace runs and truncates to
+`agent-org-buffer--label-width` before any agent text reaches a one-line
+context: tool drawer lines (`- KEYWORD title`), chat buffer names and resume
+candidates alike, always with the id kept visible because the id is what
+identifies the thing.
 
 This applies to live turns exactly as to replayed ones — the same tool_call
 updates stream during a normal prompt.  Multi-line content is never *lost*,
@@ -579,10 +617,10 @@ is the chat buffer's frozen body — `point-min` to `agent-org-buffer--render-en
   is the session cwd and each project keeps its chats in its own
   `.agent-org/`, the way it keeps its own README.  An absolute setting expands
   to itself, so one global pool is a setting, not a code change.  Because the
-  files now land inside a repo, `~/.agent-org/~ belongs in that repo's
+  files now land inside a repo, `.agent-org/` belongs in that repo's
   `.gitignore` unless the transcripts are notes to commit (this repo does).
-* **Mirror, never append log.** A tool heading is one line rewritten in place
-  TODO→DOING→DONE (§3).  An append-only log can only add, so the file would
+* **Mirror, never append log.** A tool call is one drawer line rewritten in
+  place TODO→DOING→DONE (§3).  An append-only log can only add, so the file would
   keep every superseded state of every call — a different document from the
   chat that produced it.  Mirroring keeps one renderer, which is the same rule
   §9 states for replay: never add a second paint path.

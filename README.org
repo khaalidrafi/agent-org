@@ -13,9 +13,10 @@ own *header line* (the top bar, as used by ~gptel~ and ~agent-shell~) — never
 as system messages in the document body.  The body contains the
 ~* User~ / agent-turn conversation, each agent turn headed by the model that
 answered it (~* MiniMax M3~; see ~agent-org-use-model-headings~), with that
-turn's tool calls rendered as level-2 ~TODO/DONE~ subheadings and its
-extended thinking kept in a folded ~:thinking:~ drawer under the same
-heading, plus one auto-managed metadata block at the very top (see
+turn's tool calls as one line per call in an open ~:tool:~ drawer (its state
+written as ~TODO~/~DOING~/~DONE~/~CANCELLED~) and its extended thinking in a
+folded ~:thinking:~ drawer under the same heading, plus one auto-managed
+metadata block at the very top (see
 [[#session-metadata][Session metadata]]) — and, by default, that whole body is mirrored to one
 Org file per session, so a chat leaves you a document rather than a
 buffer you had to remember to save (see [[#transcript-file][Transcript file]]).
@@ -118,10 +119,11 @@ NonGNU ELPA.
 3. Watch the reply stream under the agent-turn heading — the model that
    answered it (~* MiniMax M3~), or ~* Agent~ with
    ~agent-org-use-model-headings~ nil; each tool call is
-   a ~**~ subheading whose TODO keyword tracks its state (~TODO~ pending
-   → ~DOING~ running → ~DONE~ completed / ~CANCELLED~ failed), updated
-   in place, while extended thinking accumulates in one folded
-   ~:thinking:~ drawer under the same heading.
+   one line of the turn's ~:tool:~ drawer, ~- TODO~/~- DOING~/~- DONE~/~-
+   CANCELLED~ plus its title (~TODO~ pending → ~DOING~ running → ~DONE~
+   completed / ~CANCELLED~ failed), redrawn in place as the state changes,
+   while extended thinking accumulates in one folded ~:thinking:~ drawer
+   under the same heading.
    Sending while the agent is still responding /queues/ the draft
    (~agent-org-queue-when-busy~, on by default — agent-shell's type-ahead
    model): queued prompts go out FIFO as each turn ends successfully,

@@ -47,7 +47,7 @@ Ported as the persistent type-ahead box:
   keep arriving above it in order instead of stacking in reverse.
 - =agent-org-buffer--render-end=: anchor position, or =point-max= when no
   box exists (a replay).  Every per-turn render site -- user echo, agent
-  heading, chunks, tool headings, :thinking: drawer -- inserts there
+  heading, chunks, :tool: drawer, :thinking: drawer -- inserts there
   instead of =point-max=, so a streaming response never scribbles over a
   fresh draft.
 - =agent-org-buffer-take-draft= replaces =agent-org-buffer-read-prompt=:
@@ -267,8 +267,8 @@ this 4 GB machine before declaring it cheap (see next item).
 
 Shipped, but NOT as an append log: the file is a MIRROR of the buffer's
 frozen body (=point-min= to =agent-org-buffer--render-end=) rewritten at
-turn boundaries.  An append log cannot hold agent-org's tool headings —
-one line rewritten TODO→DOING→DONE — without keeping every superseded
+turn boundaries.  An append log cannot hold agent-org's tool calls —
+one =:tool:= drawer line rewritten TODO→DOING→DONE — without keeping every superseded
 state of every call, and it would be a second renderer (CONVENTIONS.md
 §9: never add one).  Mirror also means the unsent draft is excluded by
 the same marker that protects it from a streaming turn.

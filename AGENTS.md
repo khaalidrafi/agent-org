@@ -54,26 +54,35 @@ emacs -Q --batch \
 #   COMMANDS/MODES/CONFIG drawers — all folded by default, no heading
 #   (headings belong to the conversation).  Rewritten by
 #   `agent-org-buffer-refresh-metadata'; never edit it by hand.
-# - Per-turn tool calls render as `** KEYWORD title` subheadings under
-#   the current `* Agent` heading, one heading per toolCallId, KEYWORD from
-#   the per-file `#+TODO: TODO DOING | DONE CANCELLED` set (pending→TODO,
-#   in_progress→DOING, completed→DONE, failed→CANCELLED); updates rewrite the
-#   heading line in place via its marker, never duplicating it.  Tool calls
-#   are HEADLINES, not a drawer: the Org drawer spec (info "(org) Drawers")
-#   forbids headlines inside drawers, so a :tool: drawer could never hold
-#   them anyway.  Extended thinking stays in ONE folded `:thinking:` drawer
-#   under the same heading.  Fold state is driven directly with
-#   `org-fold-region', NOT `org-fold-hide-drawer-toggle', whose org-element
-#   cache is stale while a turn streams with font-lock off ("Not at a
-#   drawer").
-# - A tool heading is inserted at the `:thinking:` marker's
-#   `match-beginning`, never at the position `re-search-forward' RETURNS
-#   (the match's end = the drawer body's first line).  A headline placed
-#   there is *inside* the drawer, and `agent-org-buffer--redraw-drawer'
-#   rewrites the whole body on the next thought chunk — so every tool
-#   call except the turn's last one silently vanished.  Beware the same
-#   trap in general: `line-beginning-position' returns a position, it
-#   does not move point.
+# - Per-turn tool calls render as one `- KEYWORD title' LINE of the current
+#   turn's `:tool:' drawer, one line per toolCallId, KEYWORD from the per-file
+#   `#+TODO: TODO DOING | DONE CANCELLED` set (pending→TODO,
+#   in_progress→DOING, completed→DONE, failed→CANCELLED).  There is NO marker
+#   per call: every update redraws the whole drawer from
+#   `agent-org-buffer--tools', the turn-local alist that IS the record, so one
+#   call cannot get a second line and a reused toolCallId after `resume' starts
+#   fresh under the new turn.  A call is a line and not a headline because the
+#   Org drawer spec (info "(org) Drawers") forbids headlines inside drawers:
+#   the earlier `**' shape had to keep the calls ABOVE the `:thinking:' drawer
+#   to stay legal, and any headline that landed inside that body was erased by
+#   the next thought chunk (measured live: qoder replayed 4 tool calls, the
+#   buffer showed 1).  `agent-org-buffer--redraw-drawer' draws BOTH kinds and
+#   takes the FOLD a newly created drawer gets: `:tool:' born OPEN (what the
+#   agent is doing now is what the user came to watch), `:thinking:' born
+#   FOLDED; a drawer that already exists keeps whatever fold the user left it
+#   at.  A keyword on a drawer line is TEXT, not an Org TODO state -- `C-c C-t'
+#   acts on headlines, so a call's state is read, not cycled.  Fold state is
+#   driven directly with `org-fold-region', NOT
+#   `org-fold-hide-drawer-toggle', whose org-element cache is stale while a
+#   turn streams with font-lock off ("Not at a drawer").
+# - Never place a headline at the position `re-search-forward' RETURNS: that is
+#   a match's END, which for a drawer marker is INSIDE the body, and
+#   `agent-org-buffer--redraw-drawer' rewrites the whole body on the next
+#   thought chunk -- that is how every tool call but the turn's last one
+#   silently vanished.  Beware the same trap in general:
+#   `line-beginning-position' returns a position, it does not move point.
+#   Redrawing the drawer from a list made this unreachable for tool calls; the
+#   lesson stands for anything else anchored to a marker.
 # - Text the agent supplies (tool-call `title', session `title') goes
 #   through `agent-org-buffer--label' before it lands on a one-line
 #   context (heading line, completion candidate).  Live qoder titles tool
@@ -341,7 +350,8 @@ emacs -Q --batch \
 # - The per-session transcript is a MIRROR of the buffer, not an append log, and
 #   it is written only at turn boundaries (`agent-org-buffer-transcribe`: ready,
 #   send, both send callbacks, cancel, late title, kill).  Never call it from a
-#   render site: an append log could not show a tool heading as DONE without
+#   render site: an append log could not show a tool call's drawer line as
+#   DONE without
 #   keeping its TODO line (CONVENTIONS.md §3, §14), and a per-chunk write spends
 #   its cost inside the stream — measured 90-170 ms per turn here versus 2 whole-file
 #   writes of 3-15 ms.  The mirror spans `point-min' to

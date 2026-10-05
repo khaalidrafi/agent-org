@@ -903,11 +903,12 @@ TODOs.org asked for agent-shell's mechanism, which is an append log —
 =write-region= of the buffer's frozen body, rewritten whole at each boundary.
 Two reasons, and the second is the one that would have cost a review to catch:
 
-- an append log cannot hold agent-org's tool headings.  A call is ONE line
-  rewritten TODO→DOING→DONE (CONVENTIONS.md §3); appending can only add, so the
-  file would carry every superseded state of every call and stop being the
-  document the chat made.  =test-agent-org-transcript-rewrites-a-tool-heading-instead-of-logging-it=
-  is that argument, stated as an assertion: the call's heading reads DONE
+- an append log cannot hold agent-org's tool calls.  A call is ONE line of the
+  turn's =:tool:= drawer, rewritten TODO→DOING→DONE (CONVENTIONS.md §3); appending
+  can only add, so the file would carry every superseded state of every call and
+  stop being the document the chat made.
+  =test-agent-org-transcript-rewrites-a-tool-line-instead-of-logging-it=
+  is that argument, stated as an assertion: the call's line reads DONE
   once, and no TODO or DOING copy of it survives in the file.
 - a per-chunk write spends its cost inside the stream.  Measured here
   (spinning disk, 4 GB): the append model costs 90–170 ms per 200-chunk turn,
@@ -1127,3 +1128,95 @@ distinct ids and titles, because two identical rows /is/ the bug) and
 ~ao--isolated-registry~ (a ~let~ binding ~agent-org--sessions~ to nil around the
 whole body — the registry is global and earlier suites leave chat buffers alive,
 so a test that counts rows otherwise counts strangers).
+
+* Tool calls are drawer lines; the mode line and the wire log
+
+Four units shipped together in the review of one complaint thread
+("Tool calls should be inside :tool: drawers.", "doom-modeline is still
+blank.", "All fontification gone!  No colors.", "Can you read the response
+JSON an agent receives?").  Each is its own commit, so each is its own
+review item.
+
+** TODO Read the drawer rewrite: one list, no marker per call  (agent-org-buffer.el)
+
+=agent-org-buffer--tools= went from =((ID :marker M :title T :status S) ...)= to
+=((ID :title T :status S) ...)=, and =agent-org-buffer-insert-tool= now rebuilds
+the whole =:tool:= drawer from it on every update.  The claim to check is that this
+/removed* a bug class rather than adding a redraw cost: a tool state change is one
+line, so re-writing a drawer body per =tool_call_update= is a delete+insert of a
+handful of lines.  Two things to look at closely:
+
+- the entry is created with both keys already present (=:title nil :status nil=).
+  =plist-put= *prepends a new list* when a key is absent and returns it, so the
+  stored entry would silently stop being the one being updated -- the classic
+  =plist-put= trap, invisible until a call's title never changes again.
+- the drawer is searched from the *turn anchor* to =agent-org-buffer--render-end=,
+  not from the last heading.  A turn's body trails its heading, so a
+  =re-search-forward= bounded by headings finds the previous turn's drawer and
+  rewrites history.
+
+** TODO Read the fold argument, and what it deliberately does NOT do  (agent-org-buffer.el)
+
+=agent-org-buffer--redraw-drawer= gained =FOLD=, and it applies *only to a drawer
+being created*: =:tool:= born open, =:thinking:= born folded.  An existing drawer's
+state is read back with =(invisible-p content)= and restored around the body swap.
+So a user who opened the thought drawer keeps it open across the next chunk -- the
+argument for that is the whole point of the redraw, but it means the test
+=test-agent-org-tool-drawer-is-open-and-thinking-folded= only proves the *birth*
+state, not any later one.
+
+** TODO Read why a headline cannot live in a drawer, and where that cost us  (CONVENTIONS.md §3)
+
+The manual is explicit (info "(org) Drawers"): a drawer "can contain anything
+*but* a headline and another drawer".  =**= tool headings therefore had to sit
+*above* the =:thinking:= drawer, and inserting one at a =re-search-forward=
+=match-end= put it *inside* the body, which the next thought chunk deleted -- the
+live symptom was four replayed calls showing as one.  If you review the diff and
+think "a redraw is wasteful", that is the trade being made: redraw-per-update
+bought the removal of a per-call marker, a locate helper, and a silent data-loss
+bug.
+
+** TODO Read =agent-org-buffer--which-function= (agent-org-buffer.el)  (mode line)
+
+The blank doom-modeline was *our* error escaping into *their* format string.
+Follow the chain: =which-function-mode= → =which-function= tries
+=which-func-functions= then =add-log-current-defun=, which copies the heading with
+its text properties → =which-func-format= renders =(propertize ...)= on that text →
+=put-text-property= on a run carrying =read-only= signals =text-read-only= →
+doom-modeline builds its entire right half with one =format-mode-line=, so the
+error costs every segment, not the function name.  Check two things: that the fix
+returns =substring-no-properties= (not =inhibit-read-only= tricks, which would
+leave the properties on the mode line), and that killing the local on
+=agent-org-mode= off is what an unmodified buffer should get back.
+
+** TODO Read the =unwind-protect= in =agent-org--render-replay= (agent-org.el)
+
+Font-lock goes off for the paint and on after it; that restore was a tail form, so
+any update that raised left the chat unfontified *permanently and silently*,
+because acp wraps response callbacks in =condition-case-unless-debug=.  The review
+question is whether anything else in this package suppresses a buffer-local
+display mode across a bulk operation without an unwind -- grep for
+=(font-lock-mode -1)=.
+
+** TODO Read =agent-org-log-traffic='s default and the global it sets (agent-org.el)
+
+=agent-org-show-traffic= is thin (resolve the chat's client, =acp-traffic-buffer=,
+pop it, land on the newest line), but the switch is not ours: =acp-logging-enabled=
+is *global* and acp consults it when a message arrives.  So =agent-org-log-traffic=
+on means every acp client in the session logs, including another package's.  Judge
+whether default =t= is right for a package on a 4 GB machine; the cost is one line
+appended per message to an off-screen buffer, and the retained objects (not text)
+are what it holds.
+
+** DONE Seven tests (190 -> 197), and the four assertions that had to break
+
+New: =…-tool-drawer-is-open-and-thinking-folded=, =…-which-function-answers-property-free=,
+=…-replay-restores-font-lock-when-the-paint-errors=, and the four
+=…-show-traffic-*=.  Renamed/rewritten: every assertion that pinned a =**=
+heading (read-only protection, replay history order, replay tool-call count, two
+transcript tests).  The read-only one gained an assertion worth noticing: the
+=:tool:= marker line itself is protected, because an editable marker line is a
+drawer that leaks into the next redraw.  =tests/acp-mock.el= gained =:command=,
+=:instance-count= and =acp-traffic-buffer= for the same reason the client's dotted
+alist was mirrored: a mock that under-shapes the dependency turns the test into a
+test of the mock.

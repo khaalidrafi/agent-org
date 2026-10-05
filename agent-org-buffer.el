@@ -272,10 +272,12 @@ session and says nothing about the session's state."
 (defconst agent-org-buffer--todo-setup "#+TODO: TODO DOING | DONE CANCELLED"
   "Per-file keyword set (`org-set-regexps-and-options' reads it from
 the metadata block) naming the tool-call states: pending→TODO,
-in_progress→DOING, completed→DONE, failed→CANCELLED.  The keywords now
-open a `:tool:' drawer LINE rather than a heading -- Org forbids
-headlines inside drawers -- so this declares the vocabulary a reader of
-a transcript sees, and keeps `C-c C-t' able to retarget them.")
+in_progress→DOING, completed→DONE, failed→CANCELLED.  A call is now a
+line of the `:tool:' drawer rather than a heading -- Org forbids
+headlines inside drawers -- so on that line a keyword is TEXT the reader
+sees, not an Org state `C-c C-t' can cycle (that acts on headlines).
+Declaring the set still pays: it documents the only vocabulary a
+transcript or a chat uses for a call, in the file that uses it.")
 
 ;;;; Buffer creation
 
