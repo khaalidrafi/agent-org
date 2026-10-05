@@ -1589,3 +1589,101 @@ restored history must be colored, which is exactly what used to vanish.  Finally
 kill the chat buffer and confirm =(symbol-value 'window-configuration-change-hook)=
 in some *other* buffer does not mention =agent-org-buffer--ensure-font-lock=: the
 entry was buffer-local.
+
+* One drawer holds a call and its output, in the user's own keywords
+
+Two orders, one unit.  First =~:tool: drawers are only to separate from
+responses=, then ="Tool call outputs belong to the same TODO headings.  And, use
+ONGOING|COMPLETE|FAILED keywords for tool call TODOs."*  The second deleted the
+=:tool-output:= drawer shipped one commit earlier (=39ea2c5=) and renamed every
+state word the board prints -- so review this as /shape plus vocabulary/, not as
+one of the two.
+
+** TODO Read =agent-org-buffer--tool-board-body= (agent-org-buffer.el)
+
+One loop over =agent-org-buffer--tools= producing, per call, a
+=  - KEYWORD title= line and -- when the call printed anything -- its output at
+four columns, then a blank separator.  Three things to judge:
+
+- /The indent is a parsed fact, not a taste./  An item at column 0 with a
+   two-column body, in a buffer that has the turn's heading, reports *no
+   =plain-list= at all* to =org-element-parse-buffer= (Org reads it as loose
+   drawer text); the same content with the list at two and the body at four
+   reports one list of N items, the drawer intact, one headline.  Re-run
+   =test-agent-org-tool-drawer-is-one-list-to-org= against a version of the
+   builder that emits =- KEYWORD title= flush left and watch the item count go
+   to 0 -- that is the mutation check that says the test bites.
+- /Three spaces, not four, are added to a guarded line./
+   =agent-org-buffer--drawer-safe-lines= puts /one/ space on every body line (a
+   =*= at column 0 would be a headline, a bare =:END:= would close the drawer,
+   see CONVENTIONS.md §3.2), and the item's content column is reached with three
+   more.  So a hostile output line reads =    * a heading= and =    ::END:= --
+   four columns total, and =test-agent-org-tool-output-cannot-break-the-drawer=
+   asserts exactly those two forms plus the parser's verdict.
+- /A blank line stays blank and takes no indent./  Indenting it would make the
+   list item continue with nothing in it; the separator between items is the
+   blank the builder pushes after every call.
+
+** TODO Read the redraw guard =agent-org-buffer--tools-shown=
+
+The =:shown= field used to live on each tool entry, holding /that call's/ last
+written body -- which stopped meaning anything the moment the bodies shared one
+drawer, because the drawer is rendered as one string.  It is now a buffer-local
+holding the whole rendered board, compared with =equal= before a redraw, and
+reset with the turn (next to =agent-org-buffer--tools= in
+=agent-org-buffer-start-agent-turn=).  Two consequences worth checking rather
+than trusting:
+
+- A status-only update that changes the /keyword/ repaints everything, bodies
+   included.  That is correct and unavoidable -- the keyword is inside the string
+   -- but it means one late update on a 20-call turn rewrites 800 lines.
+   =test-agent-org-one-drawer-board-redraw-cost= prints the number on this
+   machine (quiet: ~7 ms per redraw, ~140-170 ms for the turn; it goes up when
+   the box is busy, so re-measure instead of quoting).
+- A per-turn reset is load-bearing.  Without it, turn two's identical board
+   would equal =--tools-shown= from turn one and the second turn would get /no/
+   drawer at all.  =test-agent-org-tool-drawer-redraws-once-per-change= ends the
+   turn and asserts the variable is nil again.
+
+** TODO Judge the fold consequence, as the user will experience it
+
+One drawer has /one/ fold state, and =:tool:= is born OPEN because live progress
+is what a person came to watch.  Merging the bodies in therefore un-collapsed
+them: agent-shell keeps tool output collapsed by default
+(=agent-shell-tool-use-expand-by-default= nil) and we no longer do.  The order
+was explicit, and =TAB= on the turn folds calls and output in one motion, which
+is also why nothing is truncated -- but /look at a real long turn/: a
+=cat= of a big file now sits in the visible board until you fold it, and if that
+reads worse than the two-drawer version did, the fix is the board's birth fold
+(=agent-org-buffer--redraw-drawer='s FOLD argument), not a second drawer.
+
+** TODO Check the vocabulary has no leftover
+
+=ONGOING= is a typo waiting to happen, so the words are worth listing: =TODO=
+(pending), =ONGOING= (in_progress), =COMPLETE= (completed), =FAILED= (failed).
+=COMPLETE= and =FAILED= both sit /after/ the bar in
+=#+TODO: TODO ONGOING | COMPLETE FAILED=, so Org sees two done states -- a call
+that finished badly is still finished, and neither is the =CANCELLED= a person
+cycles to on purpose.  Grep the tree for =DOING=, =CANCELLED= and =:tool-output:=
+and expect the matches to be /historical prose only/ (CONVENTIONS.md §3.1, the
+retired-shape comments, and one test fixture that deliberately reproduces a
+transcript written before the rename).
+
+** DONE The keyword set and the board are asserted together
+
+=test-agent-org-tool-keywords-are-ongoing-complete-failed= checks the mapping
+function /and/ the =#+TODO:= line in the same buffer, because a =COMPLETE=
+printed in a file that declares only =DONE= is text pretending to be a state.
+=agent-org-buffer--todo-setup= is the single writer of that line, so the two
+cannot drift.
+
+** TODO Old transcripts keep =DONE=, and resume fixes the file but not your memory
+
+A transcript written before this change carries =- DONE write_file= (and the old
+two-column, col-0 shape).  Nothing migrates them: =agent-org-buffer-refresh-metadata=
+rewrites the =#+TODO:= line the next time the session is ready, and a resumed
+session is repainted from the agent's own updates, so the /file/ converges on the
+new shape on the next boundary write -- but a transcript of a session you never
+open again stays as written.  That is the accepted cost of versioning the
+transcripts in the repo; the Org file is still legal either way, because a
+keyword the file does not declare is simply text.

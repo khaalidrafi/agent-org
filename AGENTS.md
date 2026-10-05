@@ -58,49 +58,64 @@ emacs -Q --batch \
 #   COMMANDS/MODES/CONFIG drawers — all folded by default, no heading
 #   (headings belong to the conversation).  Rewritten by
 #   `agent-org-buffer-refresh-metadata'; never edit it by hand.
-# - Per-turn tool calls render as one `- KEYWORD title' LINE of the current
-#   turn's `:tool:' drawer, one line per toolCallId, KEYWORD from the per-file
-#   `#+TODO: TODO DOING | DONE CANCELLED` set (pending→TODO,
-#   in_progress→DOING, completed→DONE, failed→CANCELLED).  NO NUMBER on the
-#   line: it existed only to index a per-call output drawer, and one drawer
-#   for the turn needs no index (the user's order: "No need to add numbers to
-#   tool drawers").  There is NO marker per call either: every update redraws
-#   the whole drawer from `agent-org-buffer--tools', the turn-local alist that
-#   IS the record, so one call cannot get a second line and a reused
-#   toolCallId after `resume' starts fresh under the new turn.  A call is a
-#   line and not a headline because the Org drawer spec (info "(org) Drawers")
-#   forbids headlines inside drawers: the earlier `**' shape had to keep the
-#   calls ABOVE the `:thinking:' drawer to stay legal, and any headline that
-#   landed inside that body was erased by the next thought chunk (measured
-#   live: qoder replayed 4 tool calls, the buffer showed 1).
+# - Per-turn tool calls render as ONE ITEM of the current turn's `:tool:'
+#   drawer — `  - KEYWORD title' at two columns, one item per toolCallId,
+#   KEYWORD from the per-file `#+TODO: TODO ONGOING | COMPLETE FAILED' set
+#   (pending→TODO, in_progress→ONGOING, completed→COMPLETE, failed→FAILED).
+#   The three words are the user's: "use ONGOING|COMPLETE|FAILED keywords for
+#   tool call TODOs."  COMPLETE and FAILED both sit AFTER the bar, so Org sees
+#   them as this file's two done states — a call that finished and a call that
+#   finished badly are both finished.  NO NUMBER on the line: it existed only
+#   to index a per-call output drawer, and one item per call needs no index
+#   (the user's order: "No need to add numbers to tool drawers").  There is NO
+#   marker per call either: every update redraws the whole drawer from
+#   `agent-org-buffer--tools', the turn-local alist that IS the record, so one
+#   call cannot get a second item and a reused toolCallId after `resume' starts
+#   fresh under the new turn.  A call is an item and not a headline because the
+#   Org drawer spec (info "(org) Drawers") forbids headlines inside drawers:
+#   the earlier `**' shape had to keep the calls ABOVE the `:thinking:' drawer
+#   to stay legal, and any headline that landed inside that body was erased by
+#   the next thought chunk (measured live: qoder replayed 4 tool calls, the
+#   buffer showed 1).
 #   `agent-org-buffer--redraw-drawer' draws every kind and takes the FOLD a
 #   newly created drawer gets: `:tool:' born OPEN (what the agent is doing now
-#   is what the user came to watch), `:thinking:' and `:tool-output:' born
-#   FOLDED; a drawer that already exists keeps whatever fold the user left it
-#   at.  A keyword on a drawer line is TEXT, not an Org TODO state -- `C-c C-t'
-#   acts on headlines, so a call's state is read, not cycled.  Fold state is
-#   driven directly with `org-fold-region', NOT
-#   `org-fold-hide-drawer-toggle', whose org-element cache is stale while a
-#   turn streams ("Not at a drawer").
-# - What a call PRINTED goes into ONE folded `:tool-output:' drawer for the
-#   turn, in which each call is a `- TITLE' item with its body indented under
-#   it — consecutive calls belong to a single drawer (the user's order), so a
-#   turn of six calls is two drawers (board + bodies), not eight.  Output
-#   cannot join the `:tool:' drawer: drawers may not nest (info "(org)
-#   Drawers"), and one drawer has one fold state, so a shared drawer would
-#   either hide live status or flood the chat with bodies — agent-shell
-#   collapses tool bodies by default for the same reason.  The name a reader
-#   follows is the TITLE, which the board above already shows.
+#   is what the user came to watch), `:thinking:' born FOLDED; a drawer that
+#   already exists keeps whatever fold the user left it at.  A keyword on a
+#   drawer line is TEXT, not an Org TODO state -- `C-c C-t' acts on headlines,
+#   so a call's state is read, not cycled.  Fold state is driven directly with
+#   `org-fold-region', NOT `org-fold-hide-drawer-toggle', whose org-element
+#   cache is stale while a turn streams ("Not at a drawer").
+# - What a call PRINTED is the SAME ITEM's body, indented FOUR columns: the
+#   user's order "Tool call outputs belong to the same TODO headings", after
+#   "Consecutive tool calls belong to a single drawer" and ":tool: drawers are
+#   only to separate from responses."  A separate `:tool-output:' drawer was
+#   the first cut and it is GONE: it made a reader scan the board, then hunt
+#   the same title in a second drawer, and one call's state and its result
+#   lived in two folds.  WHY TWO/FOUR AND NOT FLUSH LEFT: nothing in a drawer
+#   body may sit at column 0 (this package's standing rule), and the parser
+#   says why that is not fussiness — measured with `org-element-parse-buffer'
+#   on a buffer holding the turn's heading, an item at column 0 with its body
+#   at two columns reported NO list at all (a drawer of loose text), while the
+#   same content with the list at two and the body at four reported ONE
+#   plain-list of N items, the drawer intact and the turn's single headline
+#   untouched (`test-agent-org-tool-drawer-is-one-list-to-org').  The trade is
+#   real and accepted: one drawer has ONE fold state, so bodies now travel
+#   with the open board instead of staying collapsed as agent-shell keeps them
+#   (`agent-shell-tool-use-expand-by-default' nil) — TAB on the turn folds
+#   calls and output in one motion, which is also why nothing is ever
+#   truncated.
 #   Extraction is `agent-org-buffer--tool-output', in agent-shell's order: the
 #   `content' blocks, else `rawOutput.formatted_output' ONLY when it is a
 #   string (a number is not a shell result), else nothing — and nothing means
-#   NO item, not an empty one.  A block with no surface is NAMED
-#   (`[unsupported content: TYPE]'), never dropped.  `:shown' in the entry
-#   holds what was last written: it now guards a rewrite of the WHOLE shared
-#   body, so a status-only update must not re-protect every byte the turn ever
-#   printed (measured on a quiet machine: 20 calls x 40 lines = ~5 ms per
-#   redraw, ~105 ms for the turn, `test-agent-org-shared-tool-output-drawer-
-#   redraw-cost'; the same test prints 213 ms when the box is busy).
+#   NO body line, not a blank one under a waiting keyword.  A block with no
+#   surface is NAMED (`[unsupported content: TYPE]'), never dropped.  The
+#   redraw guard is `agent-org-buffer--tools-shown' — the WHOLE rendered board,
+#   reset per turn — because a per-entry `:shown' is meaningless once the
+#   bodies share the drawer: a status-only update would rewrite and re-protect
+#   every byte the turn ever printed (measured on a quiet machine: 20 calls x
+#   40 lines = ~7 ms per redraw, ~140-170 ms for the turn,
+#   `test-agent-org-one-drawer-board-redraw-cost'; the same test prints more
+#   when the box is busy).
 # - Every drawer BODY the stream writes goes through
 #   `agent-org-buffer--drawer-safe-lines': a `*' at column 0 is a headline and a
 #   line reading `:END:' closes the drawer, and BOTH are ordinary characters in
@@ -110,7 +125,9 @@ emacs -Q --batch \
 #   indent (a headline must start at column 0) plus, for an END line, a doubled
 #   colon — `:END:' is matched case-insensitively and whitespace-tolerantly, so
 #   `:end:', `:End:' and `  :END:' all close it.  Blank lines stay blank; that is
-#   also why no output is ever truncated: folding is the affordance.
+#   also why no output is ever truncated: folding is the affordance.  A tool
+#   body takes this guard AND three more spaces, because it is an item's
+#   content (`test-agent-org-tool-output-cannot-break-the-drawer').
 # - Never place a headline at the position `re-search-forward' RETURNS: that is
 #   a match's END, which for a drawer marker is INSIDE the body, and
 #   `agent-org-buffer--redraw-drawer' rewrites the whole body on the next

@@ -13,9 +13,9 @@ own *header line* (the top bar, as used by ~gptel~ and ~agent-shell~) — never
 as system messages in the document body.  The body contains the
 ~* User~ / agent-turn conversation, each agent turn headed by the model that
 answered it (~* MiniMax M3~; see ~agent-org-use-model-headings~), with that
-turn's tool calls as one ~- KEYWORD title~ line per call in an open ~:tool:~
-drawer (its state written as ~TODO~/~DOING~/~DONE~/~CANCELLED~), everything
-the calls printed in ONE folded ~:tool-output:~ drawer of its own, and its
+turn's tool calls as one ~  - KEYWORD title~ item per call in an open ~:tool:~
+drawer (its state written as ~TODO~/~ONGOING~/~COMPLETE~/~FAILED~), with what
+each call printed as that item's own body, and its
 extended thinking in
 a folded ~:thinking:~ drawer under the same heading — the text of a reply
 converted from the agent's Markdown into Org markup on the way in (see
@@ -124,14 +124,13 @@ NonGNU ELPA.
 3. Watch the reply stream under the agent-turn heading — the model that
    answered it (~* MiniMax M3~), or ~* Agent~ with
    ~agent-org-use-model-headings~ nil; each tool call is
-   one ~- KEYWORD title~ line of the turn's ~:tool:~ drawer (~TODO~ pending →
-   ~DOING~ running → ~DONE~
-   completed / ~CANCELLED~ failed), redrawn in place as the state changes,
-   and what the calls printed in ONE folded ~:tool-output:~ drawer
-   (~TAB~ on its ~:tool-output:~ line opens it — never truncated, with one
-   ~- TITLE~ item
-   per call that printed something and no item for a call that printed
-   nothing), while extended thinking accumulates in one
+   one ~  - KEYWORD title~ item of the turn's ~:tool:~ drawer (~TODO~ pending →
+   ~ONGOING~ running → ~COMPLETE~
+   done / ~FAILED~ failed), redrawn in place as the state changes,
+   and what the call printed appears under its own item, indented four
+   columns (~TAB~ on the turn folds calls and output together — nothing is
+   ever truncated, and a call that printed nothing gets no body lines),
+   while extended thinking accumulates in one
    folded ~:thinking:~ drawer under the same heading.
    Sending while the agent is still responding /queues/ the draft
    (~agent-org-queue-when-busy~, on by default — agent-shell's type-ahead
@@ -388,8 +387,8 @@ append, which is what this replaced, costs ~90-170 ms~ for the same 20
 turns — and spends it inside the stream.
 
 Mirroring rather than appending is also why the file is never wrong about
-a tool call: a ~:tool:~ line that moved TODO→DOING→DONE in the buffer moves it
-in the file too, where an append log would keep three lines for one call.
+a tool call: a ~:tool:~ item that moved TODO→ONGOING→COMPLETE in the buffer moves it
+in the file too, where an append log would keep three items for one call.
 A draft still in the =~* User=~ box never reaches the file, and a failed
 write is a note in the echo area, never a broken turn.
 

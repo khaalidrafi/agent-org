@@ -18,9 +18,11 @@ Top to bottom, a session buffer is exactly:
 1. **One auto-managed metadata block** at `point-min` (see §2).
 2. A blank line separating it from the conversation.
 3. The conversation: alternating `* User` and `* Agent` level-1 headings.
-   An Agent turn carries a `:thinking:` drawer of its reasoning, a `:tool:`
-   drawer with one line per tool call, and ONE `:tool-output:` drawer holding
-   what each of those calls printed, under the call's title (see §3).
+   An Agent turn carries a `:thinking:` drawer of its reasoning and ONE
+   `:tool:` drawer whose items are its tool calls — `  - KEYWORD title`, with
+   what that call printed as the item's body, four columns in (see §3).  The
+   `:tool:` drawer is the tool half of the activity; the response text lives
+   outside it, which is what the drawer is *for*.
    By default the Agent heading is not the word
    `Agent` but the model that answered — `* MiniMax M3` (see below).
 
@@ -35,7 +37,7 @@ Top to bottom, a session buffer is exactly:
 :END:
 
 #+TITLE: Refactor the auth module
-#+TODO: TODO DOING | DONE CANCELLED
+#+TODO: TODO ONGOING | COMPLETE FAILED
 
 :COMMANDS:
 /goose — talk to the goose agent
@@ -54,12 +56,9 @@ What does agent-org-buffer.el do?
 Let me look at the buffer first…
 :end:
 :tool:
-- TODO read_file
-- DONE write_file
-:end:
-:tool-output:
-- write_file
-  + def login(user):
+  - TODO read_file
+  - COMPLETE write_file
+    + def login(user):
 :end:
 ```
 
@@ -165,14 +164,15 @@ it is never the buffer's name (§1).
 
 ---
 
-## 3. Tool calls are lines of a `:tool:` drawer
+## 3. Tool calls are items of a `:tool:` drawer
 
-Each ACP tool call renders as **one line per `toolCallId`**, inside the current
+Each ACP tool call renders as **one item per `toolCallId`**, inside the current
 agent turn's `:tool:` drawer (the turn heading is named for the model, see §1):
 
 ```org
 :tool:
-- KEYWORD title
+  - KEYWORD title
+    what the call printed
 :end:
 ```
 
@@ -180,21 +180,23 @@ The `toolCallId` is *not* in the line — it is the agent's bookkeeping, and the
 turn's `agent-org-buffer--tools` alist already owns the call, so every update
 redraws the whole drawer from that list rather than hunting for a marker.
 Neither is a number: `N.` used to prefix the title as the index into a
-per-call `:tool-N:` output drawer (§3.1), and one drawer for the whole turn
-needs no index — a call is found by the title the board already shows.  This
+per-call output drawer (§3.1), and one item per call needs no index — a call
+is found by the title written on its own line.  This
 is the user's order: *"No need to add numbers to tool drawers.  Consecutive
-tool calls belong to a single drawer."*
+tool calls belong to a single drawer."*  Then, on the bodies: *"Tool call
+outputs belong to the same TODO headings."*
 
-`KEYWORD` maps the ACP `status` onto a per-file TODO set:
+`KEYWORD` maps the ACP `status` onto a per-file TODO set, in the words the
+user asked for:
 
-| ACP status    | Org keyword | meaning       |
-|---------------|-------------|---------------|
-| (nil/pending) | `TODO`      | queued        |
-| `in_progress` | `DOING`     | running       |
-| `completed`   | `DONE`      | finished ok   |
-| `failed`      | `CANCELLED` | errored/aborted |
+| ACP status    | Org keyword | meaning         |
+|---------------|-------------|-----------------|
+| (nil/pending) | `TODO`      | queued          |
+| `in_progress` | `ONGOING`   | running         |
+| `completed`   | `COMPLETE`  | finished ok     |
+| `failed`      | `FAILED`    | errored/aborted |
 
-### Why a drawer line, not a `**` headline
+### Why a drawer item, not a `**` headline
 
 The drawer spec is the reason a call *cannot* be a heading inside a drawer —
 `info "(org) Drawers` (§2.7):
@@ -208,12 +210,13 @@ drawer's `match-end` — i.e. inside its body — so `agent-org-buffer--redraw-d
 next wholesale rewrite (every thought chunk) erased every call except the turn's
 last one, silently.  Live qoder replayed four tool calls and the buffer showed one.
 
-As lines of their own drawer, calls and thoughts are drawn by ONE primitive, the
+As items of their own drawer, calls and thoughts are drawn by ONE primitive, the
 ordering trap cannot recur, and each kind gets its own fold: the `:tool:` drawer is
 born OPEN (what the agent is doing right now is what the user came to watch) and the
 `:thinking:` drawer born folded (raw reasoning is not the point of the turn), with
 `agent-org-buffer--redraw-drawer`'s FOLD argument describing only a drawer that does
-not exist yet — one the user has already opened stays open.
+not exist yet — one the user has already opened stays open.  The board's INDENT is
+itself measured: §3.1.
 
 What the headline shape bought is partly given back: a keyword on a drawer line is
 **text**, not an Org TODO state, so `C-c C-t` does not cycle it (`org-toggle-todo`
@@ -222,38 +225,45 @@ stays for that same reason reversed — it names the only state a reader of a
 transcript or a chat can see for a call, and a file whose heading vocabulary is
 declared is a file Org parses the way it looks.
 
-### 3.1 What a call printed: ONE folded `:tool-output:` drawer for the turn
+### 3.1 What a call printed: the SAME item's body
 
-Every call that printed gets an item in the turn's single output drawer — a
-`- TITLE` line, with the body indented two columns under it:
+Every call that printed gets its output under its own board line, four columns
+in, as the contents of that item — one drawer holds the state and the result of
+every call of the turn, in the order the agent made them:
 
 ```org
-:tool-output:
-- ls -R
-  agent-org.el
-  TODOs.org
-
-- grep -rn foo
-  * a heading
-  ::END:
-  plain
+:tool:
+  - COMPLETE ls -R
+    agent-org.el
+    TODOs.org
+  - ONGOING grep -rn foo
+    * a heading
+    ::END:
+    plain
 :end:
 ```
 
-Three reasons, and the first two are the same Org facts that used to argue for a
-drawer per call:
+This is the shape the user asked for twice: *"Consecutive tool calls belong to a
+single drawer.  :tool: drawers are only to separate from responses"*, then
+*"Tool call outputs belong to the same TODO headings."*  The first cut answered
+that with a second, folded `:tool-output:` drawer, and it cost more than it
+saved: a reader scanned the board, then hunted the same title again below it,
+and one call's state and its result sat in two folds that could be opened
+against each other.
 
-* **Org forbids nesting.**  §2.7: a drawer holds "anything but a headline and
-  another drawer" — so the body of `:tool:` cannot contain the output of the
-  calls it lists.  Sibling drawers both parse.
-* **One drawer has one fold state.**  The status lines must stay visible (that
-  is the live progress the user watches) while the bodies must not fill the
-  screen.  Shared drawer = choose one; agent-shell reaches the same conclusion
-  and ships `agent-shell-tool-use-expand-by-default` nil, i.e. collapsed.
-* **But one drawer per call was too many.**  Six calls meant seven folders per
-  turn, and the only thing that made them findable was a number printed on
-  every status line.  The title is the key a reader actually uses, so the
-  bodies moved into one drawer named by title (§3).
+**Why the list sits at two columns and its body at four** — nothing here is
+aesthetic, and nothing in a drawer body may sit at column 0 (§3.2):
+`org-element-parse-buffer`, run on a buffer that already has the turn's
+heading, reports **no list at all** for an item at column 0 with a body at two
+columns (a drawer of loose text), and **one `plain-list` of N items, the drawer
+intact and the turn's single heading untouched** for the indented form
+(`test-agent-org-tool-drawer-is-one-list-to-org`).  A body at two columns would
+also be a sibling `- ` item, i.e. a second call that never ran.
+
+The trade is accepted, not hidden: one drawer has **one fold state**, so bodies
+now travel with the open board instead of staying collapsed the way agent-shell
+ships it (`agent-shell-tool-use-expand-by-default` nil).  TAB on the turn folds
+calls and output in one motion, which is also why nothing needs truncating.
 
 The extraction (`agent-org-buffer--tool-output`) is agent-shell's rule, in its
 order: the `content` blocks, else `rawOutput.formatted_output` **only when it is
@@ -262,16 +272,19 @@ else nothing.  A block type we cannot render is *named*, `[unsupported content:
 TYPE]`, never silently dropped.  Diff and tool-call updates arrive through the
 same path, so a completed call shows what it printed and a still-running one
 shows what it printed so far.  Nothing is truncated: folding is the affordance,
-and a record that quietly lost its middle is worse than a long one.
+and a record that quietly lost its middle is worse than a long one.  A call with
+no output gets **no body lines** — one line and no blank indent.
 
-`:shown` on the entry is the body last written, so the many status-only updates
-that follow an output-bearing one cost no redraw — which matters more now the
-bodies share a drawer, because a redraw rewrites and re-protects the whole turn's
-output.  Measured (Celeron, `test-agent-org-shared-tool-output-drawer-redraw-cost`,
-quiet machine): 20 calls of 40 lines each cost ~105 ms for the turn, ~5 ms per
-redraw of the growing 800-line body — on a busy machine the same test prints
-213 ms, so re-measure rather than quoting.  If a real session outgrows that, the
-drawer grows append-only instead, in `agent-org-buffer--tool-output-body`.
+`agent-org-buffer--tools-shown` is the whole rendered board as last painted, so a
+status-only update that changes nothing costs no redraw.  It used to be a `:shown`
+field on each entry, which stopped meaning anything once the bodies shared the
+drawer: the drawer is redrawn as one string, and a per-entry guard could not stop
+a rewrite of every byte the turn ever printed.  Measured (Celeron,
+`test-agent-org-one-drawer-board-redraw-cost`, quiet machine): 20 calls of 40
+lines each cost ~140-170 ms for the turn, ~7 ms per redraw of the growing
+800-line body — a busy machine prints more, so re-measure rather than quoting.
+If a real session outgrows that, the drawer grows append-only instead, in
+`agent-org-buffer--tool-board-body`.
 
 ### 3.2 A drawer body may not re-shape its own drawer
 
@@ -285,7 +298,7 @@ And `:END:` is matched case-insensitively and whitespace-tolerantly, so `:end:`,
 markdown thought's `* ` bullet, carries these routinely).
 
 `agent-org-buffer--drawer-safe-lines` is the one primitive guarding every body the
-stream writes — `:thinking:`, `:tool:` and `:tool-output:` alike:
+stream writes — `:thinking:` and `:tool:` alike:
 
 * every line gets **one space of indent** (a headline must start at column 0);
 * a bare END line additionally gets a **doubled colon**, ` ::END:`, which is not
@@ -293,9 +306,9 @@ stream writes — `:thinking:`, `:tool:` and `:tool-output:` alike:
 * blank lines stay blank (they are legal inside a drawer, and dropping them would
   flatten the output's own shape).
 
-Inside `:tool-output:` each body takes **one further space**, which is what makes
-it the contents of its `- TITLE` item rather than loose drawer text; the guard's
-own escapes therefore appear as `  * …` and `  ::END:`.
+A tool body takes **three further spaces** on top of the guard's one, which is
+what makes it the contents of its `  - KEYWORD title` item rather than loose
+drawer text (§3.1); its escapes therefore appear as `    * …` and `    ::END:`.
 
 ### The per-file keyword line
 
@@ -303,7 +316,7 @@ We do **not** touch the global `org-todo-keywords`.  Instead the metadata
 block carries (column 0):
 
 ```org
-#+TODO: TODO DOING | DONE CANCELLED
+#+TODO: TODO ONGOING | COMPLETE FAILED
 ```
 
 Per `info "(org) Per-file keywords` (§5.2.5):
@@ -312,23 +325,26 @@ Per `info "(org) Per-file keywords` (§5.2.5):
 > set the keywords and interpretation for **that file only**… starting in
 > column zero anywhere in the file.
 
-The `|` separates not-done states (`TODO`, `DOING`) from done states
-(`DONE`, `CANCELLED`).  We apply the line with `org-set-regexps-and-options`
+The `|` separates not-done states (`TODO`, `ONGOING`) from done states
+(`COMPLETE`, `FAILED`).  We apply the line with `org-set-regexps-and-options`
 at buffer creation and after each metadata rewrite — this is the programmatic
 equivalent of the `C-c C-c` the manual tells an interactive user to press
 after editing the line.  `org-todo-keywords-1` becomes buffer-local; the global
 default is left untouched (asserted in the test suite).
 
-The set is still declared even though a call is now a drawer LINE, where its
+The set is still declared even though a call is now a drawer ITEM, where its
 keyword is text rather than an Org state: the line the user reads is the record
 of what a call is doing, and a file that names its own vocabulary explains that
-record without the reader having to know this package.
+record without the reader having to know this package.  The words themselves are
+the user's (`"use ONGOING|COMPLETE|FAILED keywords for tool call TODOs"`), and
+`COMPLETE`/`FAILED` both sit after the bar because a call that finished badly is
+still finished — neither is the `CANCELLED` a person cycles to on purpose.
 
 ### In-place updates, never duplicates
 
 `tool_call_update` for a known `toolCallId` **redraws the turn's `:tool:` drawer
-from `agent-org-buffer--tools`**, so the call's line changes state in place and a
-second line for the same call can never appear — the alist is the only place a
+from `agent-org-buffer--tools`**, so the call's item changes state in place and a
+second item for the same call can never appear — the alist is the only place a
 `toolCallId` is stored, and the drawer is a rendering of it.  The alist is
 turn-local: `start-agent-turn` clears it, so a reused `toolCallId` (e.g. after
 `resume`) starts fresh under the *new* turn instead of rewriting a line frozen in
@@ -352,9 +368,10 @@ Thinking text accumulates in **one** `:thinking:` drawer per Agent turn, updated
 in place.  This is the legitimate drawer use from §2.7: plain content, no
 headlines inside — but thinking is markdown-flavoured prose, so a `* ` bullet in
 it is a headline to Org; its body goes through the same
-`agent-org-buffer--drawer-safe-lines` guard as a tool output (§3.2).  A tool call is a line of a SEPARATE `:tool:` drawer (§3), so
+`agent-org-buffer--drawer-safe-lines` guard as a tool output (§3.2).  A tool call is an item of a SEPARATE `:tool:` drawer (§3), so
 the two kinds of agent activity each get their own fold — the thought is born
-folded, the calls born visible — and neither can erase the other, because
+folded, the calls and their output born visible — and neither can erase the
+other, because
 `agent-org-buffer--redraw-drawer` searches for its own `^:NAME:$` bounded by the
 turn.  Drawer order within a turn is arrival order: whichever of the two the
 agent produced first is drawn first.
@@ -551,7 +568,7 @@ redraw; a buffer name with a newline cannot be completed in `C-x b` at all; and
 a heading takes only its first line, the remainder falling into the body.
 `agent-org-buffer--label` therefore collapses whitespace runs and truncates to
 `agent-org-buffer--label-width` before any agent text reaches a one-line
-context: tool drawer lines (`- KEYWORD title`), chat buffer names and resume
+context: tool board lines (`  - KEYWORD title`), chat buffer names and resume
 candidates alike, always with the id kept visible because the id is what
 identifies the thing.
 
@@ -742,8 +759,8 @@ is the chat buffer's frozen body — `point-min` to `agent-org-buffer--render-en
   to itself, so one global pool is a setting, not a code change.  Because the
   files now land inside a repo, `.agent-org/` belongs in that repo's
   `.gitignore` unless the transcripts are notes to commit (this repo does).
-* **Mirror, never append log.** A tool call is one drawer line rewritten in
-  place TODO→DOING→DONE (§3).  An append-only log can only add, so the file would
+* **Mirror, never append log.** A tool call is one drawer ITEM rewritten in
+  place TODO→ONGOING→COMPLETE (§3).  An append-only log can only add, so the file would
   keep every superseded state of every call — a different document from the
   chat that produced it.  Mirroring keeps one renderer, which is the same rule
   §9 states for replay: never add a second paint path.

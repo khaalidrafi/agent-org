@@ -483,9 +483,58 @@ Built from =agent-org-buffer--tools= like the board, so it cannot drift from the
 record; =:shown= stayed per-entry, so a status-only update still repaints
 nothing, while the paint itself went whole-turn.  Measured: 98-108 ms for 20
 calls of 40 lines (~5 ms per redraw), the number
-=test-agent-org-shared-tool-output-drawer-redraw-cost= prints (CONVENTIONS.md
-§3.1).  Three tests added, two renamed, 29 touched: 239 green, byte-compile zero
+=test-agent-org-shared-tool-output-drawer-redraw-cost= prints -- renamed
+=test-agent-org-one-drawer-board-redraw-cost= by the entry below, which retires
+this entry's second shape change (CONVENTIONS.md §3.1).  Three tests added, two
+renamed, 29 touched: 239 green, byte-compile zero
 warnings.
+
+** DONE A call's output joins its own board line, and the TODO words are the user's
+User orders, in sequence: "~:tool: drawers are only to separate from
+responses.", then "Tool call outputs belong to the same TODO headings.  And,
+use ONGOING|COMPLETE|FAILED keywords for tool call TODOs."
+
+The =:tool-output:= drawer the entry above shipped lived one commit.  A turn now
+paints ONE =:tool:= drawer in which every call is =  - KEYWORD title= at two
+columns and what that call printed is the SAME item's body at four: a call's
+state and its result share a fold, and the title is read once instead of
+matched between two drawers.
+
+- The indent is measured, not chosen.  An item at column 0 with a two-column
+  body, in a buffer that already has the turn's heading, reports *no*
+  =plain-list= to =org-element-parse-buffer= (Org reads a drawer of loose text);
+  the same content with the list at two and the body at four reports ONE list of
+  N items, the drawer intact and the turn's single heading untouched
+  (=test-agent-org-tool-drawer-is-one-list-to-org=).
+- =agent-org-buffer--drawer-safe-lines= still runs first, so hostile output
+  arrives as =    * a heading= and =    ::END:= -- the guard's one space plus
+  the item's three.
+- The redraw guard moved from a per-entry =:shown= to the WHOLE rendered board in
+  =agent-org-buffer--tools-shown=, reset with the turn.  A per-entry field
+  cannot guard a string that now contains every entry, so a status-only update
+  would otherwise re-protect all 800 lines of a heavy turn (~7 ms per redraw,
+  140-170 ms for 20 calls x 40 lines, =test-agent-org-one-drawer-board-redraw-cost=).
+  The reset is load-bearing: without it, a turn whose board matches the previous
+  turn's gets no drawer at all.
+- Vocabulary, in the user's words: pending→=TODO=, =in_progress=→=ONGOING=,
+  =completed=→=COMPLETE=, =failed=→=FAILED=.  =COMPLETE= and =FAILED= sit after
+  the bar in =#+TODO: TODO ONGOING | COMPLETE FAILED=, so Org reads both as done
+  states -- a call that finished badly is still finished.  One const,
+  =agent-org-buffer--todo-setup=, writes the line, and
+  =test-agent-org-tool-keywords-are-ongoing-complete-failed= asserts the mapping
+  and the declaration in the same buffer, because a keyword the file has not
+  declared is text pretending to be a state.
+- Accepted consequence: one drawer has one fold state, and the board is born
+  OPEN, so output is no longer collapsed the way agent-shell keeps it
+  (=agent-shell-tool-use-expand-by-default= nil).  =TAB= on the turn folds calls
+  and bodies together, which is also why nothing is truncated.
+
+Nothing migrates an old transcript: a file written before this change keeps
+=DONE= and the flush-left items, and it is still legal Org, because a keyword the
+file does not declare is simply text.  Four tests were written first and seen
+failing (4 unexpected of 243), then 31 old-shape assertions retargeted: 242
+green, byte-compile clean (CONVENTIONS.md §3, §3.1, §3.2; AI-REVIEW.org "One
+drawer holds a call and its output").
 
 * TODO Later --- still worth porting, not "basic"
 ** TODO Steer --- inject into the live turn
@@ -513,13 +562,13 @@ buffer-local accept/deny affordance would keep the chat responsive.
 ** TODO Tool-call grouping
 agent-shell has =--group-tool-calls= (agent-shell.el:2763): consecutive
 calls of one kind fold under a summary heading.  Most of that is now the
-shape here anyway — calls are =- KEYWORD title= lines of one =:tool:=
-drawer and their output is one =:tool-output:= drawer of =- TITLE= items
-(CONVENTIONS.md §3), so nothing folds per call any more.  What is left of
-the idea is a count: consecutive same-title calls could collapse to one
-board line reading =- DONE run tests (x3)=, with the three output items
-kept.  That is a choice in =agent-org-buffer--tool-output-body= and the
-board's =mapcar=, and it must not touch =agent-org-buffer--tools= — the
+shape here anyway -- calls and their output are items of one =:tool:=
+drawer (CONVENTIONS.md §3), so nothing folds per call any more.  What is
+left of the idea is a count: consecutive same-title calls could collapse to
+one board item reading
+=- COMPLETE run tests (x3)=, with the three bodies kept.  That is a choice in
+=agent-org-buffer--tool-board-body= and its =dolist=, and it must not touch
+=agent-org-buffer--tools= -- the
 list is the record, one entry per =toolCallId=, and collapsing is
 rendering.
 
