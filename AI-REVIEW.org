@@ -1748,3 +1748,61 @@ asserting the whole board is visible again /and/ that thinking is still folded.
   -- it would open =:thinking:= and the metadata drawers in the file as well,
   which is a different trade from the chat buffer.  Ask for it if you want it
   anyway.
+
+* The =Allow?= dialog: reading ACP's permission options (agent-org.el)
+
+** TODO Read =agent-org--prompt-permission= against the spec
+
+Two questions, both answered by the source and neither by the old suite:
+
+- /Are the keys right?/  A PermissionOption is
+  =((optionId . "allow_once") (name . "Allow once") (kind . "allow_once"))=
+  ([[https://agentclientprotocol.com/protocol/schema#permissionoption]]).  The code
+  read =label= and =id=, so every candidate printed =nil= — the user's report on
+  OpenCode and MiniMax: "two options - Cancel and =nil=".  The fallback
+  =name → optionId → "?"= is not decoration: an agent may send an unnamed option
+  and a blank line is not a choice.
+- /Does the answer reach the wire unchanged?/  The prompter now returns the
+  option's =optionId=, or nil for "declined", and the handler sends
+  =:option-id= XOR =:cancelled=.  Before, the call site compared the sentinel
+  string ="cancel"= and recovered an id with =(car (split-string choice))= — a
+  word of the /label/, which upstream would have accepted as an option id and
+  the agent would have answered as "no such option".  =acp-make-session-request-
+  permission-response= (acp.el:797) errors on both and on neither, so the nil
+  branch is the only legal way to decline.
+
+Mutation check, and the reason this section exists: put ='label= / ='id= back in
+=seq-map= and run the suite.  Two of the three new tests fail
+(=test-agent-org-permission-prompt-offers-option-names= and
+=-option-without-name-shows-its-id=) — measured =2 unexpected of 247=.  The
+third, =-cancel-choice-sends-cancelled=, passes under the mutation /by design/:
+its job is the decline path, and Cancel answers nil whatever the keys are.
+That is also the whole point of the story — before this fix all 244 were green
+/with/ the dialog broken, because
+=test-agent-org-permission-quit-sends-cancelled= stubs
+=agent-org--prompt-permission= itself and so never ran the extraction.  The new
+tests stub =completing-read= and feed the real option shape — the same rule as
+the acp-client alist in AGENTS.md: a stub that does not mirror the dependency's
+data shape makes the suite test the stub.
+
+** TODO What was deliberately /not/ changed
+
+- /Order./  agent-shell sorts options allow-before-reject off =kind=
+  (=agent-shell--permission-kind-order=, agent-shell.el:9648), because "some
+  agents list rejection first".  Here the agent's own order is kept: fixing the
+  nil candidates is one change, and a re-ordered dialog is a second claim to
+  review.  Say the word if your agents send reject first and you want the sort.
+- /Blocking./  =completing-read= still runs inside the acp response callback, so
+  the process filter waits on you.  Unchanged, and tracked as
+  =* TODO Later → Permission prompts without blocking= in TODOs.org.
+- /The Cancel entry./  It is this package's affordance, not an ACP option: ACP
+  has no "cancel" — declining is the =cancelled= outcome of the response.  It
+  therefore sits last, after the agent's own options, and yields nil.
+
+** DONE The status snapshot still wraps the whole prompt
+
+The handler copies the buffer status, sets =:awaiting= for the duration, and
+restores the copy in =unwind-protect= — so an answer, a quit, or a raise all
+leave the bar where it was.  Asserted in both
+=test-agent-org-permission-quit-sends-cancelled= (quit) and
+=test-agent-org-permission-prompt-offers-option-names= (a real answer).

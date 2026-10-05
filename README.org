@@ -143,8 +143,10 @@ NonGNU ELPA.
    mid-turn does not swallow it (see [[#transcript-file][Transcript file]]).
 
 If the agent asks for permission, the header line shows
-~… ➤ Awaiting permission~ and the minibuffer offers the agent's
-options; quitting the prompt (ESC / C-g) safely declines.
+~… ➤ Awaiting permission~ and the minibuffer lists the agent's own
+option names (e.g. ~Allow once~, ~Reject once~) with ~Cancel~ last;
+answering sends that option's id back, and Cancel --- or quitting the
+prompt with ESC / ~C-g~ --- safely declines.
 
 Killing the chat buffer stops its agent.  The ~qoder --acp~ (or ~goose acp~)
 process belongs to ~acp~, not to the buffer, so ~kill-buffer~ alone would leave

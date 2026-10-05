@@ -1900,17 +1900,15 @@ kind is handled here and nothing is delegated to another handler."
          (agent-org-buffer-set-status buffer :state 'awaiting :message "Permission required")
          (unwind-protect
              (condition-case nil
-                 (let ((choice (agent-org--prompt-permission opts)))
-                   (if (equal choice "cancel")
-                       (acp-send-response
-                        :client client
-                        :response (acp-make-session-request-permission-response
-                                   :request-id req-id :cancelled t))
-                     (acp-send-response
-                      :client client
-                      :response (acp-make-session-request-permission-response
-                                 :request-id req-id
-                                 :option-id (car (split-string choice))))))
+                 (let ((option-id (agent-org--prompt-permission opts)))
+                   (acp-send-response
+                    :client client
+                    :response
+                    (if option-id
+                        (acp-make-session-request-permission-response
+                         :request-id req-id :option-id option-id)
+                      (acp-make-session-request-permission-response
+                       :request-id req-id :cancelled t))))
                (quit
                 (acp-send-response
                  :client client
@@ -1922,18 +1920,31 @@ kind is handled here and nothing is delegated to another handler."
         buffer :message (format "Unhandled request: %s" method))))))
 
 (defun agent-org--prompt-permission (options)
-  "Prompt the user to pick one OPTION-ID from OPTIONS (alist list).
-Returns the chosen option id string, or \"cancel\"."
+  "Prompt the user over ACP permission OPTIONS; return the chosen optionId.
+
+OPTIONS are PermissionOption objects -- alists keyed `optionId', `name'
+and `kind' (see
+https://agentclientprotocol.com/protocol/schema#permissionoption).  The
+candidate is the option's `name', or its `optionId' when the agent sent
+no name, so every candidate is at least a string a person can read.
+
+Answer is nil when the user declines: picks the Cancel entry, or quits
+with ESC (the caller traps that).  Reading `label' and `id' instead of
+the keys above is what made this dialog offer one `nil' candidate."
   (let* ((candidates
-          (seq-map (lambda (o) (cons (map-elt o 'label) (map-elt o 'id)))
+          (seq-map (lambda (o)
+                     (cons (or (map-elt o 'name)
+                               (map-elt o 'optionId)
+                               "?")
+                           (map-elt o 'optionId)))
                    options))
          (choice (completing-read "Allow? "
                                   (append (seq-map #'car candidates)
-                                          '("cancel"))
+                                          '("Cancel"))
                                   nil t)))
-    (if (equal choice "cancel")
-        "cancel"
-      (or (cdr (assoc choice candidates)) choice))))
+    ;; plain strings on both sides, so `assoc' is safe here: no candidate
+    ;; carries text properties for this prompt.
+    (cdr (assoc choice candidates))))
 
 ;;;; Content blocks
 

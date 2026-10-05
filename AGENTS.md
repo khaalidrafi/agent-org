@@ -535,3 +535,29 @@ emacs -Q --batch \
 #   clobbers the global match data the scan is built on.
 #   Cost is a few regexps per line plus one small delete+insert per chunk:
 #   `test-agent-org-markdown-conversion-cost-per-line' prints the number.
+# - A permission request's options are ACP PermissionOption objects, keyed
+#   `optionId', `name' and `kind' (`allow_once' / `allow_always' /
+#   `reject_once' / `reject_always').  `agent-org--prompt-permission' reads
+#   exactly those.  The first reader asked for `label' and `id', keys NO agent
+#   sends, so both reads were nil and the minibuffer offered two candidates:
+#   `nil' and this package's own "cancel" (the user's report: "a weird `Allow?`
+#   prompt in the minibuffer which provides two options - Cancel and `nil`").
+#   An option with no `name' falls back to its `optionId' — a blank candidate is
+#   not an answer a person can pick, and agents are not obliged to name.
+# - The prompter returns the chosen `optionId', or NIL for "declined" (the Cancel
+#   entry, or ESC, which the handler traps); the handler then sends `:option-id'
+#   XOR `:cancelled', because upstream
+#   `acp-make-session-request-permission-response' ERRORS on both and on neither
+#   (acp.el:797).  A sentinel string compared at the call site, plus
+#   `(car (split-string choice))' to recover an id from a label, was the second
+#   half of the bug: it silently sent the wrong value whenever a name differed
+#   from an id.  Candidates here are plain strings, so `assoc' resolves them;
+#   that is NOT licence to copy the session chooser's property-laden displays
+#   into this prompt, which would need `agent-org--selection-value'.
+# - And the test lesson: `test-agent-org-permission-quit-sends-cancelled' stubbed
+#   `agent-org--prompt-permission' itself, so it never ran the extraction — a
+#   green suite over a broken dialog, same failure mode as the acp-client alist
+#   bullet (mirror the dependency's DATA shape, or the suite tests the stub).
+#   The three permission tests stub `completing-read' and send the real
+#   `{optionId, name, kind}' object: names in the collection, exact id on the
+#   wire, Cancel answers `cancelled'.

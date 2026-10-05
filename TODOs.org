@@ -596,7 +596,37 @@ Two tests, both seen failing first; 244 green, byte-compile zero warnings,
 org-check clean.  Hot-loaded live: =(setq-local org-hide-drawer-startup nil)=
 reads buffer-local nil with the global default still =t=.
 
-* TODO Later --- still worth porting, not "basic"
+** DONE The =Allow?= prompt offered =nil= --- read ACP's real option keys
+
+The user's report, live on OpenCode and MiniMax: "a weird =Allow?= prompt in
+the minibuffer which provides two options - Cancel and =nil=."
+
+=agent-org--prompt-permission= built its candidates with =(map-elt o 'label)=
+and =(map-elt o 'id)=.  ACP sends neither: a PermissionOption is
+=((optionId . "allow_once") (name . "Allow once") (kind . "allow_once"))=
+([[https://agentclientprotocol.com/protocol/schema#permissionoption]]), so both
+reads answered nil and the collection was one =nil= beside this package's own
+="cancel"= string.  Choosing anything else sent =(car (split-string choice))=
+--- a word of the label, not the id --- upstream.
+
+Fixed as three changes in agent-org.el:
+
+- the candidate is =name=, falling back to =optionId= when the agent sent no
+  name (agents are not obliged to name; a blank candidate is not an answer);
+- the prompter returns the =optionId=, or nil for "declined" (the Cancel entry
+  or ESC), so the call site sends =:option-id= XOR =:cancelled= --- which is
+  what =acp-make-session-request-permission-response= requires (acp.el:797
+  errors on both and on neither) --- instead of comparing a sentinel string;
+- the tests stub =completing-read=, not the prompter.
+  =test-agent-org-permission-quit-sends-cancelled= stubbed
+  =agent-org--prompt-permission= itself, so it never ran the key extraction:
+  same lesson as the acp-client alist in AGENTS.md --- a stub that does not
+  mirror the dependency's data shape makes the suite test the stub.
+
+Option order is left as the agent sent it, and the prompt still blocks the
+process filter --- both unchanged here; the second is =TODO Later= below.
+
+** TODO Later --- still worth porting, not "basic"
 ** TODO Steer --- inject into the live turn
 agent-shell's =agent-shell-prompt-steer= sends a mid-turn message via
 =agent-shell-experimental--send-steering= (agent-shell.el).  Needs ACP

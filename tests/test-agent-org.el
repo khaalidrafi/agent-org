@@ -1300,6 +1300,98 @@ line, `read-only' and all."
       (should (eq 'starting (plist-get agent-org-buffer--status :state))))
     (kill-buffer buf)))
 
+;;;; Permission prompt: real ACP option shape
+
+(defun ao--permission-request (options)
+  "A `session/request_permission' carrying OPTIONS, shaped as the wire sends it.
+A permission is always about a tool call, which is what OpenCode and
+MiniMax actually send."
+  `((method . "session/request_permission")
+    (id . 7)
+    (params . ((options . ,options)
+               (toolCall . ((toolCallId . "t1")
+                            (title . "run ls")
+                            (status . "pending")))))))
+
+(ert-deftest test-agent-org-permission-prompt-offers-option-names ()
+  "The prompt lists each option's `name' and answers with its `optionId'.
+
+A PermissionOption is (optionId, name, kind); the first reader here asked
+for `label' and `id', keys no agent ever sends, so both reads answered
+nil and the dialog was one `nil' candidate beside our own Cancel.
+COMPLETING-READ is stubbed, NOT the prompter: stubbing the prompter is
+how that shipped with a green suite."
+  (let* ((buf (agent-org-buffer-create "perm-names"))
+         (session (list :name 'test :client nil :buffer buf :session-id "s"))
+         (collection nil)
+         (made nil))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (_prompt coll &rest _args)
+                 (setq collection coll)
+                 "Allow once"))
+              ((symbol-function 'acp-make-session-request-permission-response)
+               (lambda (&rest kw) (push kw made) kw))
+              ((symbol-function 'acp-send-response)
+               (lambda (&rest _args) nil)))
+      (agent-org--on-request
+       session
+       (ao--permission-request
+        `(((optionId . "allow_once") (name . "Allow once") (kind . "allow_once"))
+          ((optionId . "reject_once") (name . "Reject once") (kind . "reject_once")))))
+      (should (equal '("Allow once" "Reject once" "Cancel") collection))
+      (should-not (seq-contains-p collection nil))
+      (let ((kw (car made)))
+        (should (equal "allow_once" (plist-get kw :option-id)))
+        (should-not (plist-member kw :cancelled)))
+      ;; the awaiting status belongs to the request, not the answer
+      (with-current-buffer buf
+        (should (eq 'starting (plist-get agent-org-buffer--status :state)))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-permission-cancel-entry-sends-cancelled ()
+  "The Cancel entry answers `cancelled' -- and never a nil option id."
+  (let* ((buf (agent-org-buffer-create "perm-cancel"))
+         (session (list :name 'test :client nil :buffer buf :session-id "s"))
+         (made nil))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (_prompt _coll &rest _args) "Cancel"))
+              ((symbol-function 'acp-make-session-request-permission-response)
+               (lambda (&rest kw) (push kw made) kw))
+              ((symbol-function 'acp-send-response)
+               (lambda (&rest _args) nil)))
+      (agent-org--on-request
+       session
+       (ao--permission-request
+        `(((optionId . "allow_once") (name . "Allow once") (kind . "allow_once")))))
+      (let ((kw (car made)))
+        (should (plist-get kw :cancelled))
+        (should-not (plist-member kw :option-id))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-permission-option-without-name-shows-its-id ()
+  "An option carrying no `name' still reads as something: its `optionId'.
+An agent is not obliged to name its options; a blank candidate is not an
+answer a person can pick."
+  (let* ((buf (agent-org-buffer-create "perm-noname"))
+         (session (list :name 'test :client nil :buffer buf :session-id "s"))
+         (collection nil)
+         (made nil))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (_prompt coll &rest _args)
+                 (setq collection coll)
+                 (car coll)))
+              ((symbol-function 'acp-make-session-request-permission-response)
+               (lambda (&rest kw) (push kw made) kw))
+              ((symbol-function 'acp-send-response)
+               (lambda (&rest _args) nil)))
+      (agent-org--on-request
+       session
+       (ao--permission-request
+        `(((optionId . "approve-3") (kind . "allow_once")))))
+      (should (equal '("approve-3" "Cancel") collection))
+      (should (equal "approve-3" (plist-get (car made) :option-id))))
+    (kill-buffer buf)))
+
 (defun ao--count-substrings (substring)
   "Number of literal occurrences of SUBSTRING in the current buffer.
 `how-many' in Emacs 30 lacks the REGEXP-P argument, so count directly."
