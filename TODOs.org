@@ -134,7 +134,29 @@ example was read as =<agent>:<project>= rather than =<agent>:<package>=
 because the project part is what the previous item existed to add: two
 qoder chats in two directories must not print the same row.  The one
 builder is still =agent-org-buffer--chat-label=, so the switcher's first
-column changed with it (CONVENTIONS.md §13).
+column changed with it (CONVENTIONS.md §13).  =<who>= was settled as the
+/TITLE/, which is the next item.
+
+** DONE The name wears the AGENT, not the session's topic
+#+begin_quote
+"Buffer names are showing session names in place of agent names."
+#+end_quote
+
+=<who>= is the provider, full stop: =agent-org-buffer--chat-label= reads
+only =:provider= and =:project=, so a chat is =Qoder:agent-org [sid]=
+from its first frame and an agent's later renames cannot reach the
+buffer.  The title stays where it is read -- =#+TITLE:= in the chat and
+in its transcript, and the =session/list= chooser, the one place a topic
+IS what you are choosing between.
+
+Shipped with it: the rename fires only on a =:session-id= update, since
+the provider and the project are fixed at =agent-org-buffer-create=, so
+a =:title= chunk builds no string at all.  Six name tests and three
+switcher tests retargeted (239 total, no net change), and the collision
+test now makes two chats of ONE provider in ONE project -- the collision
+that actually happens.  Nothing in a name is agent text any more, so the
+label filter is out of this path (it stays for =#+TITLE:= and turn
+headings).  AGENTS.md and CONVENTIONS.md §1 carry the rule.
 
 ** DONE Tool call headings must not show raw ids
 agent-shell renders tool calls through =agent-shell-make-tool-call-label=
@@ -267,8 +289,8 @@ is (newest chat first), and their value is the BUFFER object rather than a
 name an agent can rename.  It found one real bug on the way: two =Qoder= chats
 in two projects printed identical rows but for their UUIDs, so the label is now
 =agent-org-buffer--chat-label= — the same function the buffer name is built
-from, project directory first.  Nine tests in /tests, both column assertions
-mutation-checked.
+from, and it carries the project directory.  Nine tests in /tests, both column
+assertions mutation-checked.
 
 ** DONE Model-name turn headings
 User order: "Use model name instead of 'Agent' by default. You will have

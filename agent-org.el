@@ -943,15 +943,16 @@ instead of loading (see `agent-org--load-session')."
 
 (defun agent-org--chat-columns (buffer)
   "The (LABEL . STATUS) texts of BUFFER's switcher row, unpadded.
-LABEL is the chat's own display label — project directory and title, the
-provider standing in before a title arrives — from
-`agent-org-buffer--chat-label', the very function the buffer name is built
-from, so `C-x b' and this list can never call one chat two things.  It goes
-through `agent-org-buffer--label', because a title is agent free text and a
-newline in a completion candidate breaks the UI.  STATUS is the header
-line's OWN state word (`agent-org-buffer--state-label'): two vocabularies
-for one state is how a person stops trusting either, and the bar and this
-list are read in the same minute.
+LABEL is the chat's own display label — the harness and the project
+directory, `agent-org-buffer--chat-label' being the very function the
+buffer name is built from, so `C-x b' and this list can never call one chat
+two things.  The session TITLE is in neither: the label says which agent you
+are talking to and what it is a chat OF, and the topic is `#+TITLE:' inside
+the chat.  Nothing here is agent free text any more, so no label filter is
+applied.  STATUS is the header line's OWN state word
+(`agent-org-buffer--state-label'): two vocabularies for one state is how a
+person stops trusting either, and the bar and this list are read in the same
+minute.
 
 Reads the buffer-local status directly rather than through
 `with-current-buffer': nothing here needs the buffer's other state, and a
@@ -2081,8 +2082,9 @@ failure is silent: =#+TITLE:= simply keeps the fallback it already had."
                                                  (map-elt list-resp 'sessions))))
                                 (title (map-elt row 'title))
                                 ((not (string-empty-p title))))
-                       ;; set-status renames the buffer; the metadata
-                       ;; pass is what rewrites the `#+TITLE:' line
+                       ;; the buffer KEEPS its name (the name is the agent,
+                       ;; not this title); the metadata pass is what puts
+                       ;; the title in `#+TITLE:'
                        (agent-org-buffer-set-status buffer :title title)
                        (agent-org-buffer-refresh-metadata buffer)
                        ;; and the file catches up with it now, not at the

@@ -89,11 +89,12 @@ NonGNU ELPA.
    the header line.  When the ACP ~initialize~ + ~session/new~
    handshake completes, the header fills in with everything the agent
    reported, and the buffer renames itself to the session it holds —
-   =~Fix the login bug:myproj [20260924_4]=: the title and the project it
+   =~Qoder:myproj [20260924_4]=: the agent, the project it
    is a chat of, plus the id, so three chats from one agent are three
-   readable names in ~C-x b~ rather than three copies of the provider.  An
-   agent that titles only after the first turn (qoder does) renames it
-   again when that title arrives.  The
+   readable names in ~C-x b~.  The session's /title/ is deliberately not in the
+   name — it is ~#+TITLE:~ at the top of the chat and of its transcript, where an
+   agent that renames the session later (qoder does, after the first turn) can
+   update it without the buffer's name moving under you.  The
    header line is the agent's own report of the session:
    #+begin_example
    Goose ➤ free ➤ auto ➤ agent-org ➤ ▁ 5k/128k ➤ Ready
@@ -271,13 +272,16 @@ widest row in the batch, so you scan down the state column instead of reading
 six names that differ in the middle.  Verbatim from a real session:
 
 #+begin_example
-llmfisher LLMFisher               Streaming  [qoder_95c3f532-3fdc-42e7-e19b-db1a2a36c146]
-agent-org Qoder                   Streaming  [b480ebca-6b06-467e-822a-88cf491b75fa]
-org-docs Qoder                    Streaming  [ef80d1b2-de8e-4b76-ad91-24e540fb4b30]
+Qoder:sane-packages          Streaming  [7f9e546b-8f42-4c03-87af-3f019e31a70e]
+Qoder:org-import             Ready      [3dfe858f-a84b-4f09-ab2c-3a3f29198fdb]
+Qoder:agent-org              Streaming  [b480ebca-6b06-467e-822a-88cf491b75fa]
 #+end_example
 
-The project directory leads the label for the reason those three rows show:
-two ~Qoder~ chats in two checkouts are otherwise identical but for a UUID.
+The label is ~<agent>:<project>~ for the reason those rows show: two ~Qoder~
+chats in two checkouts are otherwise identical but for a UUID, and the id is
+what separates two chats of one agent in one project.  What the chat is /about/
+is not in the label either — that is the ~#+TITLE:~ inside it, and the topic an
+agent renames later would otherwise rename the buffer mid-read.
 ~STATUS~ is the header line's own word (~Ready~, ~Streaming~, ~Restoring~…),
 and ~C-x b~ says the same thing, because a chat has one display name wherever
 it is listed.  There is no key binding: ~C-x b~ already reaches every chat,

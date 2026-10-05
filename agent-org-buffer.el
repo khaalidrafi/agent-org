@@ -429,25 +429,25 @@ the per-turn :thinking: drawer by `agent-org-buffer-append-thought'.")
 
 (defun agent-org-buffer--wanted-name ()
   "The buffer name this buffer's session facts call for.
-A chat buffer is the session: `C-x b' and the switcher list its name, and
-`Qoder' says nothing at all to someone with three qoder chats open.  So
-the name is `<who>:<project> [<session id>]' — the agent, or the harness's
-own title once it has one, then the project directory it is a chat OF,
-then the ACP id the wire addresses it by.
+A chat buffer is the session: `C-x b' and the switcher list its name, so
+the name is `<agent>:<project> [<session id>]' — which harness answers,
+the project directory it is a chat OF, then the ACP id the wire addresses
+it by.
 
-The provider stands in for a title that has not arrived, exactly as it
-does for `#+TITLE:', and the id is left out until the agent has given one
-(the buffer is named this way from the moment `session/new' is answered,
-and qoder titles a session only after the first turn).  Title text is
-agent-supplied free text, hence `agent-org-buffer--label': a buffer name
-with a newline in it breaks the completion UI.
+The session TITLE is deliberately not in it.  A title is what the chat is
+about and it arrives late, changes on its own (`session_info_update'), and
+is agent free text; a buffer whose name mutates mid-read is worse than one
+that never described the topic, and the user asked for the agent by name:
+\"Buffer names are showing session names in place of agent names.\"  The
+title is not lost — it is the `#+TITLE:' of the buffer and of its
+transcript, and the resume chooser reads it from `session/list'.
 
 No `agent-org: ' prefix and no `*…*' delimiters: the user asked for the
 name to BE the chat, and the package's own name costs a chat its place in
 `C-x b', where `*agent-org: …*' sorts together with everything else in the
 product rather than with the project it belongs to.
 
-The name's first part is `agent-org-buffer--chat-label', which
+The `<agent>:<project>' part is `agent-org-buffer--chat-label', which
 `agent-org-switch-buffer' builds its first column from as well: one chat,
 one display label, wherever it is shown."
   (let* ((status agent-org-buffer--status)
@@ -458,25 +458,25 @@ one display label, wherever it is shown."
 
 (defun agent-org-buffer--chat-label (status)
   "The display label of the chat described by the status plist STATUS.
-`<who>:<project>': the harness's own title, the provider standing in
-before a title arrives and `agent-org' if not even that is known, then the
+`<agent>:<project>': the provider that owns the session, then the
 directory the chat was started in after the colon.  The idiom is the one
 Emacs users already read as \"thing it is a buffer OF\" (`file:directory'
-in the buffer menu) and the one the user asked for by name.  The project
-still has to be IN the name: measured live, a session in this repo and a
-session in org-docs produced two switcher rows identical but for their
-UUIDs while `C-x b' was already telling them apart.  Flattened by
-`agent-org-buffer--label' (the title is agent free text) and never
-truncated, so the label can out-grow a column; the padding code copes.
+in the buffer menu) and the one the user asked for by name
+(`Qoder:agent-org [SESSION_ID]').  The project still has to be IN the
+name: measured live, a session in this repo and a session in org-docs
+produced two switcher rows identical but for their UUIDs while `C-x b' was
+already telling them apart.
+
+Only `:provider' and `:project' are read, and `agent-org' is the fallback
+if even the provider is missing; nothing here is agent-supplied text, so
+no label filter is needed and none is applied.  Flattening and truncation
+stay `#+TITLE:' and turn-heading concerns.
 
 STATUS is a parameter, not a read of `agent-org-buffer--status': the
 switcher labels OTHER buffers, and a function that is only correct when
 called in the right buffer is a bug waiting for the next caller."
   (let ((project (plist-get status :project))
-        (label (agent-org-buffer--label
-                (or (plist-get status :title)
-                    (plist-get status :provider)
-                    "agent-org"))))
+        (label (or (plist-get status :provider) "agent-org")))
     (if (and project (not (string-empty-p project)))
         (concat label ":" project)
       label)))
@@ -503,9 +503,11 @@ Only keys present in STATUS are changed, so passing
 With `agent-org-use-header-line' nil, the rendered status is shown via
 `message' instead.  Status never touches the buffer body.
 
-A `:title' or `:session-id' in STATUS also re-names the buffer, because
-those two and the creation-time `:project' are all a name is made of: a
-usage or state update does no string building and no rename."
+A `:session-id' in STATUS also re-names the buffer: the provider and the
+project are fixed when the buffer is created, so the id is the only half
+of a name that ever arrives later.  A usage, state or `:title' update does
+no string building and no rename — the title is what the chat is ABOUT,
+and the name says which harness answers it."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (dolist (key '(:provider :state :message :note :session-id :model :model-name
@@ -514,8 +516,7 @@ usage or state update does no string building and no rename."
         (when (plist-member status key)
           (setq agent-org-buffer--status
                 (plist-put agent-org-buffer--status key (plist-get status key)))))
-      (when (or (plist-member status :title)
-               (plist-member status :session-id))
+      (when (plist-member status :session-id)
         (agent-org-buffer--apply-name))
       (if agent-org-use-header-line
           (force-mode-line-update)

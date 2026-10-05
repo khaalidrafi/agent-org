@@ -80,28 +80,34 @@ goes through the turn anchor and `agent-org-buffer--render-end`, which is why th
 two callers that start a turn with no session (a thought chunk or a tool update
 arriving first) get the same heading as the streaming path.
 
-**The buffer is named for its session**: `<who>:<project> [<session id>]`, with no
+**The buffer is named for its session**: `<agent>:<project> [<session id>]`, with no
 `agent-org: ` prefix and no `*…*` delimiters.  `C-x b` and any switcher list names,
-and a bare `Qoder` tells someone with three qoder chats open nothing — nor does
-`Fix the login bug [sid]` once two projects produce that title.  So the agent (or
-its title) leads, because that is what a person scans for, and the last directory
+and a bare `Qoder` tells someone with three qoder chats open nothing — nor does one
+name tell them which of two projects it is a chat OF.  So the agent leads, because
+that is what a person scans for, and the last directory
 component of the session cwd follows the colon, in the `file:directory` idiom
-Emacs users already read.  The provider stands in for a title that has not
-arrived, exactly as it does for `#+TITLE:`, and the id is omitted until the agent
+Emacs users already read.  **The session title is not in the name** — the user's
+report was exactly that: *"Buffer names are showing session names in place of agent
+names."*  A title says what a chat is ABOUT, arrives late, and changes on its own
+(`session_info_update`), so a name built from it mutates under a person reading the
+buffer list; the title is the buffer's `#+TITLE:` and its transcript's, and the
+resume chooser shows it from `session/list`.  The id is omitted until the agent
 gives one; the project is there from creation, so even the handshake name
-(`goose:myproj`) places the buffer.  All three facts come from
-`agent-org-buffer--wanted-name`, whose `<who>:<project>` part is
+(`goose:myproj`) places the buffer.  Both name facts come from
+`agent-org-buffer--wanted-name`, whose `<agent>:<project>` part is
 `agent-org-buffer--chat-label` — the same function `agent-org-switch-buffer`
 builds its first column from, so one chat has one name in every list (§13);
 after creation the name is applied by
-`agent-org-buffer-set-status`, on the updates that carry `:title` or
-`:session-id`: those and the creation-time `:project` are all a name is made
-of, so a per-chunk usage update builds no string and renames nothing.  Two
-traps that the equality guard in `agent-org-buffer--apply-name` exists to
-prevent: `generate-new-buffer-name` counts *this* buffer, so renaming on every
-update walks a session through `T [s]<2><3><4>`; and a title is agent-supplied
-free text, hence `agent-org-buffer--label` — a newline in a buffer name breaks
-the completion UI.  `agent-org-buffer-create` does give its buffer one internal
+`agent-org-buffer-set-status`, on the updates that carry `:session-id`: the
+provider and the `:project` are fixed when the buffer is created, so the id is the
+only half of a name that arrives later, and a per-chunk usage or title update
+builds no string and renames nothing.  The equality guard in
+`agent-org-buffer--apply-name` exists because
+`generate-new-buffer-name` counts *this* buffer, so renaming on every
+update walks a session through `Qoder:agent-org [s]<2><3><4>`.
+Nothing agent-supplied reaches the name any more, so
+`agent-org-buffer--label` is a `#+TITLE:` and turn-heading concern, not a buffer
+one.  `agent-org-buffer-create` does give its buffer one internal
 name, ` *agent-org-<provider>*` — the leading space is Emacs' own convention for
 a buffer that should not be listed — and renames it three lines later, before
 anything could see it.
@@ -154,7 +160,8 @@ Until a title arrives, the **provider name alone** stands in as a fallback —
 never a `"Goose - <something>"` mashup, never a truncated prompt.  The rule
 is: *whatever the harness calls this session is what `#+TITLE:` says.*  A
 rename from the agent therefore flows straight through on the next
-`refresh-metadata`.
+`refresh-metadata`.  The title is the chat's topic and lives in the document;
+it is never the buffer's name (§1).
 
 ---
 
@@ -709,9 +716,9 @@ first's parts rather than writing its own:
 * A column is located by its `shadow` face transition, never by the spaces in
   front of it — padding and separator are both spaces, so a space search
   measures where the padding began.
-* `agent-org-buffer--chat-label` (`<who>:<project>`, the provider standing in for
-  a title that has not arrived) is the label in the buffer name **and** in the
-  switcher's first column.  Adding a naming rule means editing that one
+* `agent-org-buffer--chat-label` (`<agent>:<project>` — the provider and the
+  project, never the session title) is the label in the buffer name **and** in
+  the switcher's first column.  Adding a naming rule means editing that one
   function.
 * It takes the status plist as an argument: the switcher labels other buffers,
   and `with-current-buffer` there is a function that can move point in a chat

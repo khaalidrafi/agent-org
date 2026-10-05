@@ -202,29 +202,36 @@ emacs -Q --batch \
 #   back to the id — a bar that drops the model field reads as "no model",
 #   which is the worse lie.  Every writer goes through
 #   `agent-org--ingest-config', so the pair cannot drift apart.
-# - A chat buffer is named for its session: `<who>:<project> [sid]` — the title
-#   (provider standing in until one arrives), then the project after the colon.
-#   NO `agent-org: ` prefix and no `*…*` delimiters: the user asked for
-#   `Qoder:agent-org [SESSION_ID]` and the package's own name only costs a chat
-#   its place in `C-x b` (the rule is pinned by
-#   `test-agent-org-buffer-name-wears-no-star-delimiters`).  Built by
+# - A chat buffer is named for its session: `<agent>:<project> [sid]` — which
+#   harness answers, then the project after the colon.  The session TITLE is NOT
+#   in the name, on the user's report "Buffer names are showing session names in
+#   place of agent names.": a title arrives late, renames itself via
+#   `session_info_update', and is agent free text, so a name built from it
+#   mutates under a person reading `C-x b'.  The topic lives in the buffer's own
+#   `#+TITLE:' — which `agent-org-buffer--refresh-metadata' rewrites, and the
+#   transcript mirrors, so a late title still reaches the disk — and in the
+#   resume chooser, which reads titles from `session/list'.  NO `agent-org: `
+#   prefix and no `*…*` delimiters: the user asked for
+#   `Qoder:agent-org [SESSION_ID]` and the
+#   package's own name only costs a chat its place in `C-x b` (the rule is
+#   pinned by `test-agent-org-buffer-name-wears-no-star-delimiters`).  Built by
 #   `agent-org-buffer--wanted-name', applied by `agent-org-buffer-set-status'
-#   ONLY on an update carrying `:title' or `:session-id' — those are the facts a
-#   name is made of (`:project' is fixed at creation, from the session cwd), so a
-#   per-chunk usage update builds no string.  `agent-org-buffer-create' names the
-#   buffer itself, once the status (and therefore the project) exists, so even the
-#   handshake buffer is findable by project; its own first name is the internal
-#   ` *agent-org-<provider>*' (leading space = never listed), replaced three lines
-#   later.  The provider
-#   stands in for a title that has not arrived (as it does for `#+TITLE') and
-#   qoder's `session_info_update' renames the buffer later.  The equality test in
-#   `agent-org-buffer--apply-name' is not an optimisation: `generate-new-buffer-name'
-#   counts this very buffer, so renaming per update walks the session through
-#   `T [s]<2><3><4>'.  Titles are agent free text — through `agent-org-buffer--label'
-#   (a newline in a buffer name breaks completion).  `rename-buffer' with
-#   RENAME-ALL-PROCESSES nil keeps the acp process name readable in list-processes.
-#   The id is /also/ an Org `:ID:' property, but never a header-line segment: the
-#   bar carries state, the name carries identity.
+#   ONLY on an update carrying `:session-id' — the one half of a name that
+#   arrives after creation, since `agent-org-buffer-create' fixes `:project' and
+#   `:provider' from the cwd and the provider.  A per-chunk usage or title
+#   update therefore builds no string.  `agent-org-buffer-create' names the
+#   buffer itself, once the status (and therefore the project) exists, so even
+#   the handshake buffer is findable by project; its own first name is the
+#   internal ` *agent-org-<provider>*' (leading space = never listed), replaced
+#   three lines later.  The equality test in `agent-org-buffer--apply-name' is
+#   not an optimisation: `generate-new-buffer-name' counts this very buffer, so
+#   renaming per update walks the session through
+#   `Qoder:agent-org [s]<2><3><4>'.  No agent text reaches the name any more,
+#   so `agent-org-buffer--label' is a `#+TITLE:' and turn-heading concern only.
+#   `rename-buffer' with RENAME-ALL-PROCESSES nil keeps the acp process name
+#   readable in list-processes.  The id is /also/ an Org `:ID:' property, but
+#   never a header-line segment: the bar carries state, the name carries
+#   identity.
 # - User-facing command names follow the agent-shell package (`~/agent-shell`,
 #   same author, same ACP ground): session-level verbs name their object
 #   (`agent-org-resume-session', `agent-org-set-session-model', matching
@@ -368,10 +375,10 @@ emacs -Q --batch \
 #   from the chooser is the row's VALUE: a BUFFER object, never a name — the
 #   agent renames its own chat, so a name looked up afterwards can match
 #   nothing.  Killed-but-unforgotten entries are dropped with `buffer-live-p'.
-# - One chat, ONE display label: `agent-org-buffer--chat-label' ("<project>
-#   <title>", provider standing in for a title that has not arrived) is called
-#   by `agent-org-buffer--wanted-name' AND by the switcher's first column.  Two
-#   builders writing the same three rules is how one chat ends up called
+# - One chat, ONE display label: `agent-org-buffer--chat-label' (`<agent>:<project>`)
+#   is called by `agent-org-buffer--wanted-name' AND by the switcher's first
+#   column, and it reads only `:provider' and `:project' — never the session
+#   title.  Two builders writing the same rules is how one chat ends up called
 #   "org-docs Qoder" in `C-x b' and plain "Qoder" in the switcher — which is
 #   what the first live run printed: two rows identical but for a UUID.  So the
 #   label takes the status PLIST as an argument instead of reading

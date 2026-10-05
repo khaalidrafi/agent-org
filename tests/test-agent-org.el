@@ -106,12 +106,12 @@ from.  The directory need not exist: nothing here touches the disk.")
         (should header-line-format))
       (kill-buffer buf))))
 
-;;;; Buffer names: <who>:<project> [id]
+;;;; Buffer names: <agent>:<project> [id]
 
 (ert-deftest test-agent-org-buffer-name-carries-project ()
-  "The chat's own name leads, and the project follows the colon.
-`Qoder:agent-org [sid]' is the shape the user asked for: the agent or the
-title first, because that is what a person scans for, and the last
+  "The agent's name leads, and the project follows the colon.
+`Qoder:agent-org [sid]' is the shape the user asked for by name: the
+harness first, because that is what a person scans for, and the last
 directory component of the cwd after the colon, because that is what
 tells a chat of ~/proj-a from a chat of ~/proj-b (measured live: two
 sessions in two projects produced two switcher rows identical but for
@@ -125,68 +125,76 @@ after the agent answers."
       (should (equal "qoder:ao-proj [sid-prj]" (buffer-name buf)))
       (kill-buffer buf))))
 
-(ert-deftest test-agent-org-buffer-name-gains-title-and-id ()
-  "Once the agent names the session, its buffer is that session.
-`Qoder:agent-org' tells a user with three chats open nothing; the title
-the harness reports, the project and the id the wire addresses are the
-facts that make a buffer distinguishable in `C-x b' and in the switcher."
+(ert-deftest test-agent-org-buffer-name-wears-the-agent-not-the-title ()
+  "A session title never enters the buffer name.
+`Qoder' says which harness answers; the agent's own title says what the
+chat is ABOUT, and the user asked for the first: \"Buffer names are
+showing session names in place of agent names.\"  The title is not lost —
+it is the `#+TITLE:' of the buffer and of its transcript — it just is not
+the buffer's name.  (This fixture's agent reports \"Initial Session
+Title\" on `session/new', which used to rename the buffer.)"
   (let ((default-directory ao--name-dir))
     (let* ((pair (ao--make-test-session "nametest"))
            (buf (car pair))
            (session (cdr pair)))
       (setf (plist-get session :session-id) nil)
       (agent-org--session-ready session "sid-x" (ao--fake-session-new-resp))
-      (should (equal "Initial Session Title:ao-proj [sid-x]"
-                     (buffer-name buf)))
+      (should (equal "nametest:ao-proj [sid-x]" (buffer-name buf)))
+      (should (equal "Initial Session Title"
+                     (plist-get (buffer-local-value 'agent-org-buffer--status buf)
+                                :title)))
       (kill-buffer buf))))
 
-(ert-deftest test-agent-org-buffer-name-wears-provider-without-a-title ()
-  "A session with no title yet is still findable by id.
-The provider name stands in exactly as it does for `#+TITLE:', so the
-buffer is never left with the pre-handshake name once an id exists."
+(ert-deftest test-agent-org-buffer-name-wears-the-provider-with-no-title ()
+  "A session whose agent titles nothing is named the same as one that did.
+There is no fallback any more: the provider is the name, so the two cases
+cannot diverge — which is what makes an agent that never sends
+`session_info_update' (goose) read like one that does."
   (let ((default-directory ao--name-dir))
     (let ((buf (agent-org-buffer-create "standin")))
       (agent-org-buffer-set-status buf :session-id "sid-9")
       (should (equal "standin:ao-proj [sid-9]" (buffer-name buf)))
+      (agent-org-buffer-set-status buf :title "Something the agent wrote")
+      (should (equal "standin:ao-proj [sid-9]" (buffer-name buf)))
       (kill-buffer buf))))
 
-(ert-deftest test-agent-org-buffer-name-follows-a-late-title ()
-  "A title that arrives mid-conversation renames the buffer.
-qoder titles a session after the first turn (`session_info_update'), so
-naming only at readiness would freeze every one of its buffers at the
-provider's name."
+(ert-deftest test-agent-org-buffer-name-ignores-a-late-title ()
+  "A title arriving mid-conversation does not rename the buffer.
+qoder titles a session after the first turn, and a chat whose name changes
+under the user mid-read is worse than a name that never described the
+topic: `C-x b' windows, isearch and a window's `buffer-name' in a mode
+line all follow the buffer, not the session."
   (let ((default-directory ao--name-dir))
     (let* ((pair (ao--make-test-session "latetitle"))
            (buf (car pair)))
       (agent-org-buffer-set-status buf :session-id "sid-l")
       (should (equal "latetitle:ao-proj [sid-l]" (buffer-name buf)))
       (agent-org-buffer-set-status buf :title "Refactor the parser")
-      (should (equal "Refactor the parser:ao-proj [sid-l]"
-                     (buffer-name buf)))
+      (should (equal "latetitle:ao-proj [sid-l]" (buffer-name buf)))
       (kill-buffer buf))))
 
-(ert-deftest test-agent-org-buffer-name-flattens-a-multiline-title ()
-  "Agent-supplied titles go through the same one-line filter headings do.
-A title is free text; a newline in a buffer name would break `C-x b'
-rendering, so the label rule applies here too — and the truncation it
-performs cannot swallow the project either, so the test pins the end of
-the name as well as its beginning."
+(ert-deftest test-agent-org-buffer-name-keeps-a-multiline-title-out ()
+  "Agent free text cannot reach the name at all, so it cannot break it.
+The name used to be built from a title and needed the one-line label
+filter to survive it; now no agent text enters the name, which is the
+stronger guarantee — a 200-character title with newlines in it leaves the
+name exactly as the provider and project made it.  The filter still
+matters for `#+TITLE:' and the turn heading, which DO carry agent text."
   (let ((default-directory ao--name-dir))
     (let ((buf (agent-org-buffer-create "multiline"))
           (long (concat "First line\n" (make-string 200 ?x) "\ntrailing")))
       (agent-org-buffer-set-status buf :session-id "sid-m" :title long)
       (with-current-buffer buf
         (should-not (string-match-p "\n" (buffer-name)))
-        (should (string-prefix-p "First line" (buffer-name)))
-        (should (string-suffix-p ":ao-proj [sid-m]" (buffer-name))))
+        (should (equal "multiline:ao-proj [sid-m]" (buffer-name))))
       (kill-buffer buf))))
 
 (ert-deftest test-agent-org-buffer-name-does-not-accumulate-suffixes ()
-  "Re-announcing the same title and id is not a rename.
+  "Re-announcing the same facts is not a rename.
 `generate-new-buffer-name' counts OUR OWN buffer when it already wears
 that name, so an unconditional rename would walk
-`T [s]<2><3><4>' over a session's lifetime — every status update, of
-which a turn sends dozens."
+`Qoder:agent-org [s]<2><3><4>' over a session's lifetime — every status
+update, of which a turn sends dozens."
   (let ((default-directory ao--name-dir))
     (let* ((pair (ao--make-test-session "churn"))
            (buf (car pair)))
@@ -195,25 +203,28 @@ which a turn sends dozens."
           :title "Same Title")
         (agent-org-buffer-set-status buf :used 100 :size 200 :state 'streaming)
         (agent-org-buffer-set-status buf :state 'ready))
-      (should (equal "Same Title:ao-proj [sid-c]" (buffer-name buf)))
+      (should (equal "churn:ao-proj [sid-c]" (buffer-name buf)))
       (kill-buffer buf))))
 
 (ert-deftest test-agent-org-buffer-names-stay-unique-per-session ()
-  "Two sessions, two buffers, one name each.
-Ids differ, so the names differ; and a name that is already taken must
-still produce a live, distinct buffer rather than clobbering the other."
+  "Two chats of one harness in one project: the id separates them.
+Same provider, same project, so before an id exists the wanted name
+collides — and a collision must produce a live, distinct buffer rather
+than clobbering the other.  Once both ids are in, the names are exact
+again, which is the point of putting the id in the name."
   (let ((default-directory ao--name-dir))
-    (let* ((a (ao--make-test-session "twin-a"))
-           (b (ao--make-test-session "twin-b"))
+    (let* ((a (ao--make-test-session "qoder"))
+           (b (ao--make-test-session "qoder"))
            (bufa (car a))
            (bufb (car b)))
-      (agent-org-buffer-set-status bufa :session-id "sid-1" :title "Twin")
-      (agent-org-buffer-set-status bufb :session-id "sid-2" :title "Twin")
-      (should (equal "Twin:ao-proj [sid-1]" (buffer-name bufa)))
-      (should (equal "Twin:ao-proj [sid-2]" (buffer-name bufb)))
-      ;; the same id twice cannot happen; the same title with no id can
-      (agent-org-buffer-set-status bufb :session-id nil :title "Twin")
-      (should (equal "Twin:ao-proj" (buffer-name bufb)))
+      ;; created in the same project with the same provider: the second
+      ;; wanted name is taken, so it is uniquified, and it stays alive
+      (should (equal "qoder:ao-proj" (buffer-name bufa)))
+      (should (equal "qoder:ao-proj<2>" (buffer-name bufb)))
+      (agent-org-buffer-set-status bufa :session-id "sid-1")
+      (agent-org-buffer-set-status bufb :session-id "sid-2")
+      (should (equal "qoder:ao-proj [sid-1]" (buffer-name bufa)))
+      (should (equal "qoder:ao-proj [sid-2]" (buffer-name bufb)))
       (kill-buffer bufa)
       (kill-buffer bufb))))
 
@@ -4151,7 +4162,7 @@ the single-candidate shortcut stays resume's own."
 ;; tests pin the reuse rather than a second formatter.
 
 (defun ao--two-chats ()
-  "Two registered chats, both Ready, with distinct ids and titles.
+  "Two registered chats, both Ready, with distinct ids and harnesses.
 Returns ((BUFFER-1 . SESSION-1) . (BUFFER-2 . SESSION-2)).  The fixture
 `ao--make-test-session' gives both the same id and leaves the brand-new
 buffer on `starting', so this pins both facts: a switcher that lists two
@@ -4162,10 +4173,16 @@ column is what the tests below read.
 alive, so a caller that counts rows must bind it nil around the whole
 body — that is the test's job, not this helper's, because the binding has
 to outlive the registration."
-  (let ((one (ao--make-test-session "one"))
-        (two (ao--make-test-session "two")))
+  (let ((one (ao--make-test-session "qoder"))
+        (two (ao--make-test-session "goose")))
     (setf (plist-get (cdr one) :session-id) "sid-one")
     (setf (plist-get (cdr two) :session-id) "sid-two")
+    ;; distinct PROVIDERS, not distinct titles: a row's label is the agent
+    ;; and the project, so two chats of one harness in one project would
+    ;; give this section two identical rows to compare and no way to tell
+    ;; which row is which.  The titles are still set — they are what the
+    ;; `#+TITLE:' of each chat is made of, and a test that reads them from
+    ;; the name is the bug this fixture used to hide.
     (agent-org-buffer-set-status (car one) :title "Fix the login bug"
                                  :session-id "sid-one" :state 'ready)
     (agent-org-buffer-set-status (car two) :title "Rewrite the loader"
@@ -4203,20 +4220,20 @@ would then switch to nothing."
            (choices (agent-org--switch-candidates)))
       (should (= 2 (length choices)))
       (should (equal (mapcar #'cdr choices) (list (car two) (car one))))
-      (should (string-match-p "Rewrite the loader" (car (nth 0 choices))))
+      (should (string-prefix-p "goose:" (car (nth 0 choices))))
       (should (string-match-p "\\[sid-two\\]\\'" (car (nth 0 choices))))
-      (should (string-match-p "Fix the login bug" (car (nth 1 choices))))
+      (should (string-prefix-p "qoder:" (car (nth 1 choices))))
       (kill-buffer (car one))
       (kill-buffer (car two)))))
 
-(ert-deftest test-agent-org-switch-candidates-wear-the-provider-without-a-title ()
-  "An agent that has titled nothing still gets a readable row.
-The provider stands in, exactly as it does in the buffer name and
-`#+TITLE:', so the switcher and `C-x b' never disagree about what a chat
-is called.  The row carries the project directory after the colon, which
-`agent-org-buffer-create' knows from the moment the buffer exists — this
-is the one case where a chat has no title, so the label proves the
-fallback reaches the switcher too."
+(ert-deftest test-agent-org-switch-candidates-wear-the-provider-and-project ()
+  "A chat that has been titled nothing still gets a readable row, and it
+gets the SAME row shape as one that has: the label is the provider and the
+project, so there is no fallback path left to test.  The project directory
+comes from `agent-org-buffer-create', which knows the cwd from the moment
+the buffer exists, and the id from `session/new' — which is what makes a
+title-less agent (goose advertises none) indistinguishable in shape from
+one that titles everything (qoder)."
   (ao--isolated-registry
     (let* ((pair (ao--make-test-session "untitled"))
            (choices (agent-org--switch-candidates))
@@ -4228,15 +4245,12 @@ fallback reaches the switcher too."
       (should (string-match-p "\\[sid-test\\]\\'" (car (nth 0 choices))))
       (kill-buffer (car pair)))))
 
-(ert-deftest test-agent-org-switch-candidates-name-the-project-too ()
-  "The row's label is the buffer name's label, project included.
-Live measurement: two qoder chats from one Emacs produced two rows that
-were byte-identical except for a UUID (\"Qoder Streaming [b480…]\" and
-\"Qoder Streaming [ef80…]\"), while `C-x b' was happily showing \"agent-org
-Qoder\" and \"org-docs Qoder\".  The project directory is what distinguishes
-two chats for the same harness, so the row wears it too — and it wears the
-SAME string the buffer name is built from, not a second copy of the rules,
-because two builders drift and one chat then has two names."
+(ert-deftest test-agent-org-switch-candidates-label-the-chat-not-its-topic ()
+  "A row's label is the agent and the project, never the session title.
+The switcher shares `agent-org-buffer--chat-label' with the buffer name
+deliberately, so a fix that stopped the title entering the NAME must not
+leave it entering the ROW — one chat, one label, and the user's complaint
+was that the label described the topic instead of the harness."
   (ao--isolated-registry
     (let* ((pair (ao--two-chats))
            (one (car pair))
@@ -4245,8 +4259,10 @@ because two builders drift and one chat then has two names."
       (agent-org-buffer-set-status (car two) :project "agent-org")
       (let ((choices (agent-org--switch-candidates)))
         ;; row 0 is `two', row 1 is `one' (registry order)
-        (should (string-match-p "\\`Rewrite the loader:agent-org" (car (nth 0 choices))))
-        (should (string-match-p "\\`Fix the login bug:org-docs" (car (nth 1 choices))))
+        (should (string-prefix-p "goose:agent-org" (car (nth 0 choices))))
+        (should (string-prefix-p "qoder:org-docs" (car (nth 1 choices))))
+        (should-not (string-match-p "loader" (car (nth 0 choices))))
+        (should-not (string-match-p "login" (car (nth 1 choices))))
         ;; The shared builder, checked against the row rather than trusted:
         ;; this is what makes the assertion above survive a rename of the
         ;; buffer-name rules.
@@ -4278,11 +4294,11 @@ how a UI teaches you not to trust it, so the column comes from
 (ert-deftest test-agent-org-switch-candidates-align-their-columns ()
   "The status column starts at the same display width in every row.
 Measured the way the session listing measures: `string-width', so a CJK
-title pads like a Latin one.  Ragged rows are the whole reason a chat list
+label pads like a Latin one.  Ragged rows are the whole reason a chat list
 is read by scanning down one column instead of reading across.
 
 The column's start is ROW's first dimmed character, and NOT its first run
-of two spaces: the short title is padded with spaces and the separator is
+of two spaces: the short label is padded with spaces and the separator is
 spaces too, so on a padded row the first double space sits somewhere
 INSIDE the padding — counting to it measures where the padding happened to
 begin, which is why this assertion read (18 47) while the rows, printed,
@@ -4291,15 +4307,17 @@ were identical 65-column strings."
     (let* ((pair (ao--two-chats))
            (one (car pair))
            (two (cdr pair)))
-      ;; row 0 is `two' (registry order) and keeps its short title, so a
-      ;; shared column start proves the SHORT row was padded to the long one
-      (agent-org-buffer-set-status (car one) :title
-                                   "A chat whose title runs on for very long indeed")
+      ;; row 0 is `two' (registry order) and keeps its short label, so a
+      ;; shared column start proves the SHORT row was padded to the long one.
+      ;; The long half of the pair is the PROVIDER, because that is the only
+      ;; part of the label an agent can make long now a title never enters it.
+      (agent-org-buffer-set-status (car one) :provider
+                                   "a harness whose name runs on for very long indeed")
       (let ((labels (mapcar #'car (agent-org--switch-candidates))))
         (should (= 2 (length labels)))
         (should (apply #'equal (seq-map #'ao--dim-column labels)))
         ;; Equal total width too: the ids are the same length here, so the two
-        ;; rows can only line up if the SHORT title was padded out to the
+        ;; rows can only line up if the SHORT label was padded out to the
         ;; long one rather than the long one being cut down.
         (should (apply #'equal (seq-map #'string-width labels)))))))
 

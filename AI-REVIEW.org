@@ -572,17 +572,18 @@ fallback exists for a stale/unnamed value, not for goose.
 ** TODO Read the choke point: =agent-org-buffer-set-status= renames (agent-org-buffer.el)
 
 The rename hangs off the one function that already receives every status fact,
-guarded by =(or (plist-member status :title) (plist-member status :session-id))=.
-Worth judging, because the cheap-looking alternative — rename inside
-=agent-org--session-ready= and again in =session_info_update= — is two call sites
-that a third title-carrying path can forget.  A =usage_update= does not reach the
+guarded by =(plist-member status :session-id)= -- the only half of a name that
+arrives after =agent-org-buffer-create= has fixed the provider and the project.
+Worth judging, because the cheap-looking alternative -- rename inside
+=agent-org--session-ready= and again wherever an id turns up -- is two call sites
+that a third path can forget.  A =usage_update= or a =:title= does not reach the
 string building at all, which is the whole low-end argument for the guard.
 
 ** TODO Read =agent-org-buffer--apply-name='s equality test
 
 Not an optimisation: =generate-new-buffer-name= counts *this* buffer among the
 holders of the name, so renaming on every update of a Ready session walks it
-through =*agent-org: T [s]*<2><3><4>= — one more suffix than the buffer has
+through =Qoder:agent-org [s]<2><3><4>= -- one more suffix than the buffer has
 status updates, which for a long turn is dozens.  The test
 =…-does-not-accumulate-suffixes= is that sentence made executable; delete the
 =(unless (equal …))= and it fails on the sixth iteration.
@@ -591,48 +592,72 @@ status updates, which for a long turn is dozens.  The test
 rename the agent process, and =M-x list-processes= is where a stray =qoder --acp=
 child gets found (see the 16-process measurement above).
 
-** TODO Judge what the name does /not/ include
+** DONE The name is the agent, not the session's topic  (the user's report)
 
-Provider is dropped once a title exists (it is the first segment of the header
-line and the process name), and the project directory is left out because one
-directory is one Emacs project and every chat already shares it.  The id is
-included verbatim, brackets and all, mirroring the header line's =[sid]= segment —
-that is the string a user pastes into =agent-org-resume-session= when the chooser
-is not available.
+"Buffer names are showing session names in place of agent names."  The shape is
+=<agent>:<project> [sid]= and =agent-org-buffer--chat-label= reads only
+=:provider= and =:project=.  What was traded:
 
-** TODO Decide whether resume should name the buffer /before/ the replay
+- /lost/: a topic at the front of =C-x b=.  Three qoder chats in one project are
+  now told apart by the id alone, which is a UUID, not a name.
+- /kept/: the topic as =#+TITLE:= in the chat and in its transcript file (so the
+  topic is greppable, =id:=-linkable and visible the moment you are /in/ the
+  chat), and in the resume chooser, which reads titles from =session/list= and is
+  the one place a topic is the thing you are choosing between.
+- /refused/: a name that changes under the reader.  An agent renames its own
+  session (=session_info_update=, qoder after the first turn), and a buffer whose
+  name follows that is a buffer whose window, isearch and mode line move while
+  you are looking at them.
 
-=agent-org-start='s chooser knows the title (it just displayed it, with the date
-and id) and =session/load'='s response does not carry one, so a resumed buffer is
-named =*agent-org: goose [sid]*= until the replay's =session_info_update= arrives —
-and an agent that never re-sends its title keeps the provider's name for the life
-of the chat.  Threading the chosen title from =agent-org--selection-value= down
-through =agent-org--load-session= would fix that, but it means a third field on
-the =agent-org-resume-session= call chain that nothing else reads.  Left alone for
-now; say so if you want it.
+The alternative the user did /not/ ask for, recorded in case it comes back: put
+both in the name (=Qoder:agent-org: Fix the login bug [sid]=).  It is longer, it
+still renames mid-read, and =C-x b= completion matches the middle poorly.
 
-** DONE Six tests (116 -> 122)
+** DONE What the name does /not/ include, and the question that died with it
 
-=gains-title-and-id= (the full ready path, via =ao--fake-session-new-resp=),
-=wears-provider-without-a-title=, =follows-a-late-title= (qoder's real timing),
-=flattens-a-multiline-title= (200-char, 3-line agent text),
-=does-not-accumulate-suffixes= and =names-stay-unique-per-session= (same title,
-two ids, then the no-id case).  =test-agent-org-buffer-create='s
-=string-prefix-p "*agent-org: test"= still holds, because nothing renames before
-the first id arrives — no code keys on a buffer name (verified: the only other
-=buffer-name= reader in the suite is that assertion), the registry maps
-buffer-object → session.
+Provider is no longer *dropped* when a title exists -- it is never *replaced*.
+The project directory is in the name because one Emacs can hold chats of six
+checkouts (measured: eight live chats, seven projects).  The id is included
+verbatim, brackets and all, and is /also/ the Org =:ID:= of the body (§2) -- the
+name carries identity, the bar carries state.
+
+The open question here used to be "should a resumed buffer be named /before/ the
+replay, since =session/load= carries no title?"  With no title in the name the
+question has no subject: a resumed buffer is correctly named the moment its id
+arrives, and an agent that never titles anything is indistinguishable in shape
+from one that titles everything.
+
+** DONE Six tests, retargeted (239 total, no net change)
+
+=gains-title-and-id= became =wears-the-agent-not-the-title= (the full ready path,
+via =ao--fake-session-new-resp=, asserting the title reached =:title= but not the
+name); =follows-a-late-title= became =ignores-a-late-title=;
+=flattens-a-multiline-title= became =keeps-a-multiline-title-out= -- a 200-char,
+3-line agent title now leaves the name byte-identical, which is the stronger
+claim; =wears-provider-without-a-title= became =wears-the-provider-with-no-title=
+and asserts the two cases give the SAME name.  =does-not-accumulate-suffixes= and
+=names-stay-unique-per-session= kept their intent and lost their titles: the
+uniqueness test now creates two chats of one provider in one project, which is
+the collision that actually happens.
+
+In the switcher, =ao--two-chats= gives its two chats different /providers/
+(=qoder=, =goose=) instead of different titles, and the column-alignment test
+makes one label long through =:provider=.  That is not cosmetic: with titles out
+of the label, a fixture whose two rows differ only by a title would have been
+asserting a row order that no longer exists.
 
 ** DONE What the suite cannot prove → it was checked live (2026-10-03, by the agent)
 
 That a real agent's title survives being a buffer name.  A live =goose acp=
 session reached Ready with no title (goose titles chats only later, if at all),
 so the buffer wore the provider stand-in plus the id: =*agent-org: Goose
-[20261003_2]*= — exactly the case =wears-provider-without-a-title= pins.  The
+[20261003_2]*= -- a measurement that was true of the old shape and is now only
+evidence that a title-less agent was never the problem.  Re-measured live after
+this unit (2026-10-05, eight open chats): every row reads
+=Qoder:<project>  Streaming  [uuid]=, and no agent text is in any name.  The
 probe killed its own buffer afterwards and no =goose acp= process remained, which
-is the release path from the earlier unit doing its job.  Still to see by hand: a
-/title/ rename in a real qoder chat after the first turn, because that title is
-free text and only a live one tests the flattening for real.
+is the release path from the earlier unit doing its job.
+
 
 * A chat buffer asks before it dies (=agent-org--kill-query=)
 
@@ -761,12 +786,14 @@ The first live run of this code printed:
 Two chats, two projects, one provider, and the only difference a UUID — while
 =C-x b= next to them was happily reading =agent-org Qoder= and =org-docs Qoder=.
 The row was built from =:title= else =:provider=, which is /half/ of what the
-buffer name is built from; the project directory was left out.
+buffer name was built from at the time; the project directory was left out.
+(The label has since lost its title as well, for the reason the naming unit
+above records — the rows it prints are from the later shape.)
 
 So the label is now one function, =agent-org-buffer--chat-label=, called by
 =agent-org-buffer--wanted-name= /and/ by =agent-org--chat-columns=.  Read that as
 the design decision, not the refactor: the alternative was two builders with the
-same three rules written twice, which is how one chat ends up with two names in
+same rules written twice, which is how one chat ends up with two names in
 two UIs that are open at the same time.  It takes the status plist as an
 argument rather than reading the buffer-local variable, because the switcher
 labels /other/ buffers and =with-current-buffer= there is a function that can
@@ -784,10 +811,13 @@ face, which is the start of the dimmed column by construction.
 
 Worth keeping in mind for every column assertion in this suite: /never locate a
 column by the whitespace in front of it/.  Two of these tests
-(=…-align-their-columns=, =…-name-the-project-too=) were also mutation-checked —
-replace =agent-org--pad= with identity, or =agent-org-buffer--chat-label= with a
-title-only version, and exactly the tests above go red — so they are holding the
-code and not themselves.
+(=…-align-their-columns=, =…-label-the-chat-not-its-topic=) were also
+mutation-checked — replace =agent-org--pad= with identity, or drop the project
+out of =agent-org-buffer--chat-label=, and exactly the tests above go red — so
+they are holding the code and not themselves.  (=…-align-their-columns= had to
+be re-made when the title left the label: with no agent-supplied text in a row,
+the only way to get a long label is a long =:provider=, and the fixture now says
+so in its own comment.)
 
 ** TODO Read the no-binding call
 
@@ -803,14 +833,16 @@ exactly when you might be stranded in the one you are trying to leave.
 ** DONE Nine tests (156 -> 166)
 
 =offer-every-open-chat= (rows and their buffer values),
-=wear-the-provider-without-a-title=, =name-the-project-too= (the live bug above),
+=wear-the-provider-without-a-title=, =name-the-project-too= (the live bug above —
+both since retargeted to the =<agent>:<project>= label, see the naming unit),
 =show-the-state-the-bar-shows= (=Streaming= / =Ready=, the header line's own
 vocabulary), =align-their-columns=, =drop-a-killed-chat= (the registry outlives a
 window until the kill-hook runs), =switch-buffer-switches-to-the-chosen-chat=,
 =switch-buffer-with-nothing-open-signals= (=user-error=, and no prompt shown at
 all) and =switch-buffer-pins-registry-order= (the collection is a FUNCTION, and
 its =metadata= carries =display-sort-function . identity=).  Harness:
-=ao--two-chats= (two Ready chats with distinct ids and titles) and
+=ao--two-chats= (two Ready chats with distinct ids, and — since the title left
+the label, see the naming unit — distinct providers) and
 =ao--isolated-registry= (bind =agent-org--sessions= nil — several earlier suites
 leave chat buffers alive, and a counting test would count them).
 
