@@ -1982,8 +1982,60 @@ font-lock exactly once."
         (should (null (plist-get session :replay)))))
     (kill-buffer buf)))
 
-;;;; Resume end-to-end (drives the async chain with a capturing mock)
+;;;; A failed replay must not cost the buffer its colors
 
+(ert-deftest test-agent-org-replay-restores-font-lock-when-the-paint-errors ()
+  "Font-lock comes back even when one replayed update raises.
+A replay is the one bulk paint: font-lock is switched OFF so hundreds of
+insertions do not each re-fontify the buffer, and switched back on after.
+Without an `unwind-protect' an error in the middle leaves the chat buffer
+permanently unfontified -- and acp swallows errors raised in its response
+callbacks (`condition-case-unless-debug'), so nothing announces it.  The
+symptom is a chat with no Org colors at all, for the rest of the session
+(the user's \"All fontification gone!\").
+
+Font-lock itself is stubbed: in a batch run Emacs refuses to turn it on at
+all, so the honest pin is the SEQUENCE of calls the paint pass makes, plus
+the buffer's own state, not whether display faces really appeared."
+  (let* ((pair (ao--make-test-session "flerr"))
+         (buf (car pair))
+         (session (cdr pair))
+         (raised nil)
+         (errored nil)
+         (calls nil))
+    (with-current-buffer buf
+      ;; the premise: this buffer's colors are ON before the replay
+      (setq-local font-lock-mode t))
+    (setf (plist-get session :loading) t)
+    (setf (plist-get session :replay)
+          (list (ao--update-notif
+                 '((sessionUpdate . "agent_message_chunk")
+                   (content . ((type . "text") (text . "boom-proof")))))))
+    (cl-letf (((symbol-function 'agent-org--buffer-update)
+               (lambda (&rest _)
+                 (setq raised t)
+                 (signal 'error '("paint boom"))))
+              ((symbol-function 'font-lock-mode)
+               (lambda (&optional arg)
+                 (push (list 'mode arg) calls)
+                 (with-current-buffer buf
+                   (setq font-lock-mode (if arg t nil)))))
+              ((symbol-function 'font-lock-flush)
+               (lambda (&rest a) (push (cons 'flush a) calls)))
+              ((symbol-function 'agent-org--progress-stop)
+               (lambda (&rest _) (push 'stop calls))))
+      (condition-case nil
+          (agent-org--render-replay session)
+        (error (setq errored t))))
+    (should raised)                    ; the paint really did raise
+    (should errored)                   ; …and the error propagated to acp
+    (with-current-buffer buf
+      (should font-lock-mode)          ; …and the colors came back anyway
+      (should (assq 'flush calls))     ; re-ON without a flush paints nothing
+      (should (memq 'stop calls)))     ; the Restoring report cannot leak
+    (kill-buffer buf)))
+
+;;;; Resume end-to-end (drives the async chain with a capturing mock)
 (defvar ao--sent nil
   "Requests captured by the resume wire mock, newest first.
 Each entry is (METHOD :REQUEST REQUEST :on-success CALLBACK).")

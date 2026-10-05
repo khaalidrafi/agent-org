@@ -1632,21 +1632,27 @@ to count down to some stride."
             ;; buffer-local, so this reads this buffer's own state.
             (font-lock-was font-lock-mode))
         (when font-lock-was (font-lock-mode -1))
-        (dolist (update updates)
-          (agent-org--progress-step session (cl-incf painted))
-          (if (equal (map-elt update 'sessionUpdate) "user_message_chunk")
-              (setq pending (concat pending
-                                    (agent-org--chunk-text
-                                     (map-elt update 'content))))
-            (agent-org--flush-user buffer pending)
-            (setq pending nil)
-            (agent-org--buffer-update buffer update)))
-        (agent-org--flush-user buffer pending)
-        (agent-org-buffer-end-agent-turn buffer)
-        (when font-lock-was
-          (font-lock-mode 1)
-          (font-lock-flush))))
-    (agent-org--progress-stop session)))
+        ;; UNWIND, not a tail call: an update that raises here is swallowed
+        ;; by acp's own `condition-case-unless-debug', so nothing would ever
+        ;; put the colors back -- the chat would stay unfontified for the
+        ;; rest of the session, silently.
+        (unwind-protect
+            (progn
+              (dolist (update updates)
+                (agent-org--progress-step session (cl-incf painted))
+                (if (equal (map-elt update 'sessionUpdate) "user_message_chunk")
+                    (setq pending (concat pending
+                                          (agent-org--chunk-text
+                                           (map-elt update 'content))))
+                  (agent-org--flush-user buffer pending)
+                  (setq pending nil)
+                  (agent-org--buffer-update buffer update)))
+              (agent-org--flush-user buffer pending)
+              (agent-org-buffer-end-agent-turn buffer))
+          (when font-lock-was
+            (font-lock-mode 1)
+            (font-lock-flush))
+          (agent-org--progress-stop session))))))
 
 (defun agent-org--on-notification (session notification)
   "Dispatch one ACP NOTIFICATION for SESSION into the Org buffer.

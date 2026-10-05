@@ -91,6 +91,17 @@ emacs -Q --batch \
 #   Tests drive this synchronously: `ao--capture-wire' captures
 #   `run-at-time'/'cancel-timer', so `ao--settle' is how a test says "the
 #   agent went quiet".
+# - `agent-org--render-replay' turns font-lock OFF for the paint and back ON
+#   after, so that restore is an `unwind-protect' BODY, not a tail call: acp
+#   swallows errors raised in its response callbacks
+#   (`condition-case-unless-debug'), so an update that raises mid-paint would
+#   otherwise leave the chat permanently unfontified and NOTHING would
+#   announce it (the user's "All fontification gone!  No colors.").  The
+#   progress reporter stops in the same unwind.  Batch Emacs cannot turn
+#   font-lock on at all, so the test pins the BEHAVIOUR by stubbing
+#   `font-lock-mode'/'font-lock-flush' and setting the buffer-local variable
+#   as the premise -- never assert `(font-lock-mode 1)' works under
+#   `emacs -Q --batch'.
 # - Restored turns use the SAME rendering primitives as typed ones; never
 #   add a second renderer for replay, or the two will drift.
 # - The header line shows exactly ONE status string, and for `starting'/
