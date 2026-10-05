@@ -244,7 +244,12 @@ Each entry is a plist:
                  an answer arrived: the question is asked at most once
   :pending-prompts     - prompts queued while :streaming (FIFO list of
                  strings), sent one per successful turn end by
-                 `agent-org--drain-queue'.  See
+                 `agent-org--drain-queue'.  These are the only
+                 conversation text the agent has never seen, so they are
+                 also the only thing a resume cannot replay: every change
+                 here is mirrored into the transcript's =:QUEUE:= drawer
+                 and read back out of it by
+                 `agent-org--finish-replay'.  See
                  `agent-org-queue-when-busy'.
 
 Every key is installed by `agent-org--open-session', because `setf' on
@@ -1340,17 +1345,45 @@ spinner for a restore that is never coming."
   (setf (plist-get session :replay) nil)
   (setf (plist-get session :loading) nil))
 
+(defun agent-org--recorded-queue (session)
+  "The prompts SESSION's transcript says were still waiting, oldest first.
+Read with the chat buffer current, because that is what resolves the
+transcript against the session's own project — the same resolution the
+writer used, so a reader cannot look in the wrong directory.  nil for the
+common case: no file, no drawer, an empty drawer."
+  (with-current-buffer (plist-get session :buffer)
+    (agent-org-buffer-transcript-queue
+     (or (plist-get session :replay-session-id)
+         (plist-get session :session-id)))))
+
 (defun agent-org--finish-replay (session)
   "Render SESSION's buffered replay and open the session for prompts.
 This is the flush point `agent-org--arm-replay-render' schedules: by now
 the agent has sent everything it is going to send about history, so
-`:loading' can drop and the buffered updates paint in one pass."
+`:loading' can drop and the buffered updates paint in one pass.
+
+The transcript's waiting prompts are read BEFORE anything else happens
+here, and applied once the session is ready.  Both halves of that order
+matter.  Read first because `agent-org--session-ready' mirrors the
+freshly replayed buffer over that file, and a replayed buffer carries no
+queue — the agent never saw a prompt that was never sent — so reading
+after the write would find an empty drawer.  Applied last because a
+drained prompt goes on the wire, and the wire needs an interactive
+session: id set, prompt box open, `:loading' gone."
   (agent-org--unschedule-replay session)
   (setf (plist-get session :loading) nil)
-  (agent-org--render-replay session)
-  (agent-org--session-ready session
-    (plist-get session :replay-session-id)
-    (plist-get session :replay-response)))
+  (let ((queued (agent-org--recorded-queue session)))
+    (agent-org--render-replay session)
+    (agent-org--session-ready session
+      (plist-get session :replay-session-id)
+      (plist-get session :replay-response))
+    (when queued
+      (setf (plist-get session :pending-prompts) queued)
+      (message "[agent-org] %d queued prompt(s) reloaded from the transcript"
+               (length queued))
+      ;; the same drain a turn end performs: the first prompt goes out, the
+      ;; rest keep waiting in the header count and in the drawer
+      (agent-org--drain-queue session (plist-get session :buffer)))))
 
 (defun agent-org--load-session (session session-id)
   "Replay SESSION-ID into SESSION's buffer with a `session/load' request.
@@ -1524,9 +1557,11 @@ and id, so it comes back looking like the one that was replaced.
 
 The old buffer must be gone before the load: `agent-org--load-session'
 refuses to `session/load' an id a live buffer already holds and would
-switch to it instead.  Queued prompts die with the buffer — they were
-never sent, and a restart is the user's way of saying the agent's
-state is wrong."
+switch to it instead.  A prompt that was queued but never sent comes
+back, because it lives in the transcript's =:QUEUE:= drawer rather than
+in the buffer, and a restart goes through resume: the fresh agent gets
+the prompts the old one never saw.  Worth knowing before restarting a
+session you want to leave alone."
   (interactive)
   (let* ((buffer (current-buffer))
          (session (agent-org--session-for-buffer buffer)))
@@ -1946,9 +1981,20 @@ repeated enqueue/remove passes cannot stack suffixes on one message."
       base)))
 
 (defun agent-org--queue-refresh (session buffer)
-  "Re-render BUFFER's busy header message for SESSION's queue depth.
+  "Re-render BUFFER for SESSION's queue: its header count and its file.
 Only a busy header carries the count: once the state is ready the
-message is someone else's business again."
+message is someone else's business again.
+
+The prompts themselves go one per line into the =:QUEUE:= drawer of the
+metadata block, which is the part of the buffer the transcript mirrors,
+and the mirror is written HERE rather than left for a turn boundary.  A
+queued prompt that never reaches a boundary — the user quits Emacs, the
+agent dies, the machine loses power — is precisely the text they would
+most want back, and no other writer has ever seen it."
+  (agent-org-buffer-set-status
+   buffer :queued (plist-get session :pending-prompts))
+  (agent-org-buffer-refresh-metadata buffer)
+  (agent-org-buffer-transcribe buffer)
   (let ((status (buffer-local-value 'agent-org-buffer--status buffer)))
     (when (memq (plist-get status :state) '(streaming loading))
       (agent-org-buffer-set-status
@@ -1990,6 +2036,12 @@ whatever draft it holds stay untouched."
         (agent-org-buffer-insert-prompt buffer)
       (setf (plist-get session :pending-prompts) (cdr prompts))
       (agent-org-buffer-insert-user buffer (car prompts))
+      ;; Refresh AFTER the heading is in the buffer: the one write that
+      ;; drops the prompt from the `:QUEUE:' drawer is then also the write
+      ;; that puts it in the conversation, so no mirror on disk is ever
+      ;; without it.  Getting this backwards makes a crash between the two
+      ;; lose a prompt the user already paid for.
+      (agent-org--queue-refresh session buffer)
       (agent-org--send-turn session buffer (car prompts)))))
 
 (defun agent-org--sync-title (session)

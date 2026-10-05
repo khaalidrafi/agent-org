@@ -1,12 +1,16 @@
 # AGENTS.md — agent-org contributor / agent guide
 
 ## Build & lint
-# Byte-compile (zero warnings required):
+# Byte-compile (zero warnings required).  DEPENDENCY FIRST: compiling
+# agent-org.el loads agent-org-buffer from its .elc, so a freshly added
+# function there reads as "not known to be defined" until the buffer file
+# has been recompiled.  Same trap as the stale .elc the test command warns
+# about — `rm -f *.elc' when in doubt.
 emacs -Q --batch \
   --eval "(add-to-list 'load-path \"/home/khalid/.emacs.d/elpa/acp-20260914.1318\")" \
   --eval "(add-to-list 'load-path \".\")" \
   --eval "(setq byte-compile-error-on-warn t)" \
-  --eval "(batch-byte-compile)" agent-org.el agent-org-buffer.el agent-org-loader.el agent-org-providers.el
+  --eval "(batch-byte-compile)" agent-org-buffer.el agent-org.el agent-org-loader.el agent-org-providers.el
 
 # Single-file compile:
 emacs -Q --batch --eval "(add-to-list 'load-path \"/home/khalid/.emacs.d/elpa/acp-20260914.1318\")" \
@@ -383,3 +387,21 @@ emacs -Q --batch \
 #   heading and nil elsewhere.  A non-nil `add-log-current-defun-function' also
 #   suppresses which-func's own imenu fallback, so this one function is the
 #   whole answer — not a hint to add a second.
+# - A queued prompt is the only conversation text the agent has never seen, so
+#   it is the only thing a resume cannot replay.  It lives in a `:QUEUE:' drawer
+#   of the auto-managed metadata block — one line per prompt, oldest first,
+#   escaped by `agent-org-buffer--queue-encode' (newline and backslash; the `- '
+#   prefix keeps a prompt that IS `:END:' from closing its own drawer), read back
+#   by `agent-org-buffer-transcript-queue'.  Set `:queued' on the status, never
+#   write the drawer by hand: `agent-org--queue-refresh' is the single choke
+#   point that mirrors session `:pending-prompts' into the block AND the file, so
+#   every queue command (enqueue, remove, edit, drain) is a boundary of its own —
+#   a mid-turn quit must not swallow what the user typed.
+# - `agent-org--finish-replay' reads that drawer BEFORE rendering, and applies it
+#   after `agent-org--session-ready'.  Both halves are load-bearing: session-ready
+#   mirrors the freshly replayed buffer over the transcript, and a replayed buffer
+#   carries no queue — reading after that write finds nothing.  Applying late is
+#   what lets the restored prompt go on the wire to an interactive session (id set,
+#   box open, `:loading' gone), and it drains rather than stranding the queue,
+#   because nothing else drains a session that is not busy.  An empty queue renders
+#   NO drawer: that absence is what stops a prompt being sent twice.

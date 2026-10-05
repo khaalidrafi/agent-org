@@ -123,10 +123,16 @@ its heading."
   "Status plist backing this buffer's header line and metadata block.
 Keys: :provider :state :message :note :session-id :model :model-name :mode
 :project :title :used :size :tokens :cost-amount :cost-currency :commands
-:modes-list :config.  STATE is one of `idle', `starting', `loading'
+:modes-list :config :queued.  STATE is one of `idle', `starting', `loading'
 (session/load replay in flight), `streaming', `ready', `awaiting' or
 `error'.  The list keys hold wire-format alists collected from ACP
 notifications.
+
+`:queued' is the one list key that is not wire data: the prompts waiting
+to be sent, oldest first, as the session holds them.  The metadata
+block's `:QUEUE:' drawer is rendered from it, which is how a prompt the
+user typed but never sent reaches the transcript, and how resume finds it
+again (see `agent-org-buffer-transcript-queue').
 
 `:model' is the wire id (`minimax/MiniMax-M3') and `:model-name' the
 label the agent advertises for it (\"MiniMax M3\"); the bar renders the
@@ -455,7 +461,7 @@ usage or state update does no string building and no rename."
     (with-current-buffer buffer
       (dolist (key '(:provider :state :message :note :session-id :model :model-name
                          :mode :project :title :used :size :tokens :cost-amount
-                         :cost-currency :commands :modes-list :config))
+                         :cost-currency :commands :modes-list :config :queued))
         (when (plist-member status key)
           (setq agent-org-buffer--status
                 (plist-put agent-org-buffer--status key (plist-get status key)))))
@@ -551,6 +557,49 @@ Nil when no entries; capped at 50 lines with a +N-more tail."
                 (format "… (+%d more)\n" (- (length entries) 50)))
               ":END:\n"))))
 
+(defun agent-org-buffer--queue-encode (text)
+  "Escape TEXT onto ONE line of the `:QUEUE:' drawer.
+A queue entry is the user's own draft, so it can run to many lines and can
+contain a blank line or a bare `:END:' — either would cut the drawer short
+and leave the rest of the prompt outside it.  So one line per prompt:
+backslash doubles, newline and carriage return become =\\n= and =\\r=, and
+the `- ' prefix keeps even a prompt that IS `:END:' from starting its line
+with one.  The drawer is machine-read, so nothing is beautified:
+`agent-org-buffer--queue-decode' is the exact inverse and the queue
+survives a restart byte for byte."
+  (with-temp-buffer
+    (insert "- ")
+    (dotimes (i (length text))
+      (insert (pcase (aref text i)
+                 (?\\ "\\\\")
+                 (?\n "\\n")
+                 (?\r "\\r")
+                 (c (string c)))))
+    (buffer-string)))
+
+(defun agent-org-buffer--queue-decode (line)
+  "The prompt stored on queue drawer LINE, unescaped.
+Inverse of `agent-org-buffer--queue-encode'.  An unknown escape keeps the
+character that follows it, so a drawer written by a newer version reads
+back as text on resume instead of losing a prompt to an error."
+  (let ((body (if (string-prefix-p "- " line)
+                  (substring line 2)
+                (string-trim line)))
+        (i 0))
+    (with-temp-buffer
+      (while (< i (length body))
+        (let ((c (aref body i)))
+          (if (and (= c ?\\) (< (1+ i) (length body)))
+              (progn
+                (insert (pcase (aref body (1+ i))
+                          (?n ?\n)
+                          (?r ?\r)
+                          (other (string other))))
+                (cl-incf i 2))
+            (insert c)
+            (cl-incf i))))
+      (buffer-string))))
+
 (defun agent-org-buffer--config-value (option)
   "The current value of config OPTION, as a person should read it.
 When the agent pairs `currentValue' with a label in the option's own
@@ -576,10 +625,12 @@ does not name, and blanking the field there would lie harder."
 The PROPERTIES drawer comes first, carrying the scalars (Provider, ID,
 Mode, Model, Context, Cost, Tokens), then the `#+TITLE:' keyword line,
 then COMMANDS/MODES/CONFIG drawers listing everything the agent
-reported.  No heading: `* ' lines belong to the conversation.  Drawers
-whose lists are still unknown are omitted, and so is the `:ID:' line
-until an id exists — a `:ID: unknown' would be a property Org's id
-machinery would choke on, and a lie besides."
+reported, then QUEUE with the prompts waiting to be sent.  No heading:
+`* ' lines belong to the conversation.  Drawers whose lists are still
+unknown are omitted — including QUEUE the moment the queue empties,
+which is what stops a drained prompt being restored a second time — and
+so is the `:ID:' line until an id exists; a `:ID: unknown' would be a
+property Org's id machinery would choke on, and a lie besides."
   (let* ((provider (or (plist-get status :provider) "agent-org"))
          (sid (plist-get status :session-id))
          (used (plist-get status :used))
@@ -603,7 +654,12 @@ machinery would choke on, and a lie besides."
          (config (mapcar (lambda (o)
                           (format "%s — %s" (map-elt o 'name)
                                   (agent-org-buffer--config-value o)))
-                        (plist-get status :config))))
+                        (plist-get status :config)))
+         ;; Waiting prompts, oldest first, one escaped line each.  The
+         ;; conversation cannot show them: a queued prompt gets its
+         ;; `* User' heading only when it drains.
+         (queued (mapcar #'agent-org-buffer--queue-encode
+                         (plist-get status :queued))))
     (concat
      (mapconcat
       #'identity
@@ -632,15 +688,22 @@ machinery would choke on, and a lie besides."
               (concat agent-org-buffer--todo-setup "\n"))
              (agent-org-buffer--metadata-drawer "COMMANDS" commands)
              (agent-org-buffer--metadata-drawer "MODES" modes)
-             (agent-org-buffer--metadata-drawer "CONFIG" config)))
+             (agent-org-buffer--metadata-drawer "CONFIG" config)
+             ;; last: the one list that changes mid-turn, so the
+             ;; reference drawers above never shift position
+             (agent-org-buffer--metadata-drawer "QUEUE" queued)))
       "\n")
      ;; blank line separating the block from the first conversation
      ;; heading (refresh deletes up to that heading)
      "\n")))
 
 (defconst agent-org-buffer--metadata-drawers
-  '("PROPERTIES" "COMMANDS" "MODES" "CONFIG")
-  "Names of the folded-by-default drawers in the metadata block.")
+  '("PROPERTIES" "COMMANDS" "MODES" "CONFIG" "QUEUE")
+  "Names of the folded-by-default drawers in the metadata block.
+`agent-org-buffer-refresh-metadata' reads this to remember which drawers
+the user had opened, and a name missing here is a drawer that reappears
+unfolded on every rebuild — QUEUE included for that reason, not because
+its prompts are reference material.")
 
 (defvar-local agent-org-buffer--metadata-cache nil
   "Last metadata block written at the top of this buffer, or nil.
@@ -1126,12 +1189,16 @@ The mirror is the frozen body — `point-min' to
 `agent-org-buffer--render-end' — which is exactly the conversation and
 nothing else: the same marker that keeps a streaming turn from
 scribbling over the user's draft separates \"sent\" from \"still
-typing\", so an unsent prompt never reaches the file.
+typing\", so a draft that was never taken never reaches the file.  The
+metadata block is inside that range, which is how the `:QUEUE:' drawer —
+prompts the user sent into a busy session, so not conversation
+yet — comes along.
 
-Called from turn boundaries only (see agent-org.el), never from a render
-site: twenty chunks of an answer cost no writes, so a slow disk cannot
-stall a stream.  No-op with `agent-org-transcribe' nil, or before the
-agent has given the session an id."
+Called from turn boundaries and from the queue's own mutations (see
+agent-org.el), never from a render site: twenty chunks of an answer cost
+no writes, so a slow disk cannot stall a stream.  No-op with
+`agent-org-transcribe' nil, or before the agent has given the session an
+id."
   (when (and agent-org-transcribe (buffer-live-p buffer))
     (with-current-buffer buffer
       (let ((session-id (plist-get agent-org-buffer--status :session-id)))
@@ -1152,6 +1219,41 @@ global pool is still a setting away rather than a code change."
                     (file-name-as-directory
                      (expand-file-name agent-org-transcript-directory))))
 
+(defun agent-org-buffer-transcript-queue (session-id)
+  "The prompts SESSION-ID's transcript has waiting, oldest first; nil if none.
+Resume needs this because a queued prompt was never sent: it is in none of
+the places a restore normally finds text — not the agent's `session/load'
+replay (the agent never saw it), not the buffer (a fresh one), not a
+`* User' heading.  The drawer the last session mirrored is the only copy
+that survives.
+
+Called with the chat buffer current, so the file resolves against the same
+project the writer used — looking in the wrong directory would silently
+restore nothing.
+
+nil is the ordinary answer: no file (`agent-org-transcribe' off, or a
+session older than the feature), no drawer, or an empty one.  An unreadable
+file is nil too: a transcript is a convenience, and one that cannot be read
+must not stop a session loading."
+  (when session-id
+    (let ((file (agent-org-buffer--transcript-file session-id)))
+      (when (file-readable-p file)
+        (condition-case nil
+            (with-temp-buffer
+              (insert-file-contents file)
+              (goto-char (point-min))
+              (when (re-search-forward "^:QUEUE:[ \t]*\n" nil t)
+                ;; the body is one line per prompt, up to BUT NOT INCLUDING
+                ;; the `:END:' line — `re-search-forward' returns a match's
+                ;; END, so the region has to stop at `match-beginning'.
+                (let ((beg (point)))
+                  (when (re-search-forward "^:END:[ \t]*$" nil t)
+                    (mapcar #'agent-org-buffer--queue-decode
+                            (split-string
+                             (buffer-substring-no-properties
+                              beg (match-beginning 0))
+                             "\n" t))))))
+          (file-error nil))))))
 (defun agent-org-buffer--write-transcript (session-id text)
   "Replace this buffer's transcript file with TEXT.
 Called with the chat buffer current, which is what gives

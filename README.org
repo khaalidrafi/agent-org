@@ -128,7 +128,9 @@ NonGNU ELPA.
    (~agent-org-queue-when-busy~, on by default — agent-shell's type-ahead
    model): queued prompts go out FIFO as each turn ends successfully,
    and ~agent-org-queue-view~ / ~agent-org-queue-edit~ /
-   ~agent-org-queue-remove~ manage what is waiting.
+   ~agent-org-queue-remove~ manage what is waiting.  What is waiting is
+   also on disk, in the transcript's ~:QUEUE:~ drawer, so quitting Emacs
+   mid-turn does not swallow it (see [[#transcript-file][Transcript file]]).
 
 If the agent asks for permission, the header line shows
 ~… ➤ Awaiting permission~ and the minibuffer offers the agent's
@@ -227,7 +229,9 @@ an agent holding 38 sessions in this directory offers all 38, not the
 first page.  One candidate is used without prompting; the header line
 shows ~Restoring~ while the history is replayed, then ~Ready~ with a
 live ~* User~ prompt at the end, and you continue exactly where you
-left off.
+left off — including prompts you had queued but never sent, which come
+back from the transcript's ~:QUEUE:~ drawer and go out in order (the
+agent's own replay cannot contain them, because it never saw them).
 
 Resume is cheap on purpose (this is a 4 GB machine): the replayed
 ~session/update~ notifications are buffered while the load is in
@@ -359,7 +363,8 @@ file.
 
 It is written at turn boundaries (when a prompt goes out, when the turn
 ends, when a session is restored, and once more when the buffer is
-killed), never per chunk: a twenty-chunk answer costs two whole-file
+killed) and whenever the prompt queue changes, never per chunk: a
+twenty-chunk answer costs two whole-file
 writes, so a slow disk cannot stall a stream.  Measured on this machine
 (a spinning disk, 4 GB RAM), one boundary write is ~3 ms~ for a short
 chat, ~6 ms~ at 20 turns (~21 KB~), ~15 ms~ at 100 turns (~407 KB~);
@@ -370,8 +375,17 @@ turns — and spends it inside the stream.
 Mirroring rather than appending is also why the file is never wrong about
 a tool call: a heading that moved TODO→DOING→DONE in the buffer moves it
 in the file too, where an append log would keep three lines for one call.
-A prompt that is typed but not sent never reaches the file, and a failed
+A draft still in the =~* User=~ box never reaches the file, and a failed
 write is a note in the echo area, never a broken turn.
+
+One thing in the file is /not/ conversation: prompts you sent into a busy
+session, which are waiting their turn.  They have no heading yet, and the
+agent has never seen them, so its own history cannot give them back on a
+resume.  They are recorded one per line in a folded ~:QUEUE:~ drawer of the
+metadata block at the top of the transcript, and ~agent-org-resume-session~
+reads them from there — reloading them and sending the first, the way the
+end of a turn would have.  An empty queue writes no drawer, which is what
+stops a prompt being sent twice.
 
 Turn it off with ~agent-org-transcribe~ nil — a chat whose transcript is
 a real org file under version control does not want a second copy

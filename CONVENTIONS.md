@@ -40,6 +40,10 @@ Top to bottom, a session buffer is exactly:
 /goose — talk to the goose agent
 :END:
 
+:QUEUE:
+- ask about the tests\nfirst
+:END:
+
 * User
 
 What does agent-org-buffer.el do?
@@ -118,6 +122,18 @@ The block is folded by default.  Per `info "(org) Initial visibility`
 (§2.2.2), first-visit folding is normally driven by `#+STARTUP:` — but these
 buffers are created programmatically and never "visited", so we fold the
 drawers directly (see §5) rather than relying on a startup line.
+
+**`:QUEUE:` is the one volatile drawer, and it comes last.**  COMMANDS, MODES
+and CONFIG are reference the agent advertised once; QUEUE holds the prompts
+the user sent into a busy session — text that is neither reference nor
+conversation yet, because a queued prompt gets its `* User` heading only when
+it drains.  It belongs to the block because the block is inside the range the
+transcript mirrors (§14), and a prompt the agent has never seen is the one
+thing its `session/load` replay cannot give back.  One escaped line per
+prompt, oldest first (`agent-org-buffer--queue-encode`: newline and backslash
+flattened, `- ` prefixed so a prompt that *is* `:END:` cannot close its own
+drawer); an empty queue renders **no** drawer, because that absence is what
+stops a resume re-sending a prompt that already went out.
 
 Rebuilds are cheap-checked: `refresh-metadata` renders the block first and
 compares it against `agent-org-buffer--metadata-cache`, doing nothing when it
@@ -627,7 +643,10 @@ is the chat buffer's frozen body — `point-min` to `agent-org-buffer--render-en
 * **Boundaries only, never the render path.** `agent-org-buffer-transcribe` is
   called by `agent-org--session-ready`, `agent-org--send-turn` (before the
   request, and in both callbacks), `agent-org-cancel-turn`,
-  `agent-org--sync-title` and `agent-org--forget-session`.  It is *not* called
+  `agent-org--sync-title`, `agent-org--forget-session` and
+  `agent-org--queue-refresh` — the last because a queued prompt that never
+  reaches a turn boundary (the user quits Emacs mid-turn) is otherwise lost,
+  and no other writer has ever seen it.  It is *not* called
   by `agent-org-buffer-append-chunk`, `--redraw-drawer` or `insert-tool`, so
   twenty chunks of an answer cost zero writes and a slow disk cannot stall a
   stream.  `test-agent-org-transcript-costs-writes-per-turn-not-per-chunk`

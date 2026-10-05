@@ -4808,6 +4808,234 @@ checking a wire they did not ask about."
       (should (search-forward "session/prompt" nil t))
       (kill-buffer buf))))
 
+;;;; Queued prompts: on disk, and back on resume
+
+(defmacro ao--wire-prompt-texts (&rest body)
+  "Run BODY with `acp-make-session-prompt-request' building a real-shaped request.
+`tests/acp-mock.el' answers NIL for it, and `ao--capture-wire' keys its
+capture on the request's =:method= — so a drained prompt would be captured
+under NIL and be invisible to `ao--sent-get'.  This is the shape the real
+acp package sends: a method plus =:params= carrying the prompt blocks."
+  (declare (indent 0))
+  `(cl-letf (((symbol-function 'acp-make-session-prompt-request)
+              (lambda (&rest kw)
+                `((:method . "session/prompt")
+                  (:params . ((sessionId . ,(plist-get kw :session-id))
+                              (prompt . ,(plist-get kw :prompt))))))))
+     ,@body))
+
+(defun ao--sent-prompt-texts ()
+  "The text of every `session/prompt' captured in `ao--sent', oldest first.
+The capture keys on the request's =:method=, which is why the prompt
+request needs `ao--wire-prompt-texts': the mock's builder answers NIL, and
+a NIL request would be captured under NIL — a drained prompt the test
+could not see."
+  (mapcar (lambda (entry)
+            (let ((params (map-elt (plist-get (cdr entry) :request) ':params)))
+              (map-elt (car (map-elt params 'prompt)) 'text)))
+          (reverse (seq-filter (lambda (entry)
+                                 (equal (car entry) "session/prompt"))
+                               ao--sent))))
+
+(ert-deftest test-agent-org-queue-drawer-lists-the-waiting-prompts ()
+  "A prompt that has not been sent is written into the metadata block.
+The frozen conversation cannot show it — a queued prompt gets its `* User'
+heading only when it drains — so the queue needs a home above the
+headings, which is also the part of the buffer the transcript mirrors.
+One line per prompt, oldest first, so the file records the order the
+prompts will go out in."
+  (let ((rendered (agent-org-buffer--render-metadata
+                   (list :provider "Qoder" :session-id "s-queue"
+                         :queued (list "first" "second")))))
+    (should (string-match-p ":QUEUE:\n- first\n- second\n:END:" rendered))
+    (should (= 1 (ao--count-occurrences rendered "^:QUEUE:$")))))
+
+(ert-deftest test-agent-org-queue-line-escape-is-lossless ()
+  "A prompt goes onto ONE drawer line and comes back byte for byte.
+Two reasons the text cannot be written verbatim: a blank line or a line
+reading `:END:' would end the drawer early, and a queue entry is the
+user's own multi-line draft.  So newline and backslash are escaped and
+the line is prefixed with `- ', which keeps a literal `:END:' from
+starting the line.  `:QUEUE:' is a machine-read drawer — decode is the
+exact inverse of encode, including on the pathological cases."
+  (dolist (text (list "one line"
+                      "two\nlines"
+                      "a backslash \\ and a newline\nhere"
+                      ":END:\n- not a drawer end"
+                      ""))
+    (let ((line (agent-org-buffer--queue-encode text)))
+      (should (string-prefix-p "- " line))
+      (should-not (string-match-p "\n" line))
+      (should (equal text (agent-org-buffer--queue-decode line)))))
+  (should (equal "- two\\nlines"
+                 (agent-org-buffer--queue-encode "two\nlines"))))
+
+(ert-deftest test-agent-org-queue-drawer-is-folded-like-the-others ()
+  "The waiting prompts are on disk, but not in the reader's way.
+COMMANDS/MODES/CONFIG are folded because they are reference, not
+conversation; a queue is the same kind of bookkeeping, and an unfolded
+one would push the chat down every time a prompt waits."
+  (ao--capture-wire
+    (let ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-fold")))
+      (with-current-buffer buf
+        (agent-org-buffer-set-status buf :queued (list "waiting"))
+        (agent-org-buffer-refresh-metadata buf)
+        (should (invisible-p
+                 (save-excursion (goto-char (point-min))
+                                 (re-search-forward "^- waiting$")
+                                 (point)))))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-queued-prompt-reaches-the-file-mid-turn ()
+  "Queuing writes the transcript: a quit must not swallow the prompt.
+The mirror is otherwise a turn-boundary writer, and a queued prompt that
+never reaches a boundary — the user quits Emacs, or the agent dies — is
+exactly the text the user would most want back.  So the queue's own
+mutations are boundaries of their own.
+This is also the test that pins the READ ordering: the file on disk is the
+only copy of the queue, because the resumed buffer has none."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in temp-dir
+      (ao--capture-wire
+        (let* ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-mid"))
+               (session (agent-org--session-for-buffer buf))
+               (sent nil))
+          (cl-letf (((symbol-function 'acp-send-request)
+                     (lambda (&rest kw) (push kw sent)))
+                    ((symbol-function 'acp-make-session-prompt-request)
+                     (lambda (&rest a) (plist-get a :prompt))))
+            (with-current-buffer buf
+              (ao--type "turn one")
+              (agent-org-send))                       ; streaming, no answer yet
+            (with-current-buffer buf
+              (ao--type "wait for me\nplease")
+              (agent-org-send))                       ; queues it
+            (should (equal '("wait for me\nplease")
+                           (plist-get session :pending-prompts)))
+            (let ((text (ao--transcript-text temp-dir "sid-mid")))
+              (should (string-match-p ":QUEUE:\n- wait for me\\\\nplease\n:END:"
+                                      text))
+              ;; read back the way resume does, from the file alone
+              (should (equal (list "wait for me\nplease")
+                             (with-current-buffer buf
+                               (agent-org-buffer-transcript-queue "sid-mid"))))))
+          (kill-buffer buf))))))
+
+(ert-deftest test-agent-org-queue-drawer-clears-when-the-prompt-is-sent ()
+  "A drained prompt leaves the drawer, so resume never sends it twice.
+The file is the queue's only durable copy: if a sent prompt stayed
+listed, the next resume would re-send a turn the agent already answered.
+Draining therefore re-mirrors, and an empty queue renders no drawer at
+all rather than an empty one."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in temp-dir
+      (ao--capture-wire
+        (let* ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-drain"))
+               (session (agent-org--session-for-buffer buf))
+               (sent nil))
+          (cl-letf (((symbol-function 'acp-send-request)
+                     (lambda (&rest kw) (push kw sent)))
+                    ((symbol-function 'acp-make-session-prompt-request)
+                     (lambda (&rest a) (plist-get a :prompt))))
+            (with-current-buffer buf
+              (ao--type "turn one")
+              (agent-org-send))
+            (with-current-buffer buf
+              (ao--type "queued")
+              (agent-org-send))
+            ;; turn one answers: "queued" goes on the wire and the queue empties
+            (funcall (plist-get (car (last sent)) :on-success) nil)
+            (should (null (plist-get session :pending-prompts)))
+            (with-current-buffer buf
+              ;; the drained prompt is conversation now: headed, and gone
+              ;; from the drawer that was holding it
+              (should (string-match-p "\\* User\n\nqueued" (buffer-string)))
+              (should-not (string-match-p "^:QUEUE:$" (buffer-string))))
+            (should-not (string-match-p "^:QUEUE:$"
+                                        (ao--transcript-text temp-dir "sid-drain"))))
+          (kill-buffer buf))))))
+
+(ert-deftest test-agent-org-resume-reloads-the-queued-prompts-and-sends ()
+  "Resume brings back what the last session had queued, in order.
+User order: \"Save queued prompts to transcripts and reload them on
+resume.\"  The prompts were never sent, so the agent's own replay cannot
+contain them — only our transcript can.  Restoring into an idle session
+and leaving them there would strand them: nothing else drains a queue on
+a session that is not busy, so the flush point drains, which puts the
+first one on the wire and keeps the rest waiting exactly as they were."
+  (ert-with-temp-directory temp-dir
+    (with-temp-file
+        (expand-file-name (agent-org-buffer--transcript-name "sid-rest")
+                          temp-dir)
+      (insert ":PROPERTIES:\n:ID: sid-rest\n:END:\n"
+              "#+TITLE: Before\n#+TODO: TODO DOING | DONE CANCELLED\n\n"
+              ":QUEUE:\n- finish the tests\n- then run org-check\n:END:\n"))
+    ;; Transcription is ON deliberately: `agent-org--session-ready' mirrors
+    ;; the freshly replayed buffer — which has no queue in it — over this
+    ;; file, so the test only passes if the queue was read BEFORE that write.
+    (ao--transcript-in temp-dir
+      (ao--capture-wire
+        (let* ((buf (agent-org-resume-session 'qoder "sid-rest"))
+               (session (agent-org--session-for-buffer buf)))
+          (ao--drive "initialize" ao--fake-init-resp)
+          (ao--drive "session/load" '((sessionId . "sid-rest")))
+          (ao--wire-prompt-texts
+            (ao--settle))
+          ;; the first prompt is out on the wire as its own turn; the rest wait
+          (should (equal (list "finish the tests") (ao--sent-prompt-texts)))
+          (should (equal '("then run org-check")
+                         (plist-get session :pending-prompts)))
+          (with-current-buffer buf
+            (should (string-match-p "\\* User\n\nfinish the tests"
+                                    (buffer-string)))
+            (should (string-match-p "1 queued"
+                                    (agent-org-buffer--render-header-line))))
+          (kill-buffer buf))))))
+
+(ert-deftest test-agent-org-resume-without-a-queue-drawer-sends-nothing ()
+  "A transcript without the drawer restores an empty queue: no phantom turn.
+Most resumes have nothing waiting, and one invented from a stale file
+would spend tokens the user never asked for.  Absent drawer, absent
+`session/prompt'."
+  (ert-with-temp-directory temp-dir
+    (let ((agent-org-transcript-directory temp-dir)
+          (agent-org-transcribe nil))
+      (with-temp-file
+          (expand-file-name (agent-org-buffer--transcript-name "sid-none")
+                            temp-dir)
+        (insert ":PROPERTIES:\n:ID: sid-none\n:END:\n#+TITLE: Quiet\n"))
+      (ao--capture-wire
+        (let* ((buf (agent-org-resume-session 'qoder "sid-none"))
+               (session (agent-org--session-for-buffer buf)))
+          (ao--drive "initialize" ao--fake-init-resp)
+          (ao--drive "session/load" '((sessionId . "sid-none")))
+          (ao--wire-prompt-texts (ao--settle))
+          (should (null (plist-get session :pending-prompts)))
+          (should (null (ao--sent-prompt-texts)))
+          (should-not (plist-get (buffer-local-value 'agent-org-buffer--status buf)
+                                 :queued))
+          (kill-buffer buf))))))
+
+(ert-deftest test-agent-org-resume-without-a-transcript-file-just-loads ()
+  "No file, no error: the transcript is a convenience, not a dependency.
+A session resumed with `agent-org-transcribe' off, or one that predates
+the feature, has nothing to read — and a resume that failed on a missing
+file would be a regression for every user who never queued a prompt."
+  (ert-with-temp-directory temp-dir
+    (let ((agent-org-transcript-directory
+           (expand-file-name "nope/" temp-dir))
+          (agent-org-transcribe nil))
+      (ao--capture-wire
+        (let ((buf (agent-org-resume-session 'qoder "sid-absent")))
+          (ao--drive "initialize" ao--fake-init-resp)
+          (ao--drive "session/load" '((sessionId . "sid-absent")))
+          (ao--wire-prompt-texts (ao--settle))
+          (should (equal 'ready
+                         (plist-get (buffer-local-value
+                                     'agent-org-buffer--status buf)
+                                    :state)))
+          (kill-buffer buf))))))
+
 (provide 'test-agent-org)
 ;;; test-agent-org.el ends here
 

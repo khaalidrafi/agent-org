@@ -1220,3 +1220,76 @@ drawer that leaks into the next redraw.  =tests/acp-mock.el= gained =:command=,
 =:instance-count= and =acp-traffic-buffer= for the same reason the client's dotted
 alist was mirrored: a mock that under-shapes the dependency turns the test into a
 test of the mock.
+
+* Queued prompts now survive in the transcript, and resume sends them
+
+User order: "Save queued prompts to transcripts and reload them on resume."
+Two files changed, one wire-visible behaviour added, and one ordering
+constraint that a later refactor can break silently.  Read the ordering item
+first if you read only one.
+
+** TODO Read the read-before-write ordering in =agent-org--finish-replay= (agent-org.el)
+
+Question: is the order (read the drawer → render replay → =session-ready= →
+apply + drain) actually enforced, or only commented?
+
+It is enforced by
+=test-agent-org-resume-reloads-the-queued-prompts-and-sends=, which runs with
+transcription ON: =agent-org--session-ready= mirrors the freshly replayed
+buffer — a buffer with no queue in it — over the very file the restore reads.
+Move the read after that write and the test goes red with an empty queue,
+which is the silent failure mode to fear: the resume still looks perfect, and
+the prompts the user typed before quitting simply never come back.  Applying
+/late/ is the other half — a drained prompt goes on the wire, so it needs the
+id set, the box open and =:loading= gone.
+
+** TODO Read =agent-org-buffer--queue-encode= and decide if one line is enough
+
+The escape is =\= → =\\=, newline → =\n=, CR → =\r=, plus a literal ~- ~ prefix.
+Question: is there a character that still breaks the drawer?
+
+Nothing can produce a blank line or a line starting with =:END:=, which are
+the two ways out of a drawer (info "(org) Drawers": a drawer holds anything
+but a headline and another drawer).  What is /not/ protected is the reading:
+an old Emacs reading a drawer written by a newer escape undoes =\X= as =X=,
+so a future escape must stay additive.  Also judge the choice itself — the
+alternative was a =#+begin_example= block per prompt, which is prettier in
+the file and cannot be read one line at a time.
+
+** TODO Read the drain-on-restore decision (agent-org.el)
+
+Resume puts the first restored prompt on the wire immediately.  Judge that:
+the alternative is to restore the queue and leave it, which shows "N queued"
+on a Ready session that will never drain it — nothing else drains an idle
+session — so the prompts would sit there until some /other/ turn ended.  If
+you would rather it asked, the place is one =read-y-or-n-p= in
+=agent-org--finish-replay=, not a new defcustom.
+
+Note what this changes for =agent-org-reload=: it goes through resume, so a
+restart now re-sends queued prompts to the fresh agent.  The docstring used to
+promise the opposite.  Decide which behaviour you want before accepting the
+doc change.
+
+** TODO Read the =:QUEUE:= drawer's place in the metadata block (agent-org-buffer.el)
+
+It is last, after CONFIG, and its name is in =agent-org-buffer--metadata-drawers=
+so it is born folded and keeps the fold across rebuilds.  Question worth
+answering from the buffer itself (=M-x agent-org-start=, send into a busy
+session, =C-u C-u M-x org-cycle~=… or just open the top block): is a folded
+waiting prompt findable, or should the header line carry its text?  The count
+is already there ("~2 queued~"); the drawer is the durable copy.
+
+** DONE Eight tests (198 -> 206), and one that caught a real bug
+
+=test-agent-org-queue-drawer-lists-the-waiting-prompts= (pure renderer),
+=…-queue-line-escape-is-lossless=, =…-queue-drawer-is-folded-like-the-others=,
+=…-queued-prompt-reaches-the-file-mid-turn=, =…-queue-drawer-clears-when-the-prompt-is-sent=,
+=…-resume-reloads-the-queued-prompts-and-sends=, and the two negatives
+=…-resume-without-a-queue-drawer-sends-nothing= and
+=…-resume-without-a-transcript-file-just-loads=.
+
+The mid-turn test caught =agent-org-buffer-transcript-queue= including the
+=:END:= line in the queue: =re-search-forward= returns a match's /end/, and the
+region had to stop at =match-beginning= — the same trap AGENTS.md already
+documents for tool-heading placement, fallen into again, which is the argument
+for writing the file-reading test before the reader.

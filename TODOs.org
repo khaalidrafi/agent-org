@@ -79,8 +79,10 @@ kills the chat buffer silently (the kill hook owns the process) and
 re-opens through =agent-org-resume-session= with the recorded
 =(:cwd . :session-id)=, replaying into the same windows.  The buffer
 name regenerates from the replayed title and id, so it comes back
-looking like the one that was replaced; queued prompts die with the
-buffer.
+looking like the one that was replaced.  Queued prompts used to die with
+the buffer; they now survive in the transcript's =:QUEUE:= drawer (see
+[[*Persist the prompt queue, and reload it on resume]]), so a restart hands
+them to the fresh agent.
 
 ** DONE Interrupt --- cancel a running turn
 agent-shell binds =agent-shell-interrupt= (agent-shell.el:2243): it
@@ -318,6 +320,35 @@ prefix argument in two tiers, the same 16-and-up rule
 =test-agent-org-start-double-prefix-forces-the-latest-session= pins both
 halves of the claim: the wire answers oldest-first so the pick proves the
 sort, and =ao--never-prompt= fails the test if anything asks.
+
+** DONE Persist the prompt queue, and reload it on resume
+User order: "Save queued prompts to transcripts and reload them on
+resume."  Nothing else in the package can do this: a queued prompt was
+never sent, so it is absent from the agent's =session/load= replay, from
+the fresh buffer and from any =* User= heading — the transcript is its only
+surviving copy.  It goes in a folded =:QUEUE:= drawer at the end of the
+auto-managed metadata block, one line per prompt oldest first, escaped flat
+by =agent-org-buffer--queue-encode= (a drawer cannot hold a blank line, and
+a prompt that /is/ =:END:= must not close its own drawer — hence the =- =
+prefix).  =agent-org--queue-refresh= is the single choke point: it mirrors
+session =:pending-prompts= into the status, the block and the file, so
+enqueue, remove, edit and drain are boundaries of their own and a mid-turn
+quit costs nothing.
+
+=agent-org--finish-replay= reads the drawer /before/ rendering and applies it
+/after/ =agent-org--session-ready=, and both halves of that order are
+load-bearing: session-ready mirrors the freshly replayed buffer — which has
+no queue — over the file.  Applying it late is what lets the queue /drain/:
+a resumed session is idle, and nothing but a turn end drains an idle
+session's queue, so the first prompt goes out and the rest keep waiting.  An
+empty queue renders no drawer at all, which is what stops a sent prompt being
+restored a second time.
+
+Eight tests: the pure renderer, the escape round-trip (=:END:=, newlines,
+backslashes, the empty string), the fold, the mid-turn file write plus its
+read-back, the clearing on drain, the resume that restores and sends, and two
+negatives (no drawer, no file) — because a phantom turn would spend tokens
+the user never asked for.
 
 ** TODO Markdown → Org for user and agent replies (default on, off-able)
 agent-shell only renders markdown to /faces/, never to Org, so this is
