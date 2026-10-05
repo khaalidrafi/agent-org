@@ -27,7 +27,7 @@
 ;; turn (only the freshly appended region is fontified, never the whole
 ;; buffer).
 ;;
-;; Tool calls render as one `- KEYWORD title' line of a `:tool:' drawer
+;; Tool calls render as one `- KEYWORD N. title' line of a `:tool:' drawer
 ;; under the current `* Agent' heading, using the per-file keyword set
 ;; declared by the metadata block (`#+TODO: TODO DOING | DONE
 ;; CANCELLED'): pending→TODO, in_progress→DOING, completed→DONE,
@@ -35,6 +35,17 @@
 ;; the same primitive; the tool drawer is created OPEN (progress is what
 ;; the user came to watch) and the thought drawer FOLDED.  A drawer can
 ;; hold no headings, which is why a call is a line and not a `**'.
+;;
+;; What a call PRINTED is filed beside it, in its own folded `:tool-N:'
+;; drawer named by the same NUMBER that prefixes its status line — output
+;; cannot live inside `:tool:' because Org forbids a drawer inside a
+;; drawer, and one shared fold state would either hide the live status
+;; lines or flood the chat with bodies (agent-shell's tool bodies are
+;; collapsed by default for the same reason).  A call that sent no output
+;; gets no drawer.  Every drawer body goes through
+;; `agent-org-buffer--drawer-safe-lines' first: agent text routinely
+;; contains `* heading' and `:END:' at column 0, and either one silently
+;; destroys the drawer holding it.
 ;;
 ;; All status, progress and error feedback is shown in the buffer's
 ;; `header-line' (the top bar), the same way `gptel' and `agent-shell'
@@ -359,11 +370,16 @@ buffer end, because the body trails it: the type-ahead box, the
 so the heading is never the last thing in the turn.")
 
 (defvar-local agent-org-buffer--tools nil
-  "Ordered alist ((ID :title TITLE :status STATUS) ...) for the current
-Agent turn; each ID owns one line of the turn's `:tool:' drawer.  The
-whole drawer is redrawn from this list on every update
-(`agent-org-buffer-insert-tool'), so no marker per call: the list IS
-the record, and its order is the order the agent made the calls.")
+  "Alist ((ID . PLIST) ...) of the current Agent turn's tool calls.
+PLIST is (:title T :status S :number N :output O :shown SH); each ID owns
+one line of the turn's `:tool:' drawer and, with output, a folded
+`:tool-N:' drawer of its own.  The whole status drawer is redrawn from this
+list on every update (`agent-org-buffer-insert-tool'), so no marker per
+call: the list IS the record, and its order is the order the agent made the
+calls.  `:number' is that order (1-based, assigned once -- the list only
+grows), which is what ties a status line to the drawer under its number.
+`:shown' holds the output last written, so a status-only update never
+re-inserts a body that did not change.")
 
 (defvar-local agent-org-buffer--thought nil
   "Thinking text accumulated for the current Agent turn, rendered into
@@ -968,6 +984,37 @@ Starts a new Agent heading if not already streaming."
 
 ;;;; Auto-folded per-turn structure (tool and thinking drawers)
 
+(defun agent-org-buffer--drawer-safe-lines (text)
+  "TEXT as drawer-body lines that cannot re-shape the drawer.
+Two shapes that are ordinary in agent text are STRUCTURAL in Org: a line
+whose first character is `*' is a headline, and a line reading `:END:'
+CLOSES the drawer it is in.  Drawers may contain neither (info \"(org)
+Drawers\"), and the parser obeys: measured with `org-element-parse-buffer'
+on a drawer holding a `* heading' line, it reports NO drawer at all and two
+headlines -- the turn's whole tool state falls out of its fold and into the
+body.  `:END:' is matched case-insensitively and leading whitespace does
+not save you, so a shell result quoting an Org file can carry every one of
+these.  So: indent each line one space (a headline must start at column 0)
+and double the leading colon of a bare `:END:' line, which is not the
+marker and still reads as the text it is.
+
+Blank lines stay blank -- they are inside a drawer, where the manual says
+anything but a headline or another drawer is allowed, and dropping them
+would flatten the output's own shape.  This is also why no output is ever
+truncated: folding is the affordance, and a record that quietly lost its
+middle is worse than a long one."
+  (let ((case-fold-search t))
+    (mapcar (lambda (line)
+              (cond
+               ((string-empty-p line) "")
+               ((string-match-p "^[ \t]*:END:[ \t]*$" line)
+                ;; both guards at once: the space means no line of the body
+                ;; ever starts at column 0, the doubled colon means this one
+                ;; cannot be read as a marker even by the tolerant match
+                (concat " :" (string-trim line)))
+               (t (concat " " line))))
+            (split-string (string-trim-right text) "\n"))))
+
 (defun agent-org-buffer--live-mark (marker)
   "Position of MARKER, or nil when it points into no buffer.
 `mark' is the wrong tool here: it returns nil whenever the region is
@@ -1056,7 +1103,7 @@ own drawer."
             (concat agent-org-buffer--thought text))
       (agent-org-buffer--redraw-drawer
        buffer "thinking"
-       (split-string agent-org-buffer--thought "\n") t))))
+       (agent-org-buffer--drawer-safe-lines agent-org-buffer--thought) t))))
 
 (defconst agent-org-buffer--label-width 60
   "Characters of agent-supplied text shown on a single line.")
@@ -1078,24 +1125,97 @@ its own — the full detail is the agent's to keep."
         flat
       (concat (substring flat 0 (1- agent-org-buffer--label-width)) "…"))))
 
+(defun agent-org-buffer--content-block-text (block)
+  "Org-ready text for one ACP content BLOCK (the union inside `content').
+Only `text' has a real rendering here; a `resource_link' becomes an Org
+link, which is what a reader clicks, and an embedded text `resource'
+becomes its text.  Anything else is NAMED, in agent-shell's words
+(`[unsupported content: TYPE]'), because a silently dropped block reads as
+\"the tool printed nothing\" -- and an agent that took a screenshot is not
+printing nothing."
+  (pcase (map-elt block 'type)
+    ("text" (or (map-elt block 'text) ""))
+    ("resource_link"
+     (let ((uri (map-elt block 'uri))
+           (name (map-elt block 'name)))
+       (if uri (format "[[%s][%s]]" uri (or name uri)) (or name ""))))
+    ("resource"
+     (or (map-nested-elt block '(resource text))
+         "[unsupported content: resource]"))
+    (type (format "[unsupported content: %s]" (or type "unknown")))))
+
+(defun agent-org-buffer--tool-block-text (item)
+  "Org-ready text for one ToolCallContent ITEM of a tool call.
+ACP's union has three arms -- {type: \"content\", content: <block>},
+{type: \"diff\", path, newText}, {type: \"terminal\", terminalId} -- and a
+diff is the result of an edit, so it is shown as the file it touches plus
+what the file now holds; agent-shell shells out to `diff' for a unified
+rendering, which is a nicer picture and a heavier turn.  A block that
+skips the union entirely (some agents send the inner text straight) is
+handled by the `text' arm, and a terminal -- an agent-shell-only surface
+here -- is named rather than dropped."
+  (let ((type (map-elt item 'type)))
+    (cond
+     ((map-elt item 'content)
+      (agent-org-buffer--content-block-text (map-elt item 'content)))
+     ((equal type "diff")
+      (format "diff %s\n%s"
+              (or (map-elt item 'path) "?")
+              (or (map-elt item 'newText) "")))
+     ((map-elt item 'text) (map-elt item 'text))
+     (t (format "[unsupported content: %s]" (or type "unknown"))))))
+
+(defun agent-org-buffer--tool-output (update)
+  "The output text tool UPDATE carries, or \"\" when it carries none.
+The spec files a call's result under `content'; `rawOutput' is
+agent-defined free JSON, and Codex answers through
+`rawOutput.formatted_output' while leaving `content' empty -- so reading
+only the spec's field shows a completed shell call that printed nothing.
+A non-string `formatted_output' (a number, an object) is not text, so it
+is no output.  Same order as agent-shell's
+`agent-shell--tool-call-update-output-markdown', which is the parity the
+user asked for: \"Please look into agent-shell on how it handles
+responses.\""
+  (let ((text (mapconcat #'agent-org-buffer--tool-block-text
+                         (append (map-elt update 'content) nil)
+                         "\n\n"))
+        (raw (map-nested-elt update '(rawOutput formatted_output))))
+    (cond ((not (string-empty-p text)) text)
+          ((stringp raw) raw)
+          (t ""))))
+
 (defun agent-org-buffer-insert-tool (buffer content)
-  "Record the tool call or update CONTENT in BUFFER as a `:tool:' drawer line.
+  "Record the tool call or update CONTENT: one status line, plus its output.
 CONTENT is the tool-call alist from the ACP notification.  Each
-toolCallId owns exactly one line `- KEYWORD title' of the current turn's
+toolCallId owns exactly one line `- KEYWORD N. title' of the current turn's
 `:tool:' drawer, KEYWORD mapping the ACP status onto the per-file TODO set
-(`agent-org-buffer--todo-setup').  Later updates overwrite the stored
-title/status and the WHOLE drawer is redrawn from `agent-org-buffer--tools',
-so an id can never sprout a second line and no per-call marker can go stale
--- the list is the record, its order the order the agent made the calls.
-The id never appears on the line: it is the agent's bookkeeping, and the
-entry looked up under it already owns the line.
+(`agent-org-buffer--todo-setup') and N the call's number in the turn.
+Later updates overwrite the stored title/status and the WHOLE drawer is
+redrawn from `agent-org-buffer--tools', so an id can never sprout a second
+line and no per-call marker can go stale -- the list is the record, its
+order the order the agent made the calls.  The id never appears on the
+line: it is the agent's bookkeeping, and the entry looked up under it
+already owns the line.
 
 LINES, not headings: Org forbids headlines inside drawers (info \"(org)
 Drawers\"), so a call that wants to sit in a `:tool:' drawer cannot be a
 `**' heading.  That is the user's order -- \"Tool calls should be inside
 :tool: drawers\" -- and the reason `**' disappeared from the turn: the
 Agent heading is now the turn's only heading, and its tool calls fold
-open beside a folded `:thinking:' drawer."
+open beside a folded `:thinking:' drawer.
+
+What the call PRINTED goes into a second drawer of its own, `:tool-N:'
+(`agent-org-buffer--tool-output'), folded.  It cannot live inside the
+status drawer for the same reason the calls cannot live in it as
+headings: a drawer holds no other drawer, and one fold state for the whole
+turn would mean either hiding the live status lines or flooding the chat
+with a `cat' of a file -- agent-shell's own default for tool output is
+collapsed (`agent-shell-tool-use-expand-by-default' nil).  So the turn
+reads as agent-shell's activity run, in arrival order: prose, then the
+status board, then each call's body under the number the board gives it.
+The number is why it is on the status line at all: it is the only way a
+reader gets from `- DONE 3. ls -R' to `:tool-3:' without printing the
+agent's id.  A call that reports no output gets no drawer."
   (let ((id (map-elt content 'toolCallId))
         (title (or (map-elt content 'title) (map-elt content 'toolName)))
         (status (map-elt content 'status)))
@@ -1105,26 +1225,44 @@ open beside a folded `:thinking:' drawer."
           (agent-org-buffer-start-agent-turn buffer nil))
         (let ((entry (cdr (assoc id agent-org-buffer--tools))))
           (unless entry
-            ;; both keys pre-exist so `plist-put' below always mutates in
+            ;; every key pre-exists so `plist-put' below always mutates in
             ;; place: it only prepends -- returning a NEW list -- when a
-            ;; key is absent, and `entry' here would keep the old one
-            (setq entry (list :title nil :status nil)
+            ;; key is absent, and `entry' here would keep the old one.
+            ;; `:number' is fixed at creation because the list only ever
+            ;; grows: the board and the drawers cannot disagree later.
+            (setq entry (list :title nil :status nil :output nil :shown nil
+                              :number (1+ (length agent-org-buffer--tools)))
                   agent-org-buffer--tools
                   (append agent-org-buffer--tools (list (cons id entry)))))
           (when title (plist-put entry :title title))
           (when status (plist-put entry :status status))
+          ;; last non-empty report wins, the way agent-shell patches a
+          ;; stored call: an update that carries no `content' is a status
+          ;; change, not a rewrite of what the tool printed
+          (let ((output (agent-org-buffer--tool-output content)))
+            (unless (string-empty-p output) (plist-put entry :output output)))
           ;; render-time fallbacks, never stored, so a title-less update
           ;; cannot downgrade the title; the label is flattened because a
           ;; drawer entry is one line
           (agent-org-buffer--redraw-drawer
            buffer "tool"
            (mapcar (lambda (e)
-                     (format "- %s %s"
+                     (format "- %s %d. %s"
                              (agent-org-buffer--tool-keyword
                               (plist-get (cdr e) :status))
+                             (plist-get (cdr e) :number)
                              (agent-org-buffer--label
                               (or (plist-get (cdr e) :title) "tool"))))
-                   agent-org-buffer--tools)))))))
+                   agent-org-buffer--tools))
+          (let ((output (plist-get entry :output)))
+            ;; `:shown' is the redraw guard: a status change must not
+            ;; re-insert a body nobody changed, and a turn of ten calls
+            ;; redraws ten short lines rather than the whole text twice
+            (when (and output (not (equal output (plist-get entry :shown))))
+              (plist-put entry :shown output)
+              (agent-org-buffer--redraw-drawer
+               buffer (format "tool-%d" (plist-get entry :number))
+               (agent-org-buffer--drawer-safe-lines output) t))))))))
 
 ;;;; Transcript file
 

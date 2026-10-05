@@ -149,6 +149,40 @@ id ever being readable text.  Guarded by
 =test-agent-org-tool-heading-drops-raw-id=; the older tool tests now
 assert the id-free shape.
 
+** DONE Show what a tool call printed, in agent-shell's activity order
+#+begin_quote
+"Show tool call outputs, too.  Please look into agent-shell on how it
+handles responses."  "Keep activity order just like agent-shell handles
+responses.  You can use multiple drawers for tool/thinking."
+#+end_quote
+
+agent-shell renders a call's output through
+=agent-shell--tool-call-content= / =agent-shell-tool-use-insert-collapsed=:
+the =content= blocks first, else =rawOutput.formatted_output=, else nothing,
+an unknown block named rather than dropped, and the body collapsed by default
+(=agent-shell-tool-use-expand-by-default= nil).
+
+Shipped: each call that printed anything gets a folded =:tool-N:= drawer,
+=N= being the number now prefixed to its status line (=- DONE 2. run tests=
+pairs with =:tool-2:=), so the turn reads in the order the agent acted and
+the agent's =toolCallId= still never reaches a visible line.  Output cannot
+join the =:tool:= drawer -- Org forbids a drawer inside a drawer, and one
+drawer has one fold state, which would either hide the live status lines or
+flood the chat with bodies.  =agent-org-buffer--tool-output= does the
+extraction (content blocks → string =rawOutput.formatted_output= → nothing;
+diffs show path and text; anything else is
+=[unsupported content: TYPE]=), =:shown= on the entry stops an unchanged body
+being re-inserted, and a call with no output gets no drawer.
+=agent-org-buffer--drawer-safe-lines= escapes every streamed body on the way
+in: one space of indent (a line starting with =*= at column 0 is a headline)
+and a doubled colon on a bare =:END:= (matched case-insensitively and
+whitespace-tolerantly) -- measured with =org-element-parse-buffer=, one
+=* heading= line inside a drawer made the parser report /no/ drawer and two
+headlines.  =:thinking:= takes the same guard, which it always needed:
+extended thinking is markdown prose.  Nothing is truncated; folding is the
+affordance.  Guarded by the =test-agent-org-tool-output-*= suite plus
+=test-agent-org-thinking-drawer-survives-a-headline-line=.
+
 ** DONE Model name everywhere, not just the header
 =:model-name= was preferred by the header and the :Model: property, but
 the CONFIG drawer printed the raw =currentValue= id and

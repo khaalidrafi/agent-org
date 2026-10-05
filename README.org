@@ -13,9 +13,10 @@ own *header line* (the top bar, as used by ~gptel~ and ~agent-shell~) — never
 as system messages in the document body.  The body contains the
 ~* User~ / agent-turn conversation, each agent turn headed by the model that
 answered it (~* MiniMax M3~; see ~agent-org-use-model-headings~), with that
-turn's tool calls as one line per call in an open ~:tool:~ drawer (its state
-written as ~TODO~/~DOING~/~DONE~/~CANCELLED~) and its extended thinking in a
-folded ~:thinking:~ drawer under the same heading, plus one auto-managed
+turn's tool calls as one numbered line per call in an open ~:tool:~ drawer
+(its state written as ~TODO~/~DOING~/~DONE~/~CANCELLED~), what each call
+printed in a folded ~:tool-N:~ drawer of its own, and its extended thinking in
+a folded ~:thinking:~ drawer under the same heading, plus one auto-managed
 metadata block at the very top (see
 [[#session-metadata][Session metadata]]) — and, by default, that whole body is mirrored to one
 Org file per session, so a chat leaves you a document rather than a
@@ -119,11 +120,13 @@ NonGNU ELPA.
 3. Watch the reply stream under the agent-turn heading — the model that
    answered it (~* MiniMax M3~), or ~* Agent~ with
    ~agent-org-use-model-headings~ nil; each tool call is
-   one line of the turn's ~:tool:~ drawer, ~- TODO~/~- DOING~/~- DONE~/~-
-   CANCELLED~ plus its title (~TODO~ pending → ~DOING~ running → ~DONE~
+   one numbered line of the turn's ~:tool:~ drawer, ~- TODO 1.~/~- DONE 2.~
+   plus its title (~TODO~ pending → ~DOING~ running → ~DONE~
    completed / ~CANCELLED~ failed), redrawn in place as the state changes,
-   while extended thinking accumulates in one folded ~:thinking:~ drawer
-   under the same heading.
+   what the call printed in a folded ~:tool-N:~ drawer of its own (opened
+   with ~TAB~ on that line — never truncated, and a call that printed
+   nothing gets no drawer), while extended thinking accumulates in one
+   folded ~:thinking:~ drawer under the same heading.
    Sending while the agent is still responding /queues/ the draft
    (~agent-org-queue-when-busy~, on by default — agent-shell's type-ahead
    model): queued prompts go out FIFO as each turn ends successfully,

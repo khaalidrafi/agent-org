@@ -58,7 +58,7 @@ emacs -Q --batch \
 #   COMMANDS/MODES/CONFIG drawers — all folded by default, no heading
 #   (headings belong to the conversation).  Rewritten by
 #   `agent-org-buffer-refresh-metadata'; never edit it by hand.
-# - Per-turn tool calls render as one `- KEYWORD title' LINE of the current
+# - Per-turn tool calls render as one `- KEYWORD N. title' LINE of the current
 #   turn's `:tool:' drawer, one line per toolCallId, KEYWORD from the per-file
 #   `#+TODO: TODO DOING | DONE CANCELLED` set (pending→TODO,
 #   in_progress→DOING, completed→DONE, failed→CANCELLED).  There is NO marker
@@ -79,6 +79,28 @@ emacs -Q --batch \
 #   driven directly with `org-fold-region', NOT
 #   `org-fold-hide-drawer-toggle', whose org-element cache is stale while a
 #   turn streams with font-lock off ("Not at a drawer").
+# - What a call PRINTED goes in its own folded `:tool-N:' drawer, keyed by the
+#   SAME NUMBER as its status line (the agent's toolCallId never reaches a
+#   visible line — the user's order).  Output cannot join the `:tool:' drawer:
+#   drawers may not nest (info "(org) Drawers"), and one drawer has one fold
+#   state, so a shared drawer would either hide live status or flood the chat
+#   with bodies — agent-shell collapses tool bodies by default for the same
+#   reason.  Extraction is `agent-org-buffer--tool-output', in agent-shell's
+#   order: the `content' blocks, else `rawOutput.formatted_output' ONLY when it
+#   is a string (a number is not a shell result), else nothing — and nothing
+#   means NO drawer, not an empty one.  A block with no surface is NAMED
+#   (`[unsupported content: TYPE]'), never dropped.  `:shown' in the entry holds
+#   what was last written, so the frequent status-only update costs no redraw.
+# - Every drawer BODY the stream writes goes through
+#   `agent-org-buffer--drawer-safe-lines': a `*' at column 0 is a headline and a
+#   line reading `:END:' closes the drawer, and BOTH are ordinary characters in
+#   agent text (a shell result quoting an Org file, a markdown thought's `* '
+#   bullet).  Measured with `org-element-parse-buffer': one `* heading' line in a
+#   drawer reports NO drawer and two headlines.  The escape is one space of
+#   indent (a headline must start at column 0) plus, for an END line, a doubled
+#   colon — `:END:' is matched case-insensitively and whitespace-tolerantly, so
+#   `:end:', `:End:' and `  :END:' all close it.  Blank lines stay blank; that is
+#   also why no output is ever truncated: folding is the affordance.
 # - Never place a headline at the position `re-search-forward' RETURNS: that is
 #   a match's END, which for a drawer marker is INSIDE the body, and
 #   `agent-org-buffer--redraw-drawer' rewrites the whole body on the next

@@ -1293,3 +1293,56 @@ The mid-turn test caught =agent-org-buffer-transcript-queue= including the
 region had to stop at =match-beginning= — the same trap AGENTS.md already
 documents for tool-heading placement, fallen into again, which is the argument
 for writing the file-reading test before the reader.
+
+* What a tool call printed, and the drawer rules that decided where it goes
+
+** TODO Read =agent-org-buffer--drawer-safe-lines= (agent-org-buffer.el)
+
+The whole unit rests on this claim about Org, so check it against the manual and
+the parser before trusting the code: a line whose first character is ~*~ is a
+headline /even inside a drawer/ (which forbids them), and a line reading ~:END:~
+closes the drawer it sits in -- case-insensitively, leading whitespace included,
+so ~:end:~, ~:End:~ and ~  :END:~ all close it.  The escape is one space of
+indent plus a doubled colon.  Question for review: is indenting *every* body
+line the right price?  It costs a column of the window and it means the filed
+text is not byte-identical to what the agent sent -- in exchange for a drawer
+that is still a drawer when a shell result happens to quote an Org file.  Reproduce
+it yourself in ~emacs -Q --batch~ with ~org-element-parse-buffer~ on a drawer
+containing one ~* heading~ line: the reported drawer list comes back empty.
+
+** TODO Read the numbering decision in =agent-org-buffer-insert-tool=
+
+Output goes to a sibling ~:tool-N:~ drawer keyed by the call's position in
+~agent-org-buffer--tools~, and the status line now carries that same number.
+Two questions:
+
+1. Is a NUMBER stable enough as the pairing key?  It is, because the list only
+   ever grows within a turn (=start-agent-turn= clears it), so entry 3 stays
+   entry 3 for the turn's life -- but a *new turn* restarts at 1, which means
+   ~:tool-1:~ appears in more than one place in the buffer.  Render sites locate
+   a drawer bounded by the current turn, and the transcript is a mirror of the
+   buffer, so that is intended; judge whether you want it in a file you read
+   later.
+2. Why not the ~toolCallId~?  The user ordered the raw ids off the visible lines
+   (TODOs.org, "Tool call headings must not show raw ids").  The number is the
+   cheapest key that a human can also read.
+
+** TODO Read =agent-org-buffer--tool-output= against agent-shell
+
+The order content blocks → ~rawOutput.formatted_output~ → nothing, the
+string-only guard on ~formatted_output~, and ~[unsupported content: TYPE]~ for a
+block with no surface are agent-shell's rules, kept on purpose so a person who
+has used both tools sees the same thing.  Question: is ~diff~ rendering (path +
+new text) enough, or should it show ~oldText~ too?  We print the new text and
+the path only; a real diff view is agent-shell's =agent-shell--tool-call-diff=
+and is not ported.
+
+** TODO Check the fold choice on a live session
+
+=M-x agent-org-start=, ask the agent to run a shell command, and watch the
+turn: ~:tool:~ open with its numbered lines, ~:tool-1:~ born folded, =TAB= on the
+drawer line opens the body.  Judge the ergonomics, not the code: on a long
+~grep~ result, is "folded but complete" better than the truncated preview a
+chat UI would normally show?  (This project's answer, in the docstrings: yes --
+folding is the affordance, and a record that quietly lost its middle is worse
+than a long one.)
