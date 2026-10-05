@@ -711,3 +711,31 @@ kill-ring the current session id.  One-liner for agent-org.
 agent-org already has =agent-org-set-session-model= (C-c C-m) over
 =:want-model= values; add the model NAMES to the candidates so the
 user never sees bare ids.
+
+** DONE The agent learns its own model, session id and agent name
+User order: "Add a way for agents to know the currently selected model,
+session id and agent name."  An agent asked "which model are you?" answers
+from the default in its own system prompt, which stops being true the moment
+=C-c C-m= selects another model --- the ordinary case for MiniMax served by
+OpenCode --- and a session id is a value only the client holds.  So every
+prompt now goes out as TWO ACP text blocks:
+
+- =agent-org-send-session-context= (default t) adds a
+  =<agent-org-context>= block /after/ the user's own block, whose words stay
+  byte-for-byte what was typed.  Three fact lines, fixed order:
+  =agent: Qoder (qoder)=, =model: MiniMax M3 (minimax/MiniMax-M3)=,
+  =session: 7c1f-abc= --- label and id both, because a person reads one and a
+  commit trailer or a config request needs the other.
+- Built per turn, in =agent-org--send-turn= (the one choke point for a typed
+  prompt and a drained queue prompt), so a mid-session model change is
+  reflected and a prompt that waited its turn is not a special case.
+- An unknown fact is /absent/, never =nil=: goose advertises no model option of
+  this shape, and a =model: nil= line is an agent told something false.
+- Every value is flattened onto one line, never truncated
+  (=agent-org--context-field= = =agent-org-buffer--label='s collapse minus its
+  60-column cut): a model label is agent text.
+- Live on qoder: the agent printed the three lines verbatim and attributed the
+  block to the client, quoting the preamble as its reason.
+
+7 tests (=test-agent-org-context-block-*= and friends), 267 total, all green;
+byte-compile clean; three mutations each seen to break 3, 6 and 8 tests.

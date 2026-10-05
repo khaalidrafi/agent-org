@@ -362,6 +362,44 @@ the header line.  That is the upstream account talking, not a broken
 session: the id, the mode and the model are all still there, and topping
 up only needs a fresh ~C-c C-c~.
 
+* What the agent is told about this connection
+
+Ask an agent "which model are you?" and it answers from its own idea of
+the default.  That is wrong the moment you switched with ~C-c C-m~ — which
+is the normal case for MiniMax running /through/ OpenCode — and the
+session id and the harness name are facts of the same kind: the client
+knows them, the agent cannot derive them, and a commit trailer or a bug
+report wants them.  So every prompt carries a second text block:
+
+#+begin_example
+<agent-org-context>
+Client metadata about this connection, not part of the user's request.
+agent: Qoder (qoder)
+model: MiniMax M3 (minimax/MiniMax-M3)
+session: 7c1f-abc
+</agent-org-context>
+#+end_example
+
+Both spellings of each fact go, because they answer different questions:
+the label is what a person reads and an agent quotes, the id is what a
+commit trailer, a bug report or a ~session/set_config_option~ request
+needs, and neither one derives from the other.  An agent that advertises
+no model of this shape (goose) simply gets no ~model:~ line — a
+~model: nil~ line would be an agent told something false.
+
+The block is rebuilt every turn, so it follows a mid-session ~C-c C-m~,
+and a prompt that waited its turn in the queue carries the same facts as
+one you typed.  Your own text is untouched and stays the first block: the
+agent receives the question verbatim, and the client speaks beside it
+rather than inside it.  ~agent-org-send-session-context~ nil sends only
+what you typed.
+
+Verified live on qoder: asked to read the block and print its fact lines
+back, an agent answered ~agent: Qoder (qoder)~,
+~model: Qwen3.8-Flash (qfmodel)~ and the session id it had never been
+told by anything else, and named the block as the client's rather than
+yours — which is the delimiters doing their job.
+
 * Session metadata
 :PROPERTIES:
 :CUSTOM_ID: session-metadata
@@ -494,6 +532,10 @@ what this package did before the option existed.
 - ~agent-org-convert-markdown~ — when non-nil (the default) Markdown in a
   reply, and in your own echoed prompt, becomes real Org markup: see
   [[*What the agent wrote becomes Org]].  Nil leaves the agent's bytes verbatim.
+- ~agent-org-send-session-context~ — when non-nil (the default) every prompt
+  carries a second text block with the agent's name, the selected model and
+  the session id: see [[*What the agent is told about this connection]].
+  Nil sends only what you typed.
 - ~agent-org-default-provider~ — provider ~agent-org-resume-session~ uses when
   you call it with no prefix argument (qoder by default: it answers
   ~session/list~, goose does not).

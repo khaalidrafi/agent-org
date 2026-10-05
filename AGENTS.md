@@ -235,6 +235,29 @@ emacs -Q --batch \
 #   back to the id — a bar that drops the model field reads as "no model",
 #   which is the worse lie.  Every writer goes through
 #   `agent-org--ingest-config', so the pair cannot drift apart.
+# - Every prompt carries a SECOND text block, `<agent-org-context>', with the
+#   agent name, the selected model and the session id, built per turn by
+#   `agent-org--session-context-text' and added by `agent-org--prompt-blocks'
+#   at the ONE send site (`agent-org--send-turn'), so a drained queue prompt
+#   gets the same facts as a typed one.  An agent asked "which model are you?"
+#   answers from its own default, which is false the moment `C-c C-m' or a
+#   pinned `:model' moved it (the MiniMax-through-OpenCode case), and a commit
+#   trailer or a bug report needs an id only the client knows.  Three rules
+#   make it safe: the user's block is FIRST and VERBATIM (this is the one place
+#   the client adds to the wire, and it adds BESIDE the request, never inside
+#   it — `agent-org--make-content-blocks' is untouched); a fact the client does
+#   not know is ABSENT, never `nil' or "unknown" (a `model: nil' line is an
+#   agent told something false, and goose advertises no model option of this
+#   shape); each value is flattened to one line by `agent-org--context-field',
+#   which is `agent-org-buffer--label''s whitespace collapse WITHOUT its
+#   truncation — a model label is agent text, and half a name on the wire is
+#   the lie the block exists to prevent.  Both spellings go (`name' then `id')
+#   because they answer different questions and neither derives from the other.
+#   `agent-org-send-session-context' nil is the escape hatch.  ACP content
+#   blocks are a list of independent blocks (`acp-make-session-prompt-request'
+#   vconcat's its `:prompt'), so this is the spec's own way to carry
+#   side-channel metadata: no wire change, no new method, and every existing
+#   reader of "the first block" stays honest.
 # - A chat buffer is named for its session: `<agent>:<project> [sid]` — which
 #   harness answers, then the project after the colon.  The session TITLE is NOT
 #   in the name, on the user's report "Buffer names are showing session names in

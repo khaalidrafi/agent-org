@@ -1029,14 +1029,72 @@ One action, one name in `M-x`, same rule as §10's command naming.
   by an older build, or a line a person typed while looking at the file, cannot
   become a prompt on resume.
 
-Tests: 16 in `tests/test-agent-org.el` (`test-agent-org-queue-editor-*`,
-`test-agent-org-queue-drawer-*`, `…-transcript-queue-reads-its-own-lines-only`),
+Tests: 22 in `tests/test-agent-org.el` (`test-agent-org-queue-*`,
+`…-transcript-queue-reads-its-own-lines-only`),
 all seen failing before the implementation.  The reconciliation is pinned by
 `-drops-what-the-agent-already-sent` (a real drain through the real
 `agent-org--drain-queue`) and `-keeps-prompts-queued-while-open` (a real
 enqueue), and the escape round trip by `-round-trips-every-entry`, whose
 fixtures are a multi-line prompt with an indented line and a `*` at column 0,
 and one that starts `:END:` with a blank line inside it.
+
+---
+
+## 18. What the client tells the agent about the connection
+
+An agent has no reliable view of its own connection.  Asked "which model are
+you?" it answers from the default baked into its system prompt, which is a
+lie the moment this client selected another model through
+`session/set_config_option` — the ordinary case for MiniMax served by
+OpenCode — and a session id is a value only the client ever holds.  So every
+prompt is TWO ACP text blocks: what the person typed, then the client's three
+facts.
+
+* **The user's block is first, and verbatim.**  `agent-org--make-content-blocks`
+  is unchanged; `agent-org--prompt-blocks` appends beside it.  This is the one
+  place agent-org adds anything to a request, and it adds rather than rewrites,
+  so an agent quoting the question quotes the person, and every existing reader
+  of "the first block" — here and in the agent — stays honest.
+* **One send site, so a drained prompt is not a special case.**  The block is
+  built in `agent-org--send-turn`, which is the choke point for a typed prompt
+  and for one released by `agent-org--drain-queue`.  Building it in
+  `agent-org-send` instead would put the facts on the first question of a
+  session and never again — the turn a re-ordered queue makes most different.
+* **Rebuilt per turn.**  `C-c C-m` between two questions is normal, and a block
+  computed at session start would tell the agent a model that stopped being
+  true turn one ago, which is worse than saying nothing.
+* **A fact the client does not know is ABSENT, never `nil`.**  Goose advertises
+  no `configOptions` of this shape; a `model: nil` line is an agent told
+  something false.  The block still goes out with the other two facts.
+* **One line per value, and nothing truncated.**  A model's label comes from the
+  agent's own `configOptions` and is agent text, so §12's standing rule applies:
+  never trust a harness label to be short or single-line.
+  `agent-org--context-field` is `agent-org-buffer--label`'s whitespace collapse
+  WITHOUT its 60-column cut — this string is never displayed, and half a model
+  name on the wire is the lie the block exists to prevent.
+* **Both spellings, always.**  `agent: Qoder (qoder)` and
+  `model: MiniMax M3 (minimax/MiniMax-M3)`: the label is what a person reads and
+  an agent quotes, the id is what a commit trailer or a config request needs, and
+  neither derives from the other.  One value is written once, so a line never
+  reads `model: QModel (QModel)`.
+* **Delimited, and labelled as the client's.**  `<agent-org-context>` …
+  `</agent-org-context>` with a first line saying "not part of the user's
+  request", so an agent neither quotes the block as the question nor treats it as
+  an instruction to act on.  Live qoder, asked to print the fact lines back, did
+  all three: verbatim values, and the block attributed to the client.
+
+The wire is spec-legal: a `PromptRequest`'s `prompt` is a LIST of content
+blocks (`acp-make-session-prompt-request` vconcat's its `:prompt`), so
+side-channel metadata is a second block rather than a new method or a mutated
+message.  `agent-org-send-session-context` nil is the off switch, and it proves
+the block is an addition: exactly one block leaves, byte-for-byte the draft.
+
+Tests: 7 (`test-agent-org-context-block-*`, `…-send-appends-a-context-block-*`,
+`…-drained-prompt-carries-the-same-context-block`), all seen failing first.  The
+exact text of the block is pinned, not merely its fields, because a format an
+agent has to guess at is a format it will misquote.  Mutation-checked: dropping
+the append fails 7, substituting the truncating flattener fails 3, and printing
+`model: nil` instead of omitting the line fails 4.
 
 ---
 

@@ -1981,3 +1981,102 @@ an in-progress edit every time a turn ends would be worse.
 - /Queue commands are not in the editor's way./  Enqueue while the editor is
   open works (=--note-added=, and the prompt appears at the end on the next
   repaint); the =M-x= queue list is gone, so =C-c C-q= is the only way in.
+
+* The per-turn context block: what the client tells the agent (agent-org.el)
+
+** TODO Read =agent-org--prompt-blocks= and the two rules it has to keep
+
+The user's order: "Add a way for agents to know the currently selected model,
+session id and agent name."
+
+- /Does the user's text still leave unchanged?/  =agent-org--make-content-blocks=
+  is not touched, and =agent-org--prompt-blocks= =append=s its one block with the
+  context block.  The first block must be byte-for-byte what was typed: this is
+  the only place the client adds to a request, and it adds beside the message,
+  never inside it.  Pinned twice — by name
+  (=test-agent-org-send-appends-a-context-block-after-the-users-words= asserts
+  =(equal "What is a monad?" (map-elt (car blocks) 'text))=) and by the off
+  switch (nil gives exactly one block, so the addition is provably an addition).
+- /Is one send site really enough?/  The block is built in
+  =agent-org--send-turn=, which is the choke point both =agent-org-send= and
+  =agent-org--drain-queue= pass through.  Read the call site, not only the
+  builder: had this gone into =agent-org-send=, the facts would ride the first
+  question of a session and then never again — the turn a re-ordered queue makes
+  most different, and the case a test had to name for the code to stay honest
+  (=test-agent-org-drained-prompt-carries-the-same-context-block=).
+- /Why a second text block at all?/  A =PromptRequest='s =prompt= is a list of
+  content blocks and upstream =acp-make-session-prompt-request= just
+  =vconcat=s it (acp.el:618-628), so this is the spec's own way to carry
+  side-channel metadata: no new method, no mutated draft, no capability to
+  negotiate.  agent-shell's =@file= mentions use a =resource= block gated on
+  =promptCapabilities.embeddedContext= (=agent-shell--build-content-blocks=,
+  agent-shell.el:8191); that gate is why =text= was chosen here — every agent
+  accepts a second text block, and one that a host never advertised would be
+  dropped on the floor.
+
+** TODO Read the three value rules, each of which has a lying failure mode
+
+- /An unknown fact is absent./  =agent-org--context-facts= builds the lines and
+  =seq-remove=s the nils.  A =model: nil= line is an agent told something false,
+  and goose advertises no =configOptions= of this shape, so this is the normal
+  case rather than a corner.  The =5 lines not 6= assertion in
+  =test-agent-org-context-block-drops-the-model-line-without-a-model= is what
+  keeps the omission from leaving a gap in a fixed-format block.
+- /One line per value, no truncation./  =agent-org--context-field= is
+  =agent-org-buffer--label='s whitespace collapse minus its 60-column cut.  A
+  model's =name= is agent text, and the standing rule (AGENTS.md) is never to
+  trust a harness label to be short or single-line; half a name on the wire is
+  the exact lie this block exists to prevent, and nothing here is displayed, so
+  the cut has no reason.  The test feeds a label with a newline /and/ 80
+  characters, and asserts the whole run sits between ="model: "= and the
+  bracketed id.
+- /Both spellings, once each./  =agent-org--context-line= writes =label: NAME
+  (ID)=, and one value when nothing names it — =model: QModel (QModel)= is noise
+  an agent has to parse, and =Qwen3.8-Flash (qfmodel)= is the pair a commit
+  trailer and a config request each need.  Neither derives from the other, which
+  is the whole argument for sending both.
+
+** DONE Live: an agent read it, and knew who wrote it
+
+Not a batch assertion.  A live qoder session (model =qfmodel=, labelled
+=Qwen3.8-Flash=) was asked to print the block's fact lines back without using
+prior knowledge of itself.  It answered, verbatim:
+
+#+begin_example
+agent: Qoder (qoder)
+model: Qwen3.8-Flash (qfmodel)
+session: 12a98aed-539a-42ec-a84e-be4712f95855
+#+end_example
+
+and then said, in its own words, that the block "came from the client …
+injected by the harness rather than typed by you" — its reasoning quoted the
+preamble line.  So the feature works for the reason it was built (the agent now
+states the model the /client/ selected, which is a value it cannot derive), and
+the delimiters work: the agent did not treat the metadata as the request.
+
+** DONE Three mutation checks, all seen to bite
+
+- Take the =when= away from the append (=agent-org--prompt-blocks= sends only the
+  user's block): =8 unexpected of 267= — all 7 new tests, plus one collateral
+  that dies from the leftover buffer of a failing test (=ao--chat-on-model=
+  buffers are killed at the end of a body, and a failing =should= skips that
+  line).
+- Swap the flattener for =agent-org-buffer--label= (truncate at 60):
+  =3 unexpected of 267= — the long-label test, and nothing else, which is the
+  point: only the 80-character case can see a cut.
+- Print =model: nil= instead of omitting the absent fact: =6 unexpected of 267= —
+  the no-model test, the line-count assertions, and the exact-text test.
+
+** TODO What this does /not/ do
+
+- /It is not a system prompt./  Three facts about the connection, in a block
+  labelled as not part of the request.  Instructions, style or project context
+  would be a different feature with a different consent question, and an agent
+  that reads =<agent-org-context>= as an instruction to act on is reading
+  something this package does not send.
+- /Nothing is added to the transcript or the header./  The block exists on the
+  wire only.  What the person typed is what =* User= shows and what the file
+  mirrors, so a transcript stays a record of the conversation.
+- /The queue editor does not show it./  A waiting prompt has no facts of its own
+  yet: the block is built when the turn actually goes out, from the model in
+  force /then/.
