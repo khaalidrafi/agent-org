@@ -2018,23 +2018,15 @@ most want back, and no other writer has ever seen it."
                                      "Streaming")
                                  session)))))
 
-(defun agent-org--read-queued-prompt (&optional default)
-  "Read an EDITED version of a queued prompt from the minibuffer.
-Only `agent-org-queue-edit' uses this any more: new prompts, queued or
-not, are typed into the live `* User' box and taken with
-`agent-org-buffer-take-draft'.  Editing a queue entry is different
-because the entry has left the input area; the old text is the default,
-so RET keeps it and typing replaces it."
-  (let ((text (string-trim (read-string "Edit queued prompt: " nil nil default))))
-    (when (string-empty-p text)
-      (user-error "Empty prompt"))
-    text))
-
 (defun agent-org--queue-enqueue (session buffer text)
-  "Append TEXT to SESSION's pending queue and show the depth in BUFFER."
+  "Append TEXT to SESSION's pending queue and show the depth in BUFFER.
+The editor, if one is open, is told too: it cannot see this prompt, and an
+editor that overwrites the session's queue with its own contents would
+silently drop it (see `agent-org-queue--note-added')."
   (setf (plist-get session :pending-prompts)
         (append (plist-get session :pending-prompts) (list text)))
   (agent-org--queue-refresh session buffer)
+  (agent-org-queue--note-added buffer text)
   (message "[agent-org] queued prompt (%d waiting)"
            (length (plist-get session :pending-prompts))))
 
@@ -2057,6 +2049,9 @@ whatever draft it holds stay untouched."
       ;; without it.  Getting this backwards makes a crash between the two
       ;; lose a prompt the user already paid for.
       (agent-org--queue-refresh session buffer)
+      ;; The editor is told the SAME text the agent took, and not by
+      ;; position: an entry it moved is still the same prompt.
+      (agent-org-queue--note-sent buffer (car prompts))
       (agent-org--send-turn session buffer (car prompts)))))
 
 (defun agent-org--sync-title (session)
@@ -2204,78 +2199,436 @@ turn and preparing the next message happen in the same window."
         (agent-org-buffer-insert-user buffer text)
         (agent-org--send-turn session buffer text)))))
 
-;;;; Queue maintenance commands
+;;;; Queue editor: show, edit and re-order the waiting prompts
+;;
+;; One buffer, one action.  The first cut had three commands for the queue
+;; — `agent-org-queue-view' printed a read-only list in a hidden buffer,
+;; `agent-org-queue-remove' picked a number in the minibuffer, and
+;; `agent-org-queue-edit' re-read the LAST entry only.  All three are the
+;; same list seen three ways, and none of them could re-order it, which is
+;; the one thing a queue of prompts needs: type the follow-up first, then
+;; the question it answers.  The editor replaces them, and shows the queue
+;; in the chat buffer itself (the `:QUEUE:' drawer) as well as in here.
 
-(defun agent-org--queue-session-or-error (session prompts)
-  "Explain why SESSION/PROMPTS cannot service a queue command, or nil.
-Two distinct failures, two distinct messages: a non-chat buffer has no
-queue at all, a chat buffer with an empty queue had nothing to remove."
-  (cond
-   ((null session) (user-error "Not an agent-org chat buffer"))
-   ((null prompts) (user-error "Nothing queued"))
-   (t nil)))
+(defvar agent-org-queue--editor nil
+  "Buffer-local in a CHAT buffer: its live queue editor, or nil.
+The link runs chat -> editor because the two things that change the queue
+WITHOUT the user working in the editor — `agent-org--drain-queue' taking a
+prompt off the front, `agent-org--queue-enqueue' adding one to the back —
+both have the CHAT buffer in hand and must be able to find the editor to
+tell it what happened.  The reverse pointer is
+`agent-org-queue--chat'.
+No `kill-buffer-hook' unsets this: `agent-org-queue--editor-for' checks
+`buffer-live-p', so a killed editor stops answering on its own.")
 
-;;;###autoload
-(defun agent-org-queue-view ()
-  "List the prompts queued for this session, oldest first.
-The listing lives in a read-only ` *agent-org queue*' buffer; the queue
-itself is session state, and `agent-org-queue-remove' drops entries."
-  (interactive)
-  (let* ((session (agent-org--session-for-buffer (current-buffer)))
-         (prompts (and session (plist-get session :pending-prompts))))
-    (unless session
-      (user-error "Not an agent-org chat buffer"))
-    (if (null prompts)
-        (message "[agent-org] nothing queued for %s"
-                 (or (plist-get session :name) "this session"))
-      (with-current-buffer (get-buffer-create " *agent-org queue*")
-        (special-mode)
-        (let ((inhibit-read-only t))
-          (erase-buffer)
-          (insert (format "%d prompt(s) queued for %s, sent in this order:\n\n"
-                          (length prompts) (plist-get session :name)))
-          (cl-loop for text in prompts for i from 1
-                   do (insert (format "%d. %s\n\n" i text))))
-        (goto-char (point-min))
-        (pop-to-buffer (current-buffer))))))
+(defvar agent-org-queue--chat nil
+  "Buffer-local in a queue EDITOR: the chat buffer it belongs to, or nil.")
 
-;;;###autoload
-(defun agent-org-queue-remove ()
-  "Drop a queued prompt of this session, chosen by number from the queue."
-  (interactive)
-  (let* ((session (agent-org--session-for-buffer (current-buffer)))
-         (prompts (and session (plist-get session :pending-prompts))))
-    (agent-org--queue-session-or-error session prompts)
-    (let* ((candidates (cl-loop for text in prompts for i from 1
-                                collect (cons (format "%d: %s"
-                                                      i
-                                                      (truncate-string-to-width
-                                                       text 60 nil nil "…"))
-                                              i)))
-           (choice (completing-read "Remove queued prompt: "
-                                    candidates nil t))
-           (index (cdr (assoc choice candidates))))
-      (setf (plist-get session :pending-prompts)
-            (seq-remove-at-position prompts (1- index)))
-      (agent-org--queue-refresh session (current-buffer))
-      (message "[agent-org] removed queued prompt %d of %d"
-               index (length prompts)))))
+(defvar agent-org-queue--sent nil
+  "Buffer-local in a queue editor: prompts the agent sent while it was open.
+Newest first (`push' order); `agent-org-queue-apply' reads it reversed.
+Recorded rather than applied, because the editor is a snapshot and the
+session is the record: dropping the entry by POSITION would resend a prompt
+the agent already answered — the drain takes the front of the SESSION's
+list, and the user may have moved that entry anywhere in this buffer.")
+
+(defvar agent-org-queue--added nil
+  "Buffer-local in a queue editor: prompts queued while it was open.
+Newest first, for the same reason as `agent-org-queue--sent'.  These go
+BACK at the end on apply, in arrival order: the editor never showed them,
+so it must not be allowed to overwrite them away.")
+
+(defconst agent-org-queue--headline-re "^\\* [0-9]+[ \t]*$"
+  "One queue entry's headline: a number and nothing else.
+The number is the send order, printed by `agent-org-queue--renumber'.  An
+entry's TEXT always starts on the line below, indented one space
+(`agent-org-queue--indent'), so a prompt that begins with `*' cannot be
+read as a headline here, and a headline this pattern does not match — the
+preamble, or a `* note' a user typed — is not an entry and cannot be sent
+by accident.")
+
+(defun agent-org-queue--entry-positions ()
+  "Buffer positions starting each entry headline in this buffer, top to bottom.
+`match-beginning', never what `re-search-forward' returns: that is the
+match's END, one line into the entry's body."
+  (save-excursion
+    (goto-char (point-min))
+    (let (spots)
+      (while (re-search-forward agent-org-queue--headline-re nil t)
+        (push (match-beginning 0) spots))
+      (nreverse spots))))
+
+(defun agent-org-queue--entry-bounds ()
+  "Start and end of the entry containing point, as a cons.
+The end is the next headline, or `point-max' for the last entry.
+`user-error' in the preamble above the entries: there is no entry there to
+act on, and moving or killing from it would silently take the first one."
+  (let* ((line-start (save-excursion (beginning-of-line) (point)))
+         (spots (agent-org-queue--entry-positions))
+         (here (car (last (seq-take-while (lambda (s) (<= s line-start))
+                                          spots)))))
+    (unless here (user-error "Not on a queue entry"))
+    (cons here (or (seq-find (lambda (s) (> s here)) spots) (point-max)))))
+
+(defun agent-org-queue--indent (text)
+  "TEXT with ONE space in front of every non-blank line, no trailing newline.
+A prompt is the user's own words, and those words can be an Org document:
+a `*' at column 0 is a headline and would cut this buffer into two entries,
+sending half of one prompt as another.  One space is all a headline needs
+to stop being one (info \"(org) Headlines\"), and
+`agent-org-queue--dedent' removes exactly that much, so an entry reads back
+byte for byte — blank lines included, which is why the split keeps the
+empty strings."
+  (mapconcat (lambda (line)
+               (if (string-empty-p line) line (concat " " line)))
+             (split-string text "\n")
+             "\n"))
+
+(defun agent-org-queue--dedent (line)
+  "LINE with the renderer's one leading space removed, if it has one.
+Text typed straight into an entry — a new one, an appended word — never got
+that space, so this is a no-op for it rather than a truncation."
+  (if (string-prefix-p " " line) (substring line 1) line))
+
+(defun agent-org-queue--entry-text (beg end)
+  "The prompt stored between BEG (the headline's end) and END.
+Inverse of `agent-org-queue--indent'.  The whole entry is trimmed at the
+outside, so an entry the user left blank reads as blank and
+`agent-org-queue--parse' can drop it; a prompt's internal blank lines and
+indentation are kept exactly."
+  (string-trim
+   (mapconcat #'agent-org-queue--dedent
+              (split-string (buffer-substring-no-properties beg end) "\n")
+              "\n")))
+
+(defun agent-org-queue--parse ()
+  "The entries in this buffer, as a list of prompts, top to bottom.
+An entry is everything from its headline to the next one, so a multi-line
+prompt stays ONE prompt.  An entry whose text is blank is dropped:
+`agent-org-send' refuses an empty draft, and the queue must not be able to
+smuggle one through by leaving a headline bare."
+  (save-excursion
+    (let* ((spots (agent-org-queue--entry-positions))
+           (ends (append (cdr spots) (list (point-max)))))
+      (delq nil
+            (cl-loop for spot in spots
+                     for end in ends
+                     for text = (agent-org-queue--entry-text
+                                 (save-excursion (goto-char spot)
+                                                 (line-end-position))
+                                 end)
+                     unless (string-blank-p text)
+                     collect text)))))
+
+(defun agent-org-queue--drop-sent (entries sent)
+  "ENTRIES with one occurrence removed for each text in SENT.
+Matched by TEXT, and only the first occurrence of each: two entries with
+the same words are two prompts, and the agent taking one leaves the other
+waiting.  Position would be easier and would be wrong — see
+`agent-org-queue--sent'."
+  (let ((out (copy-sequence entries)))
+    (dolist (text sent out)
+      (let ((at (seq-position out text #'equal)))
+        (when at (setq out (seq-remove-at-position out at)))))))
+
+(defun agent-org-queue--header ()
+  "The editor's preamble: what this buffer is and how to work it.
+No headline and no drawer, because a line matching
+`agent-org-queue--headline-re' WOULD be an entry: the preamble is the only
+text in here that is not a prompt, and it must never look like one."
+  (let* ((chat (and (buffer-live-p agent-org-queue--chat) agent-org-queue--chat))
+         (status (and chat (buffer-local-value 'agent-org-buffer--status chat)))
+         (label (if status (agent-org-buffer--chat-label status) "agent-org")))
+    (format (concat "#+TITLE: Prompt queue — %s\n\n"
+                    "Sent in this order — entry 1 goes out when the current turn ends.\n"
+                    "C-c C-c apply, C-c C-k abandon, C-c C-a new entry, C-c C-d kill entry.\n"
+                    "M-UP / M-DOWN move the entry at point.\n\n")
+            label)))
+
+(defun agent-org-queue--repaint (prompts)
+  "Draw PROMPTS as this buffer's entries, replacing everything.
+An empty PROMPTS still gets one bare entry: this buffer is also the place
+to compose the next prompt, and an entry with no text is dropped on apply,
+so leaving it untouched cannot send anything.
+Point's LINE survives, because applying is a save in the middle of work —
+a cursor thrown to the top of the buffer is a cursor in the wrong entry.
+`buffer-undo-list' is bound only here: undoing across a save would let `C-/'
+put back entries the session's queue has already forgotten, which is a
+buffer that lies."
+  (let ((line (line-number-at-pos))
+        (column (current-column))
+        (buffer-undo-list t)
+        (inhibit-read-only t))
+    (erase-buffer)
+    (insert (agent-org-queue--header))
+    (cl-loop for text in (or prompts (list "")) for i from 1
+             do (insert (format "* %d\n%s\n" i (agent-org-queue--indent text))))
+    (goto-char (point-min))
+    (forward-line (max 0 (1- line)))
+    (move-to-column column)))
+
+(defun agent-org-queue--renumber ()
+  "Rewrite every entry headline to its position in the buffer.
+The printed number is the send order, so after a move, an insert or a kill
+it has to be recomputed — an entry numbered 3 that now sits first would
+otherwise promise a place it no longer has."
+  (save-excursion
+    (let ((i 0))
+      (goto-char (point-min))
+      (while (re-search-forward agent-org-queue--headline-re nil t)
+        (cl-incf i)
+        (let ((head (match-beginning 0)))
+          (delete-region head (line-end-position))
+          (goto-char head)
+          (insert (format "* %d" i)))))))
+
+(defun agent-org-queue--buffer-name (chat)
+  "The editor's buffer name for CHAT: one per session.
+The chat label is the same `<agent>:<project>' the chat buffer wears, so
+`C-x b' shows the pair together instead of two unrelated names."
+  (format "*agent-org queue: %s*"
+          (let ((status (buffer-local-value 'agent-org-buffer--status chat)))
+            (if status (agent-org-buffer--chat-label status) "agent-org"))))
+
+(defun agent-org-queue--editor-for (buffer)
+  "BUFFER's live queue editor, or nil.
+The liveness check IS the cleanup: a killed editor leaves a dead reference
+in the chat buffer, and answering nil for it means the next
+`agent-org-queue-edit' builds a fresh one rather than switching to a
+buffer that no longer exists."
+  (let ((buf (buffer-local-value 'agent-org-queue--editor buffer)))
+    (and (buffer-live-p buf) buf)))
+
+(defun agent-org-queue--note-sent (buffer text)
+  "Tell BUFFER's editor, if one is open, that TEXT has gone out.
+Called from the drain, which runs on a turn boundary and so can land in
+the middle of an edit."
+  (let ((editor (agent-org-queue--editor-for buffer)))
+    (when editor
+      (with-current-buffer editor
+        (push text agent-org-queue--sent)))))
+
+(defun agent-org-queue--note-added (buffer text)
+  "Tell BUFFER's editor, if one is open, that TEXT was queued behind it.
+The mirror of `agent-org-queue--note-sent': the prompt arrived while the
+editor was open, so the editor cannot have shown it, and must not be able
+to remove it by being the last writer."
+  (let ((editor (agent-org-queue--editor-for buffer)))
+    (when editor
+      (with-current-buffer editor
+        (push text agent-org-queue--added)))))
+
+(defun agent-org-queue--check-editor ()
+  "Fail unless this is a queue editor buffer.
+Every command here works on entries, and a stray `C-c C-c' in an ordinary
+Org file must say so rather than reach some session's queue."
+  (unless (derived-mode-p 'agent-org-queue-mode)
+    (user-error "Not an agent-org queue buffer")))
+
+(defun agent-org-queue--chat-or-error ()
+  "The chat buffer this editor belongs to, or a clean failure.
+An error and not a silent nil: applying to a session that has gone would
+report success while changing nothing."
+  (let ((chat (and (buffer-live-p agent-org-queue--chat) agent-org-queue--chat)))
+    (or chat (user-error "That session's chat buffer is gone"))))
+
+(define-derived-mode agent-org-queue-mode org-mode "AO-Queue"
+  "Major mode for editing one session's queued prompts.
+An entry is a prompt: its headline is its place in the send order and the
+indented lines under it are its text.  `C-c C-c' makes the entries the
+session's queue; nothing else in this buffer can reach the agent, so
+editing is safe until then.
+Keys:
+  C-c C-c  Apply — the entries become the session's queue
+  C-c C-k  Abandon — close without writing anything
+  C-c C-a  New empty entry at the end, ready to type
+  C-c C-d  Kill the entry at point (it goes to the kill ring)
+  M-UP     Move the entry at point one place nearer the front
+  M-DOWN   Move it one place further back"
+  :group 'agent-org
+  (setq-local truncate-lines t)
+  ;; The entries are the whole document and there are never many of them,
+  ;; so nothing here should be hidden or scrolled sideways: an entry the
+  ;; user cannot see is an entry they cannot reorder.
+  (setq-local org-startup-folded nil)
+  (setq-local org-startup-truncated nil))
+
+;; `define-derived-mode' gives this mode a sparse keymap and does NOT parent
+;; it on `org-mode-map' (measured: `keymap-parent' answers nil), so the
+;; subtree commands Org's own moves are reached through, and every other Org
+;; binding, come from this line.  The keys are set here rather than in a
+;; `defvar' because `define-derived-mode' defines the variable itself, and a
+;; second `defvar' for it would be ignored — the mode's map object is the one
+;; buffer-local value, so mutating it is the only way in.
+(set-keymap-parent agent-org-queue-mode-map org-mode-map)
+(define-key agent-org-queue-mode-map (kbd "C-c C-c") #'agent-org-queue-apply)
+(define-key agent-org-queue-mode-map (kbd "C-c C-k") #'agent-org-queue-cancel)
+(define-key agent-org-queue-mode-map (kbd "C-c C-a") #'agent-org-queue-insert-entry)
+(define-key agent-org-queue-mode-map (kbd "C-c C-d") #'agent-org-queue-kill-entry)
+(define-key agent-org-queue-mode-map [M-up] #'agent-org-queue-move-up)
+(define-key agent-org-queue-mode-map [M-down] #'agent-org-queue-move-down)
 
 ;;;###autoload
 (defun agent-org-queue-edit ()
-  "Re-read the most recently queued prompt, replacing it with the edit.
-The old text is the minibuffer default, so RET keeps it and typing
-replaces it.  The edited prompt goes back at the end of the queue, the
-place it came from."
+  "Edit the prompts waiting for this session, and put them in new order.
+Entry 1 is the prompt that goes out when the current turn ends.  The list
+is editable as Org text: `M-UP'/`M-DOWN' move an entry, `C-c C-d' kills
+one, `C-c C-a' adds one, `C-c C-c' applies the result and `C-c C-k'
+abandons the whole edit.  Applying writes ONE thing — the session's
+`:pending-prompts' — and the header count, the chat buffer's `:QUEUE:'
+drawer and the transcript file all read that, so they cannot disagree.
+
+A SEPARATE buffer rather than editing the chat's own `:QUEUE:' drawer in
+place, because that drawer is part of the metadata block and the block is
+deleted and reinserted on every usage update: a cursor and a half-typed
+word in it would be destroyed mid-turn.  The drawer is for reading, this is
+for working.
+
+Called twice, this switches to the editor that is already open rather than
+redrawing it: a refresh would silently drop the edits that were never
+applied.  An empty queue is not an error either — the editor opens with one
+blank entry, which is also how to compose a prompt to send later."
   (interactive)
-  (let* ((session (agent-org--session-for-buffer (current-buffer)))
-         (prompts (and session (plist-get session :pending-prompts))))
-    (agent-org--queue-session-or-error session prompts)
-    (let ((text (agent-org--read-queued-prompt (car (last prompts)))))
-      (setf (plist-get session :pending-prompts)
-            (append (butlast prompts) (list text)))
-      (agent-org--queue-refresh session (current-buffer))
-      (message "[agent-org] edited the last queued prompt"))))
+  (let* ((chat (current-buffer))
+         (session (agent-org--session-for-buffer chat)))
+    (unless session
+      (user-error "Not an agent-org chat buffer"))
+    (let ((existing (agent-org-queue--editor-for chat)))
+      (if existing
+          (progn
+            (pop-to-buffer existing)
+            (message "[agent-org] queue editor already open (C-c C-c applies, C-c C-k abandons)"))
+        (agent-org-queue--open chat (plist-get session :pending-prompts))))))
+
+(defun agent-org-queue--open (chat prompts)
+  "Create CHAT's queue editor showing PROMPTS, and display it.
+The mode and the paint run with the buffer current BEFORE it is shown:
+`agent-org-queue-mode' is `org-mode', whose startup wants to set buffer
+locals, and a buffer displayed by `pop-to-buffer' is not necessarily
+current — the same trap that cost a chat its colors (see
+`agent-org-buffer--ensure-font-lock').  Displaying it afterwards is the
+part that needs a window, so the order is mode, paint, show."
+  (let ((buf (generate-new-buffer (agent-org-queue--buffer-name chat))))
+    (with-current-buffer buf
+      (agent-org-queue-mode)
+      (setq-local agent-org-queue--chat chat
+                  agent-org-queue--sent nil
+                  agent-org-queue--added nil)
+      (agent-org-queue--repaint prompts))
+    (with-current-buffer chat
+      (setq-local agent-org-queue--editor buf))
+    (pop-to-buffer buf)
+    (with-current-buffer buf
+      ;; Now that a window shows it: batch Emacs cannot enable font-lock in
+      ;; any buffer, hidden or not, so this is for the live session only and
+      ;; no test can see it happen.
+      (unless font-lock-mode
+        (font-lock-mode 1)))
+    buf))
+
+;;;###autoload
+(defun agent-org-queue-apply ()
+  "Make this buffer's entries the session's queue, everywhere at once.
+Reconciliation, in this order: entries the agent sent while the editor was
+open are removed BY TEXT (`agent-org-queue--drop-sent'), then prompts that
+arrived while the editor was open go back on the end, in arrival order.
+So the editor is never the sole writer of a list it has not seen — and an
+entry the user edited after it went out is the one case that does get sent
+again, because the agent never saw those words.
+The buffer stays open and is repainted from the result, which is what makes
+an apply a save rather than a close: keep editing, apply again."
+  (interactive)
+  (agent-org-queue--check-editor)
+  (let* ((chat (agent-org-queue--chat-or-error))
+         (session (agent-org--session-for-buffer chat)))
+    (unless session
+      (user-error "That session is gone"))
+    (let ((result (append (agent-org-queue--drop-sent
+                           (agent-org-queue--parse)
+                           (reverse agent-org-queue--sent))
+                          (reverse agent-org-queue--added))))
+      (setq agent-org-queue--sent nil
+            agent-org-queue--added nil)
+      (setf (plist-get session :pending-prompts) result)
+      (agent-org--queue-refresh session chat)
+      (agent-org-queue--repaint result)
+      (message "[agent-org] queue applied: %d waiting" (length result)))))
+
+;;;###autoload
+(defun agent-org-queue-cancel ()
+  "Abandon this editor: the session's queue never saw a byte of the edit.
+That is the whole contract, and the reason apply is the only writer.  The
+chat is shown before the kill so no window is left pointing at a buffer
+that just went away."
+  (interactive)
+  (agent-org-queue--check-editor)
+  (let ((chat (agent-org-queue--chat-or-error))
+        (old (current-buffer)))
+    (switch-to-buffer chat)
+    (kill-buffer old)
+    (message "[agent-org] queue edits abandoned")))
+
+(defun agent-org-queue--to-headline ()
+  "Put point on the headline of the entry under point.
+These commands take an ENTRY as their object, so a cursor in the middle of
+a prompt's third line still means \"this prompt\" — and Org's own subtree
+moves insist on starting from a heading."
+  (goto-char (car (agent-org-queue--entry-bounds))))
+
+;;;###autoload
+(defun agent-org-queue-move-up ()
+  "Move the entry at point one place nearer the front of the queue.
+Org's own subtree move, so the text travels with its headline.  At entry 1
+Org refuses and nothing moves — which is the right answer, since nothing is
+already in front of it."
+  (interactive)
+  (agent-org-queue--check-editor)
+  (agent-org-queue--to-headline)
+  (org-move-subtree-up)
+  (agent-org-queue--renumber))
+
+;;;###autoload
+(defun agent-org-queue-move-down ()
+  "Move the entry at point one place further back in the queue."
+  (interactive)
+  (agent-org-queue--check-editor)
+  (agent-org-queue--to-headline)
+  (org-move-subtree-down)
+  (agent-org-queue--renumber))
+
+;;;###autoload
+(defun agent-org-queue-insert-entry ()
+  "Append an empty entry and leave point inside it, ready to type.
+AT THE END, because the queue is FIFO and a prompt typed now waits behind
+the ones already waiting — the same place `agent-org--queue-enqueue' puts
+a send from the type-ahead box, so the editor and the box agree.  `M-UP'
+takes it anywhere else.
+The number on the new headline is provisional: it is what position
+`agent-org-queue--renumber' would print, and the next move or kill
+recomputes every one anyway."
+  (interactive)
+  (agent-org-queue--check-editor)
+  (goto-char (point-max))
+  (unless (bolp)
+    (insert "\n"))
+  (insert (format "* %d\n" (1+ (length (agent-org-queue--entry-positions))))))
+
+;;;###autoload
+(defun agent-org-queue-kill-entry ()
+  "Kill the entry at point, headline and body, onto the kill ring.
+A KILL and not a delete, because this is the queue command with no
+confirmation and dropping a prompt you meant to keep is the mistake worth
+making recoverable: `C-y' puts the whole entry back.
+Killing entry 1 kills the prompt that was FIRST in the list you were shown,
+whatever its number says now — `agent-org-queue--renumber' follows so the
+remaining numbers stay contiguous with the order they describe."
+  (interactive)
+  (agent-org-queue--check-editor)
+  (agent-org-queue--to-headline)
+  (let ((bounds (agent-org-queue--entry-bounds)))
+    (kill-region (car bounds) (cdr bounds)))
+  (agent-org-queue--renumber)
+  (message "[agent-org] entry killed (C-y puts it back)"))
 
 (provide 'agent-org)
 ;;; agent-org.el ends here

@@ -432,7 +432,7 @@ the per-turn :thinking: drawer by `agent-org-buffer-append-thought'.")
 
 (declare-function agent-org-send "agent-org" ())
 (declare-function agent-org-set-session-model "agent-org" (model))
-(declare-function agent-org-queue-view "agent-org" ())
+(declare-function agent-org-queue-edit "agent-org" ())
 (declare-function agent-org-cancel-turn "agent-org" ())
 
 ;;;; Status updates
@@ -544,7 +544,7 @@ and the name says which harness answers it."
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") #'agent-org-send)
     (define-key map (kbd "C-c C-m") #'agent-org-set-session-model)
-    (define-key map (kbd "C-c C-q") #'agent-org-queue-view)
+    (define-key map (kbd "C-c C-q") #'agent-org-queue-edit)
     (define-key map (kbd "C-c C-k") #'agent-org-cancel-turn)
     ;; Org structure commands bypass `read-only' text properties and would
     ;; corrupt heading boundaries; block them all.
@@ -600,7 +600,7 @@ Keys:
   C-c C-c  Send the typed prompt (queues it while the agent responds)
   C-c C-k  Cancel the running turn
   C-c C-m  Switch the session's model
-  C-c C-q  List the prompts queued for this session"
+  C-c C-q  Edit the prompts queued for this session"
   :init-value nil
   :lighter nil
   :keymap agent-org-mode-map
@@ -642,17 +642,43 @@ a keyword the file actually knows.  `pending' keeps TODO."
     ("failed" "FAILED")
     (_ "TODO")))
 
-(defun agent-org-buffer--metadata-drawer (name entries)
+(defun agent-org-buffer--metadata-drawer (name entries cap)
   "Render drawer NAME with ENTRIES (already-formatted strings).
-Nil when no entries; capped at 50 lines with a +N-more tail."
+Nil when no entries.  CAP is how many lines are shown before a `… (+N
+more)' tail; nil shows them all, and every caller says which it means.
+
+The reference drawers are capped, because the drawer is a preview of
+something the agent can be asked for again — an omitted `/command' costs a
+look, not a thing.  QUEUE is NOT capped: its drawer is the record, the one
+copy of a queued prompt that survives a crash, and truncating it would
+both hide a prompt the user paid for and leave its `… (+N more)' marker to
+be read back as a phantom prompt by
+`agent-org-buffer-transcript-queue'."
   (when entries
-    (let ((shown (seq-take entries 50)))
+    (let ((shown (if cap (seq-take entries cap) entries)))
       (concat (format ":%s:\n" name)
               (mapconcat #'identity shown "\n")
               "\n"
-              (when (> (length entries) 50)
-                (format "… (+%d more)\n" (- (length entries) 50)))
+              (when (and cap (> (length entries) cap))
+                (format "… (+%d more)\n" (- (length entries) cap)))
               ":END:\n"))))
+
+(defconst agent-org-buffer--metadata-drawer-cap 50
+  "Lines shown in a reference drawer before the `… (+N more)' tail.
+A number an AI conversation can outrun easily — an agent with forty slash
+commands is ordinary — which is why the cap is written down once instead
+of living in four call sites, and why QUEUE does not use it.")
+
+(defconst agent-org-buffer--metadata-open-drawers '("QUEUE")
+  "Metadata drawers created UNFOLDED; every other kind arrives folded.
+The split is by what a drawer is FOR.  COMMANDS, MODES and CONFIG are
+reference: the agent can be asked again, so folded costs a TAB.  QUEUE is
+the user's own work waiting to go out, and it changes in the middle of a
+turn — folded, it would be invisible exactly when it matters (the user's
+order: \"Show the prompt queue within the buffer\").
+This is a DEFAULT for creation, not an instruction for every repaint: a
+drawer the user folded by hand stays folded
+(`agent-org-buffer-refresh-metadata').")
 
 (defun agent-org-buffer--queue-encode (text)
   "Escape TEXT onto ONE line of the `:QUEUE:' drawer.
@@ -783,12 +809,16 @@ property Org's id machinery would choke on, and a lie besides."
               (format "#+TITLE: %s\n"
                       (or (plist-get status :title) provider))
               (concat agent-org-buffer--todo-setup "\n"))
-             (agent-org-buffer--metadata-drawer "COMMANDS" commands)
-             (agent-org-buffer--metadata-drawer "MODES" modes)
-             (agent-org-buffer--metadata-drawer "CONFIG" config)
+             (agent-org-buffer--metadata-drawer "COMMANDS" commands
+                                                agent-org-buffer--metadata-drawer-cap)
+             (agent-org-buffer--metadata-drawer "MODES" modes
+                                                agent-org-buffer--metadata-drawer-cap)
+             (agent-org-buffer--metadata-drawer "CONFIG" config
+                                                agent-org-buffer--metadata-drawer-cap)
              ;; last: the one list that changes mid-turn, so the
-             ;; reference drawers above never shift position
-             (agent-org-buffer--metadata-drawer "QUEUE" queued)))
+             ;; reference drawers above never shift position.  No cap
+             ;; (`agent-org-buffer--metadata-drawer'): this is the record.
+             (agent-org-buffer--metadata-drawer "QUEUE" queued nil)))
       "\n")
      ;; blank line separating the block from the first conversation
      ;; heading (refresh deletes up to that heading)
@@ -796,11 +826,11 @@ property Org's id machinery would choke on, and a lie besides."
 
 (defconst agent-org-buffer--metadata-drawers
   '("PROPERTIES" "COMMANDS" "MODES" "CONFIG" "QUEUE")
-  "Names of the folded-by-default drawers in the metadata block.
-`agent-org-buffer-refresh-metadata' reads this to remember which drawers
-the user had opened, and a name missing here is a drawer that reappears
-unfolded on every rebuild — QUEUE included for that reason, not because
-its prompts are reference material.")
+  "Names of the drawers in the metadata block.
+`agent-org-buffer-refresh-metadata' reads this to remember which drawers the
+user had opened, and a name missing here is a drawer that reappears unfolded
+on every rebuild.  How each one arrives the FIRST time is a different
+question — `agent-org-buffer--metadata-open-drawers'.")
 
 (defvar-local agent-org-buffer--metadata-cache nil
   "Last metadata block written at the top of this buffer, or nil.
@@ -815,7 +845,9 @@ and each rebuild would re-parse the whole buffer
 Delete-then-insert keeps this idempotent.  The block spans point-min
 up to (but not including) the first conversation heading, so chat
 text is never touched.  Drawers the user had left folded are re-folded
-after the rebuild; ones they opened stay open.
+after the rebuild; ones they opened stay open, and a drawer that does
+not exist yet arrives with its own default
+(`agent-org-buffer--metadata-open-drawers').
 
 Skips entirely when the rendered block is byte-identical to
 `agent-org-buffer--metadata-cache': no deletion, no insertion, and no
@@ -834,8 +866,11 @@ Skips entirely when the rendered block is byte-identical to
                               (if (re-search-forward (format "^:%s:" name) nil t)
                                   (progn (forward-line 1)
                                          (invisible-p (point)))
-                                ;; drawer not present yet: fold it when created
-                                t))))
+                                ;; Not there yet, so this rebuild creates it:
+                                ;; its kind decides (a drawer that arrives
+                                ;; OPEN needs no fold call at all).
+                                (not (member name
+                                             agent-org-buffer--metadata-open-drawers))))))
                     agent-org-buffer--metadata-drawers)))
               (goto-char (point-min))
               (if (re-search-forward "^\\* " nil t)
@@ -1813,11 +1848,18 @@ must not stop a session loading."
                 ;; END, so the region has to stop at `match-beginning'.
                 (let ((beg (point)))
                   (when (re-search-forward "^:END:[ \t]*$" nil t)
+                    ;; Only `- ' lines are entries.  A drawer body with
+                    ;; anything else in it — a `… (+3 more)' tail left by an
+                    ;; older build, a line a person typed while looking at
+                    ;; the file — is not a prompt, and decoding it would
+                    ;; enqueue a phantom on resume.
                     (mapcar #'agent-org-buffer--queue-decode
-                            (split-string
-                             (buffer-substring-no-properties
-                              beg (match-beginning 0))
-                             "\n" t))))))
+                            (seq-filter (lambda (line)
+                                          (string-prefix-p "- " line))
+                                        (split-string
+                                         (buffer-substring-no-properties
+                                          beg (match-beginning 0))
+                                         "\n" t)))))))
           (file-error nil))))))
 (defun agent-org-buffer--write-transcript (session-id text)
   "Replace this buffer's transcript file with TEXT.

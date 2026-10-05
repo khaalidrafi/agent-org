@@ -1654,51 +1654,275 @@ reopen."
         (should (eq 'error (plist-get agent-org-buffer--status :state)))))
     (kill-buffer buf)))
 
-(ert-deftest test-agent-org-queue-remove-drops-chosen ()
-  "`agent-org-queue-remove' drops the entry the user picks by number."
-  (let* ((pair (ao--make-test-session "q-rem"))
-         (buf (car pair))
-         (session (cdr pair)))
-    (setf (plist-get session :pending-prompts) (list "a" "b"))
-    (with-current-buffer buf
-      (cl-letf (((symbol-function 'completing-read)
-                 (lambda (&rest _) "2: b")))
-        (agent-org-queue-remove))
-      (should (equal '("a") (plist-get session :pending-prompts)))
-      (should-error (progn
-                      (setf (plist-get session :pending-prompts) nil)
-                      (agent-org-queue-remove))
-                    :type 'user-error))
-    (kill-buffer buf)))
+;;;; Queue editor (one buffer that shows, edits and re-orders the waiting list)
 
-(ert-deftest test-agent-org-queue-edit-replaces-last ()
-  "`agent-org-queue-edit' re-reads the last queued prompt with its text
-as the default, keeping queue order."
-  (let* ((pair (ao--make-test-session "q-edit"))
-         (buf (car pair))
+(defun ao--queue-editor (chat)
+  "The queue editor buffer linked to chat buffer CHAT, or nil."
+  (buffer-local-value 'agent-org-queue--editor chat))
+
+(defun ao--queue-open (prompts)
+  "A test session whose queue is PROMPTS with its editor open.
+Returns (CHAT . EDITOR).  The refresh is the real one, so the chat buffer's
+`:QUEUE:' drawer is up to date before the editor is even asked for."
+  (let* ((pair (ao--make-test-session "queue"))
+         (chat (car pair))
          (session (cdr pair)))
-    (setf (plist-get session :pending-prompts) (list "a" "b"))
-    (with-current-buffer buf
-      (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "b fixed")))
-        (agent-org-queue-edit))
-      (should (equal '("a" "b fixed")
+    (setf (plist-get session :pending-prompts) prompts)
+    (agent-org--queue-refresh session chat)
+    (with-current-buffer chat
+      (agent-org-queue-edit))
+    (cons chat (ao--queue-editor chat))))
+
+(defun ao--queue-headings ()
+  "The editor's entry numbers, top to bottom, as `\"* 1\"' strings."
+  (save-excursion
+    (goto-char (point-min))
+    (let (out)
+      (while (re-search-forward "^\\* [0-9]+$" nil t)
+        (push (match-string 0) out))
+      (nreverse out))))
+
+(ert-deftest test-agent-org-queue-editor-round-trips-every-entry ()
+  "Render then parse: each waiting prompt comes back byte-identical.
+The renderer puts ONE space in front of every body line, so a prompt whose
+own line begins with `*' cannot become a headline of the editor and be
+read as a boundary; the parser removes exactly that one space again.  An
+entry is everything from its headline to the next one, so a prompt keeps
+its blank lines."
+  (let* ((prompts (list "plain one"
+                        "two\nlines\n  indented\n* star at column 0"
+                        ":END: here\n\nand a blank line above"))
+         (opened (ao--queue-open prompts)))
+    (with-current-buffer (cdr opened)
+      (should (equal prompts (agent-org-queue--parse)))
+      ;; `derived-mode-p' and not a `agent-org-queue-mode-p' predicate:
+      ;; `define-derived-mode' makes no such function, only
+      ;; `define-minor-mode' does (measured here — the call was void).
+      (should (derived-mode-p 'agent-org-queue-mode)))
+    (kill-buffer (car opened))))
+
+(ert-deftest test-agent-org-queue-editor-numbers-and-moves-entries ()
+  "The numbers are the send order, and M-DOWN moves an entry with its number.
+Re-ordering is the whole point of the feature, so the gesture is Org's own
+subtree move and the renumber pass is what keeps the printed number honest
+after it."
+  (let ((opened (ao--queue-open '("one" "two" "three"))))
+    (with-current-buffer (cdr opened)
+      (should (equal '("* 1" "* 2" "* 3") (ao--queue-headings)))
+      (goto-char (point-min))
+      (search-forward "* 1")
+      (agent-org-queue-move-down)
+      (should (equal '("two" "one" "three") (agent-org-queue--parse)))
+      (should (equal '("* 1" "* 2" "* 3") (ao--queue-headings)))
+      (goto-char (point-min))
+      (search-forward "* 3")
+      (agent-org-queue-move-up)
+      (should (equal '("two" "three" "one") (agent-org-queue--parse))))
+    (kill-buffer (car opened))))
+
+(ert-deftest test-agent-org-queue-editor-apply-writes-session-and-buffer ()
+  "C-c C-c makes the edited list the session's queue, everywhere at once.
+The session plist is the record, so the header count, the chat buffer's
+`:QUEUE:' drawer and the transcript file all follow from it."
+  (let* ((opened (ao--queue-open '("one" "two")))
+         (chat (car opened))
+         (editor (cdr opened))
+         (session (buffer-local-value 'agent-org-buffer--session chat)))
+    (with-current-buffer editor
+      (goto-char (point-min))
+      (search-forward "* 1")
+      (forward-line 1)
+      (end-of-line)                        ; end of the entry's first line
+      (ao--type " better")
+      (agent-org-queue-apply)
+      (should (equal '("one better" "two")
                      (plist-get session :pending-prompts))))
-    (kill-buffer buf)))
+    (with-current-buffer chat
+      (should (equal '("one better" "two")
+                     (plist-get agent-org-buffer--status :queued)))
+      (should (string-match-p "^- one better$" (buffer-string))))
+    (kill-buffer chat)))
 
-(ert-deftest test-agent-org-queue-view-lists-pending ()
-  "`agent-org-queue-view' shows every queued prompt, oldest first."
-  (let* ((pair (ao--make-test-session "q-view"))
+(ert-deftest test-agent-org-queue-editor-adds-and-kills-entries ()
+  "C-c C-a appends a blank entry to type into; C-c C-d drops the one at point.
+Killing an entry is a KILL, so a mistaken C-c C-d is a `M-y' away."
+  (let* ((opened (ao--queue-open '("one" "two")))
+         (editor (cdr opened))
+         (chat (car opened)))
+    (with-current-buffer editor
+      (agent-org-queue-insert-entry)
+      (ao--type "three typed here")
+      (should (equal '("one" "two" "three typed here")
+                     (agent-org-queue--parse)))
+      (goto-char (point-min))
+      (search-forward "* 1")
+      (agent-org-queue-kill-entry)
+      (should (equal '("two" "three typed here") (agent-org-queue--parse)))
+      (should (string-match-p "one" (car kill-ring))))
+    (kill-buffer chat)))
+
+(ert-deftest test-agent-org-queue-editor-drops-blank-entries ()
+  "An entry with no text is not a prompt: it is dropped, never sent empty.
+`agent-org-send' refuses an empty draft, so the queue must not be able to
+smuggle one through by leaving a headline bare."
+  (let* ((opened (ao--queue-open '("one")))
+         (editor (cdr opened))
+         (chat (car opened))
+         (session (buffer-local-value 'agent-org-buffer--session chat)))
+    (with-current-buffer editor
+      (agent-org-queue-insert-entry)
+      (forward-line 1)
+      (ao--type "   \n  ")
+      (agent-org-queue-apply))
+    (should (equal '("one") (plist-get session :pending-prompts)))
+    (kill-buffer chat)))
+
+(ert-deftest test-agent-org-queue-editor-cancel-leaves-the-queue-alone ()
+  "C-c C-k abandons the edit: the session queue never saw it."
+  (let* ((opened (ao--queue-open '("one" "two")))
+         (editor (cdr opened))
+         (chat (car opened))
+         (session (buffer-local-value 'agent-org-buffer--session chat)))
+    (with-current-buffer editor
+      (goto-char (point-min))
+      (search-forward "* 1")
+      (agent-org-queue-kill-entry)
+      (agent-org-queue-cancel))
+    (should (equal '("one" "two") (plist-get session :pending-prompts)))
+    (should-not (agent-org-queue--editor-for chat))
+    (kill-buffer chat)))
+
+(ert-deftest test-agent-org-queue-editor-drops-what-the-agent-already-sent ()
+  "A turn ending while the editor is open must not resurrect its prompt.
+The drain takes the FRONT of the session queue; the editor may have been
+re-ordered in the meantime, so what drops out at apply is matched by TEXT,
+not by position.  An entry the user edited after it went out is the one
+case that does go again — the agent never saw those words."
+  (let* ((opened (ao--queue-open '("one" "two" "three")))
+         (chat (car opened))
+         (editor (cdr opened))
+         (session (buffer-local-value 'agent-org-buffer--session chat))
+         (sent nil))
+    (with-current-buffer editor
+      (goto-char (point-min))
+      (search-forward "* 2")
+      (agent-org-queue-move-up)                 ; order now two, one, three
+      (cl-letf (((symbol-function 'acp-send-request)
+                 (lambda (&rest kw) (push kw sent)))
+                ((symbol-function 'acp-make-session-prompt-request)
+                 (lambda (&rest a) (plist-get a :prompt))))
+        (agent-org--drain-queue session chat))  ; the agent takes "one"
+      (should (equal '("two" "three") (plist-get session :pending-prompts)))
+      (agent-org-queue-apply)
+      (should (equal '("two" "three") (plist-get session :pending-prompts)))
+      (should (equal '("two" "three") (agent-org-queue--parse))))
+    (kill-buffer chat)))
+
+(ert-deftest test-agent-org-queue-editor-keeps-prompts-queued-while-open ()
+  "A prompt queued from the type-ahead box during an edit survives apply.
+The editor never showed it, so the editor alone must not be allowed to
+overwrite the session's queue: what arrived while you were editing goes
+back at the end, in the order it arrived."
+  (let* ((opened (ao--queue-open '("one" "two")))
+         (chat (car opened))
+         (editor (cdr opened))
+         (session (buffer-local-value 'agent-org-buffer--session chat)))
+    (agent-org--queue-enqueue session chat "arrived while editing")
+    (with-current-buffer editor
+      (agent-org-queue-apply)
+      (should (equal '("one" "two" "arrived while editing")
+                     (plist-get session :pending-prompts))))
+    (kill-buffer chat)))
+
+(ert-deftest test-agent-org-queue-editor-reopens-with-its-edits ()
+  "Opening the editor twice does not repaint over unsaved work.
+The second call switches to the buffer that is already there, because a
+refresh would silently drop the edits that have not been applied yet."
+  (let* ((opened (ao--queue-open '("one")))
+         (chat (car opened))
+         (editor (cdr opened)))
+    (with-current-buffer editor
+      (goto-char (point-min))
+      (search-forward "* 1")
+      (forward-line 1)
+      (end-of-line)                        ; append, do not prepend
+      (ao--type " typed"))
+    (with-current-buffer chat
+      (agent-org-queue-edit)
+      (should (eq editor (ao--queue-editor chat))))
+    (with-current-buffer editor
+      (should (equal '("one typed") (agent-org-queue--parse))))
+    (kill-buffer chat)))
+
+(ert-deftest test-agent-org-queue-editor-opens-on-an-empty-queue ()
+  "Nothing waiting is not an error: the editor offers one blank entry.
+It is the same buffer for composing the next prompt, and applying an empty
+list is what it already is."
+  (let* ((pair (ao--make-test-session "q-empty"))
+         (chat (car pair))
+         (session (cdr pair)))
+    (with-current-buffer chat
+      (agent-org-queue-edit))
+    (let ((editor (ao--queue-editor chat)))
+      (should editor)
+      (with-current-buffer editor
+        (should-not (agent-org-queue--parse))
+        (agent-org-queue-apply)))
+    (should-not (plist-get session :pending-prompts))
+    (kill-buffer chat)))
+
+(ert-deftest test-agent-org-queue-editor-refuses-a-non-chat-buffer ()
+  "`agent-org-queue-edit' in a buffer with no session says so."
+  (with-temp-buffer
+    (should-error (agent-org-queue-edit) :type 'user-error)))
+
+(ert-deftest test-agent-org-queue-editor-key-is-bound-to-the-editor ()
+  "C-c C-q opens the EDITOR: one pager, one name for the queue.
+`agent-org-queue-view' and `agent-org-queue-remove' are gone -- a read-only
+listing and a number-picker that could only delete are both the same queue
+the editor shows and edits."
+  (should (eq #'agent-org-queue-edit
+              (lookup-key agent-org-mode-map (kbd "C-c C-q"))))
+  (should-not (fboundp 'agent-org-queue-view))
+  (should-not (fboundp 'agent-org-queue-remove)))
+
+(ert-deftest test-agent-org-queue-drawer-arrives-open-in-the-chat-buffer ()
+  "Waiting prompts are SHOWN, not folded: the `:QUEUE:' drawer is created
+OPEN, like the tool board, because a queue that appears mid-turn is news.
+A queue that empties takes its drawer away."
+  (let* ((pair (ao--make-test-session "q-fold"))
          (buf (car pair))
          (session (cdr pair)))
-    (setf (plist-get session :pending-prompts) (list "first one" "second"))
+    (setf (plist-get session :pending-prompts) (list "waiting one"))
+    (agent-org--queue-refresh session buf)
     (with-current-buffer buf
-      (agent-org-queue-view))
-    (let ((shown (get-buffer " *agent-org queue*")))
-      (should shown)
-      (with-current-buffer shown
-        (should (string-match-p "2 prompt" (buffer-string)))
-        (should (apply #'ao--ordered (buffer-string)
-                       (list "1. first one" "2. second")))))
+      (goto-char (point-min))
+      (should (re-search-forward "^:QUEUE:" nil t))
+      (forward-line 1)
+      (should-not (invisible-p (point)))
+      (should (looking-at "- waiting one")))
+    (setf (plist-get session :pending-prompts) nil)
+    (agent-org--queue-refresh session buf)
+    (with-current-buffer buf
+      (should-not (save-excursion
+                    (goto-char (point-min))
+                    (re-search-forward "^:QUEUE:" nil t))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-queue-drawer-shows-every-waiting-prompt ()
+  "No cap on the queue: 55 waiting prompts are 55 lines in the buffer.
+The reference drawers may end in `… (+N more)' and nothing is lost, because
+the agent can always be asked again; the queue IS the record the transcript
+mirrors, so a truncation there destroys a prompt the user paid for."
+  (let* ((pair (ao--make-test-session "q-cap"))
+         (buf (car pair))
+         (session (cdr pair))
+         (prompts (cl-loop for i from 1 to 55 collect (format "prompt %d" i))))
+    (setf (plist-get session :pending-prompts) prompts)
+    (agent-org--queue-refresh session buf)
+    (with-current-buffer buf
+      (should (= 55 (ao--count-substrings "\n- prompt ")))
+      (should-not (string-match-p "more)" (buffer-string))))
     (kill-buffer buf)))
 
 ;;;; Interrupt (cancel a running turn)
@@ -5527,21 +5751,79 @@ exact inverse of encode, including on the pathological cases."
   (should (equal "- two\\nlines"
                  (agent-org-buffer--queue-encode "two\nlines"))))
 
-(ert-deftest test-agent-org-queue-drawer-is-folded-like-the-others ()
-  "The waiting prompts are on disk, but not in the reader's way.
-COMMANDS/MODES/CONFIG are folded because they are reference, not
-conversation; a queue is the same kind of bookkeeping, and an unfolded
-one would push the chat down every time a prompt waits."
+(ert-deftest test-agent-org-queue-drawer-arrives-open-and-stays-when-folded ()
+  "The waiting prompts are shown: a `:QUEUE:' drawer is created OPEN.
+It used to be folded like COMMANDS/MODES/CONFIG, on the reasoning that a
+queue is bookkeeping; the user's order -- \"Show the prompt queue within the
+buffer\" -- is the better call, because a queue that appears mid-turn is
+news and a folded one is invisible exactly when it matters.  Reference
+material still arrives folded, and a board the user folded by hand is left
+folded: the default governs creation, not the user."
   (ao--capture-wire
     (let ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-fold")))
       (with-current-buffer buf
         (agent-org-buffer-set-status buf :queued (list "waiting"))
+        (agent-org-buffer-refresh-metadata buf)
+        (should-not (invisible-p
+                     (save-excursion (goto-char (point-min))
+                                     (re-search-forward "^- waiting$")
+                                     (point)))))
+      ;; fold it by hand, then change the queue: the user's fold survives
+      (with-current-buffer buf
+        (save-excursion
+          (goto-char (point-min))
+          (re-search-forward "^:QUEUE:")
+          (org-fold-hide-drawer-toggle))
+        (agent-org-buffer-set-status buf :queued (list "waiting" "and more"))
         (agent-org-buffer-refresh-metadata buf)
         (should (invisible-p
                  (save-excursion (goto-char (point-min))
                                  (re-search-forward "^- waiting$")
                                  (point)))))
       (kill-buffer buf))))
+
+(ert-deftest test-agent-org-queue-drawers-do-not-share-their-fold-default ()
+  "COMMANDS stays folded while QUEUE opens: one default per kind.
+The two are different things -- one is reference the agent can be asked for
+again, the other is the user's own work waiting to go out."
+  (ao--capture-wire
+    (let ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-mixed")))
+      (with-current-buffer buf
+        (agent-org-buffer-set-status
+         buf :queued (list "waiting")
+         :commands (list `((name . "help") (description . "show help"))))
+        (agent-org-buffer-refresh-metadata buf)
+        (should (invisible-p
+                 (save-excursion (goto-char (point-min))
+                                 (re-search-forward "^/help")
+                                 (point))))
+        (should-not (invisible-p
+                     (save-excursion (goto-char (point-min))
+                                     (re-search-forward "^- waiting$")
+                                     (point)))))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-transcript-queue-reads-its-own-lines-only ()
+  "The reader takes `:QUEUE:' lines, and nothing that is not an entry.
+A drawer line that does not start with \"- \" cannot be a prompt: skipping
+it means a hand-edited transcript, or a stray marker, restores the prompts
+rather than enqueueing the marker as one."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in temp-dir
+      (let ((buf (agent-org-buffer-create "qr")))
+        (with-current-buffer buf
+          (agent-org-buffer-set-status buf :session-id "sid-qr")
+          (let ((file (agent-org-buffer--transcript-file "sid-qr")))
+            (make-directory (file-name-directory file) t)
+            (with-temp-buffer
+              ;; `- keep\ntoo' on disk: what `agent-org-buffer--queue-encode'
+              ;; writes for a prompt with a real newline in it — ONE
+              ;; backslash, not the doubled pair a literal backslash gets.
+              (insert ":QUEUE:\n- keep me\n- keep\\ntoo\n… (+3 more)\n:END:\n")
+              (write-region nil nil file nil 'silent))
+            (should (equal '("keep me" "keep\ntoo")
+                           (agent-org-buffer-transcript-queue "sid-qr")))))
+        (kill-buffer buf)))))
 
 (ert-deftest test-agent-org-queued-prompt-reaches-the-file-mid-turn ()
   "Queuing writes the transcript: a quit must not swallow the prompt.
