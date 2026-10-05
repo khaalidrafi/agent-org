@@ -174,6 +174,28 @@ every step, or to an hour to prove the throttle."
   :type 'number
   :group 'agent-org)
 
+(defcustom agent-org-log-traffic t
+  "Keep the raw JSON of every ACP message each chat sends and receives.
+On, `agent-org-show-traffic' opens a real log: one line per message with
+the parsed object and its exact JSON stored as text properties, so RET
+pretty-prints the response the agent actually sent — the thing no header
+line, drawer or transcript can show, because all three render a
+*projection* of it.
+
+The switch belongs to acp, not to us: `acp-logging-enabled' is a global
+variable and is consulted when a message arrives, so enabling this from
+a chat that is already open works for its next message, and any other
+acp client in the session logs too.  Turn it off and the traffic buffers
+stop growing; what is already recorded stays until the buffer is killed.
+
+Default t is a bias for a package whose users are watching an agent
+answer: the per-message cost is one line appended to an off-screen
+buffer (the objects, not the text, are what it retains), which buys the
+only record that can settle a \"did the agent really say that?\"
+question."
+  :type 'boolean
+  :group 'agent-org)
+
 ;;;; Session registry
 
 (defvar agent-org--sessions nil
@@ -648,6 +670,10 @@ been sent yet, so the caller picks `session/new' or `session/load'."
   (let ((command (plist-get spec :command)))
     (unless (executable-find (car command))
       (user-error "Command not found: %s" (car command)))
+    ;; acp consults this when a message arrives, not when the client is
+    ;; made, so setting it here captures this chat from its first request
+    (when agent-org-log-traffic
+      (setq acp-logging-enabled t))
     ;; capture the directory now: the resumed session must be loaded
     ;; against the same cwd it was created in
     (let* ((cwd default-directory)
@@ -978,6 +1004,48 @@ the registry rather than from a mode-name scan of the buffer list."
       (unless buffer
         (user-error "Nothing selected"))
       (switch-to-buffer buffer))))
+
+(defun agent-org--traffic-buffer (session)
+  "Return the buffer holding SESSION's raw wire JSON, creating it when missing.
+nil when SESSION never got a client — a session whose spawn failed is in
+the registry no longer than its error message, but a chat buffer outlives
+`agent-org--kill-session', and a killed process takes its client with it."
+  (when-let* ((client (plist-get session :client)))
+    (acp-traffic-buffer :client client)))
+
+;;;###autoload
+(defun agent-org-show-traffic (&optional buffer)
+  "Show the raw JSON BUFFER's chat exchanged with its agent.
+BUFFER defaults to the current buffer.  One line per message — time,
+direction, kind, method — and RET on a line pretty-prints that message's
+object, which is the only way to read what the agent actually sent rather
+than what the chat shows: the transcript, the header line and the drawers
+are all renderings of a chosen subset, and a discrepancy between what an
+agent answered and what the chat recorded is settled only by the bytes on
+the wire.  `n' and `p' step between messages; `C-x C-s' saves the lot as
+ Lisp data for a fixture.
+
+The log is acp's own `acp-traffic-mode' buffer for this chat's client, so
+it holds every request we sent and every response and notification that
+came back, including the ones no part of agent-org consumes."
+  (interactive)
+  (let* ((buffer (or buffer (current-buffer)))
+         (session (agent-org--session-for-buffer buffer)))
+    (unless session
+      (user-error "%s is not an agent-org chat" (buffer-name buffer)))
+    (let ((traffic (agent-org--traffic-buffer session)))
+      (unless traffic
+        (user-error "%s has no running agent to log" (buffer-name buffer)))
+      (when (= 0 (buffer-size traffic))
+        (user-error "No traffic recorded for %s yet — %s"
+                    (buffer-name buffer)
+                    (if (or acp-logging-enabled agent-org-log-traffic)
+                        "no message has arrived since it opened"
+                      "set agent-org-log-traffic to t, then restart it")))
+      (pop-to-buffer traffic)
+      ;; newest first: the message that prompted the question is the last
+      ;; one written, and point-max sits on the empty line after it
+      (forward-line -1))))
 
 (cl-defun agent-org--list-sessions (session
                                     &key cursor seen pages

@@ -14,14 +14,33 @@
 ;; release cannot tell one `nil' from another.
 (defvar acp-mock--client-id 0
   "Counter behind the fake clients `acp-make-client' hands out.")
-(defun acp-make-client (&rest _args)
+(defvar acp-mock--instance-count 0
+  "Counter mirroring `acp-instance-count', which names traffic buffers.")
+(cl-defun acp-make-client (&key command command-params &allow-other-keys)
   ;; The real SHAPE, not just the real keys.  `acp-make-client' returns an
   ;; ALIST of dotted keyword pairs (`(list (cons :process nil) ...)',
   ;; acp.el:90), which `map-elt' reads and `plist-get' does not.  A flat
   ;; plist here would let a `plist-get' reader pass the whole suite and
   ;; answer nil on a live session.
+  ;;
+  ;; `:command' and `:instance-count' are here for the same reason: acp
+  ;; names a client's traffic buffer from those two (acp.el
+  ;; `acp--traffic-buffer-name'), so a mock without them would give every
+  ;; fake chat ONE log and let a test that should distinguish two chats
+  ;; pass anyway.
   (list (cons :mock-client (cl-incf acp-mock--client-id))
-        (cons :process nil)))
+        (cons :process nil)
+        (cons :command command)
+        (cons :command-params command-params)
+        (cons :instance-count (cl-incf acp-mock--instance-count))))
+(defvar acp-logging-enabled nil
+  "Mirrors acp's global switch, consulted when a message arrives.")
+(cl-defun acp-traffic-buffer (&key client)
+  "Return CLIENT's traffic buffer, named the way acp names it."
+  (let ((name (format "*acp-(%s)-%s traffic*"
+                      (map-elt client :command)
+                      (map-elt client :instance-count))))
+    (or (get-buffer name) (get-buffer-create name))))
 (defvar acp-mock-shutdown-clients nil
   "Clients `acp-shutdown' was called with, most recent first.")
 (cl-defun acp-shutdown (&key client)

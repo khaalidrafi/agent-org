@@ -4710,6 +4710,71 @@ releases the agent."
                                     (ao--transcript-text temp-dir "sid-kill")))
             (should-not (agent-org--session-for-buffer buf))))))))
 
+;;;; Wire traffic
+
+(defun ao--client-for (session command)
+  "Give SESSION a mock client spawned for COMMAND, as `agent-org--open-session' would.
+`ao--make-test-session' leaves `:client' nil — most tests never send
+anything — so a test about the client's own entourage (its traffic buffer)
+installs one after the fact."
+  (let ((client (acp-make-client :command command :command-params '("acp"))))
+    (setf (plist-get session :client) client)
+    client))
+
+(ert-deftest test-agent-org-show-traffic-demands-a-chat ()
+  "M-x agent-org-show-traffic in a buffer with no agent is a refusal.
+The alternative — an empty log buffer — reads as \"the agent sent
+nothing\", which is a claim about the wire and would be false: no wire
+belongs to that buffer at all."
+  (with-temp-buffer
+    (should-error (agent-org-show-traffic) :type 'user-error)))
+
+(ert-deftest test-agent-org-show-traffic-needs-a-live-client ()
+  "A chat whose agent is gone has no log to open.
+`:client' is nil for a session that never finished spawning and for one
+released by `agent-org--kill-session', and the buffer outlives both — the
+command must say so rather than conjure a buffer for a client that no
+longer exists."
+  (let* ((pair (ao--make-test-session "noclient"))
+         (buf (car pair)))
+    (should-not (agent-org--traffic-buffer (cdr pair)))
+    (should-error (agent-org-show-traffic buf) :type 'user-error)
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-show-traffic-names-the-switch-when-empty ()
+  "An empty log says why it is empty, because the cause is a setting.
+acp consults `acp-logging-enabled' per message, so a chat opened before
+logging was on keeps answering normally while its log stays at zero
+bytes — the reader must be told to turn `agent-org-log-traffic' on and
+restart, not left to conclude the agent is silent."
+  (let ((acp-logging-enabled nil)
+        (agent-org-log-traffic nil))
+    (let* ((pair (ao--make-test-session "quiet"))
+           (buf (car pair)))
+      (ao--client-for (cdr pair) "quiet-agent")
+      (let ((msg (condition-case err
+                     (progn (agent-org-show-traffic buf) nil)
+                   (user-error (error-message-string err)))))
+        (should (string-match-p "agent-org-log-traffic" msg)))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-show-traffic-opens-this-chats-log ()
+  "The command lands in the traffic buffer belonging to THIS chat.
+One buffer per client, named for its command and instance count; a turn
+logged on another chat's client must not appear here, or the reader is
+checking a wire they did not ask about."
+  (let ((acp-logging-enabled t))
+    (let* ((pair (ao--make-test-session "logged"))
+           (buf (car pair))
+           (client (ao--client-for (cdr pair) "logged-agent")))
+      (with-current-buffer (acp-traffic-buffer :client client)
+        (let ((inhibit-read-only t))
+          (insert "12:00:00.000 → request      session/prompt\n")))
+      (agent-org-show-traffic buf)
+      (should (eq (current-buffer) (acp-traffic-buffer :client client)))
+      (should (search-forward "session/prompt" nil t))
+      (kill-buffer buf))))
+
 (provide 'test-agent-org)
 ;;; test-agent-org.el ends here
 
