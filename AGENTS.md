@@ -1,688 +1,263 @@
 # AGENTS.md — agent-org contributor / agent guide
 
+CONVENTIONS.md is the reference that holds every rendering rule WITH the measurements
+that justify it — cited below as §N.  TODOs.org holds the per-feature narrative.
+This file is only what an agent must not get wrong.
+
 ## Build & lint
-# Byte-compile (zero warnings required).  DEPENDENCY FIRST: compiling
-# agent-org.el loads agent-org-buffer from its .elc, so a freshly added
-# function there reads as "not known to be defined" until the buffer file
-# has been recompiled.  Same trap as the stale .elc the test command warns
-# about — `rm -f *.elc' when in doubt.
+
+# Byte-compile, zero warnings required.  DEPENDENCY FIRST: compiling agent-org.el
+# loads agent-org-buffer from its .elc, so a freshly added function there reads as
+# "not defined" until the buffer file has been recompiled.  `rm -f *.elc' when in
+# doubt — a stale .elc also shadows the sources in the test suite and the live session.
 emacs -Q --batch \
   --eval "(add-to-list 'load-path \"/home/khalid/.emacs.d/elpa/acp-20260914.1318\")" \
   --eval "(add-to-list 'load-path \".\")" \
   --eval "(setq byte-compile-error-on-warn t)" \
   --eval "(batch-byte-compile)" agent-org-buffer.el agent-org.el agent-org-loader.el agent-org-providers.el
 
-# Single-file compile:
-emacs -Q --batch --eval "(add-to-list 'load-path \"/home/khalid/.emacs.d/elpa/acp-20260914.1318\")" \
-  --eval "(add-to-list 'load-path \".\")" --eval "(byte-compile-file \"agent-org.el\")"
-
 ## Test
-# Offline ERT suite (uses the mock acp in tests/, never the real package):
+
+# Offline ERT suite (mock acp in tests/, never the real package):
 emacs -Q --batch \
   --eval "(add-to-list 'load-path \"/home/khalid/agent-org\")" \
   --eval "(load \"tests/test-agent-org.el\")" \
   --eval "(ert-run-tests-batch-and-exit)"
-
-# The suite sets `load-prefer-newer': without it a stale `.elc' left in this
-# directory by a package-build step silently shadows the sources under test.
-
-# Run a single test by name:
-emacs -Q --batch \
-  --eval "(add-to-list 'load-path \"/home/khalid/agent-org\")" \
-  --eval "(load \"tests/test-agent-org.el\")" \
-  --eval "(ert-run-tests-batch-and-exit 'test-agent-org-header-status-not-duplicated)"
-
-# Live smoke test (needs the real acp package and a working `goose acp` binary):
-./run-loader-test.sh          # or: emacs -Q --batch -l loader-live-test.el
-
-# IMPORTANT: tests/acp-mock.el provides `acp' for headless runs.  Keep it in
-# tests/ — if it ever sits in the package root it shadows the real acp and
-# live sessions silently do nothing.
+# One test: add 'test-name as an argument to ert-run-tests-batch-and-exit.
+# Live smoke test (real acp + a working `goose acp`): ./run-loader-test.sh
+# tests/acp-mock.el MUST stay in tests/: in the package root it shadows the real
+# acp and live sessions silently do nothing.
+# The suite binds `load-prefer-newer' (the stale-.elc trap) and
+# `agent-org-transcribe' nil (else it litters sid-*.org into the tree).
 
 ## Code style
-# - Alists everywhere; use `map-elt` / `map-nested-elt` (from `map.el`) to read them.
-# - Prefer `seq.el` for list operations; prefer `map.el` for alist access.
-# - Use `cl-defun` with `&key` for functions with multiple optional args.
-# - Prefix all symbols: `agent-org-` (public), `agent-org--` (private), `agent-org-buffer-` / `agent-org-providers-` etc.
-# - Errors: signal with `user-error` for user-facing, `error` for programmer bugs.
-# - Always set `lexical-binding: t` in file headers.
-# - ACP objects are alists parsed via `json-parse-string :object-type 'alist`.
-# - No `plists` for wire data; use `plists` only for internal config (provider specs).
-# - Flatten `if`/`when`/`unless` bodies — avoid extra nesting.
-# - Suppress writes with `inhibit-read-only` only inside `with-current-buffer`; always restore read-only after.
-# - ALL status / progress / error feedback goes to the chat buffer's header
-#   line (top bar) via `agent-org-buffer-set-status'.  NEVER write system
-#   messages, comment blocks, or bullet lines into the Org body.  The body
-#   holds EXCHANGE content (one heading per prompt-response pair: the prompt as
-#   the heading, the answer in an attributed quote block) plus ONE auto-managed
-#   block at
-#   the very top: the PROPERTIES drawer first, then `#+TITLE:', then
-#   COMMANDS/MODES/CONFIG drawers — all folded by default, no heading
-#   (headings belong to the conversation).  Rewritten by
-#   `agent-org-buffer-refresh-metadata'; never edit it by hand.
-# - Per-turn tool calls render as ONE ITEM of the current turn's `:tool:'
-#   drawer — `  - KEYWORD title' at two columns, one item per toolCallId,
-#   KEYWORD from the per-file `#+TODO: TODO ONGOING | COMPLETE FAILED' set
-#   (pending→TODO, in_progress→ONGOING, completed→COMPLETE, failed→FAILED).
-#   The three words are the user's: "use ONGOING|COMPLETE|FAILED keywords for
-#   tool call TODOs."  COMPLETE and FAILED both sit AFTER the bar, so Org sees
-#   them as this file's two done states — a call that finished and a call that
-#   finished badly are both finished.  NO NUMBER on the line: it existed only
-#   to index a per-call output drawer, and one item per call needs no index
-#   (the user's order: "No need to add numbers to tool drawers").  There is NO
-#   marker per call either: every update redraws the whole drawer from
-#   `agent-org-buffer--tools', the turn-local alist that IS the record, so one
-#   call cannot get a second item and a reused toolCallId after `resume' starts
-#   fresh under the new turn.  A call is an item and not a headline because the
-#   Org drawer spec (info "(org) Drawers") forbids headlines inside drawers:
-#   the earlier `**' shape had to keep the calls ABOVE the `:thinking:' drawer
-#   to stay legal, and any headline that landed inside that body was erased by
-#   the next thought chunk (measured live: qoder replayed 4 tool calls, the
-#   buffer showed 1).
-#   `agent-org-buffer--redraw-drawer' draws every kind and takes FOLD -- the
-#   drawer's DEFAULT, not a one-time instruction at creation: `:tool:' is OPEN
-#   (what the agent is doing now is what the user came to watch), `:thinking:'
-#   FOLDED.  A folded-default drawer keeps whatever fold it is in, so one the
-#   user opened stays open; an OPEN-default drawer is left open by every paint,
-#   because Org re-hides drawers on paths no variable guards (a subtree move
-#   runs `org-clean-visibility-after-subtree-move', org.el:7089) and a board
-#   must not quietly collapse the agent's next action.  `agent-org-mode' also
-#   sets `org-hide-drawer-startup' nil BUFFER-LOCALLY:
-#   `org-cycle-set-startup-visibility' -- what `org-mode' runs at startup and
-#   what the prefixed global cycle re-runs -- ends with
-#   `(when org-cycle-hide-drawer-startup (org-cycle-hide-drawers (quote all)))'
-#   (org-cycle.el:643), which folds every board in the buffer on the spot.  The
-#   name is an ALIAS of `org-cycle-hide-drawer-startup' (it moved with the
-#   folding rewrite) and `setq-local' follows an alias to its target, so one
-#   line covers both spellings; every other Org buffer keeps Org's default.
-#   The un-hide a repaint does before swapping the body is guarded by
-#   `invisible-p' on purpose: `org-fold-region' walks the region, and calling
-#   it unconditionally more than doubled the per-paint cost of a heavy board.
-#   A keyword on a
-#   drawer line is TEXT, not an Org TODO state -- `C-c C-t' acts on headlines,
-#   so a call's state is read, not cycled.  Fold state is driven directly with
-#   `org-fold-region', NOT `org-fold-hide-drawer-toggle', whose org-element
-#   cache is stale while a turn streams ("Not at a drawer").
-# - What a call PRINTED is the SAME ITEM's body, indented FOUR columns: the
-#   user's order "Tool call outputs belong to the same TODO headings", after
-#   "Consecutive tool calls belong to a single drawer" and ":tool: drawers are
-#   only to separate from responses."  A separate `:tool-output:' drawer was
-#   the first cut and it is GONE: it made a reader scan the board, then hunt
-#   the same title in a second drawer, and one call's state and its result
-#   lived in two folds.  WHY TWO/FOUR AND NOT FLUSH LEFT: nothing in a drawer
-#   body may sit at column 0 (this package's standing rule), and the parser
-#   says why that is not fussiness — measured with `org-element-parse-buffer'
-#   on a buffer holding the turn's heading, an item at column 0 with its body
-#   at two columns reported NO list at all (a drawer of loose text), while the
-#   same content with the list at two and the body at four reported ONE
-#   plain-list of N items, the drawer intact and the turn's single headline
-#   untouched (`test-agent-org-tool-drawer-is-one-list-to-org').  The trade is
-#   real and accepted: one drawer has ONE fold state, so bodies now travel
-#   with the open board instead of staying collapsed as agent-shell keeps them
-#   (`agent-shell-tool-use-expand-by-default' nil) — TAB on the turn folds
-#   calls and output in one motion, which is also why nothing is ever
-#   truncated.
-#   Extraction is `agent-org-buffer--tool-output', in agent-shell's order: the
-#   `content' blocks, else `rawOutput.formatted_output' ONLY when it is a
-#   string (a number is not a shell result), else nothing — and nothing means
-#   NO body line, not a blank one under a waiting keyword.  A block with no
-#   surface is NAMED (`[unsupported content: TYPE]'), never dropped.  The
-#   redraw guard is `agent-org-buffer--tools-shown' — the WHOLE rendered board,
-#   reset per turn — because a per-entry `:shown' is meaningless once the
-#   bodies share the drawer: a status-only update would rewrite and re-protect
-#   every byte the turn ever printed (measured: 20 calls x
-#   40 lines = ~7-16 ms per redraw, ~140-340 ms for the turn,
-#   `test-agent-org-one-drawer-board-redraw-cost'; the same test prints more
-#   when the box is busy).
-# - Every drawer BODY the stream writes goes through
-#   `agent-org-buffer--drawer-safe-lines': a `*' at column 0 is a headline and a
-#   line reading `:END:' closes the drawer, and BOTH are ordinary characters in
-#   agent text (a shell result quoting an Org file, a markdown thought's `* '
-#   bullet).  Measured with `org-element-parse-buffer': one `* heading' line in a
-#   drawer reports NO drawer and two headlines.  The escape is one space of
-#   indent (a headline must start at column 0) plus, for an END line, a doubled
-#   colon — `:END:' is matched case-insensitively and whitespace-tolerantly, so
-#   `:end:', `:End:' and `  :END:' all close it.  Blank lines stay blank; that is
-#   also why no output is ever truncated: folding is the affordance.  A tool
-#   body takes this guard AND three more spaces, because it is an item's
-#   content (`test-agent-org-tool-output-cannot-break-the-drawer').
-# - Never place a headline at the position `re-search-forward' RETURNS: that is
-#   a match's END, which for a drawer marker is INSIDE the body, and
-#   `agent-org-buffer--redraw-drawer' rewrites the whole body on the next
-#   thought chunk -- that is how every tool call but the turn's last one
-#   silently vanished.  Beware the same trap in general:
-#   `line-beginning-position' returns a position, it does not move point.
-#   Redrawing the drawer from a list made this unreachable for tool calls; the
-#   lesson stands for anything else anchored to a marker.
-# - Text the agent supplies (tool-call `title', session `title') goes
-#   through `agent-org-buffer--label' before it lands on a one-line
-#   context (heading line, completion candidate).  Live qoder titles tool
-#   calls with the whole shell command — hundreds of characters across
-#   many lines — and verbatim that breaks the heading.  Never trust a
-#   harness-provided label to be short or single-line.
-# - Resume replay: updates in `agent-org--replay-kinds' arriving while a
-#   session is `:loading' are BUFFERED, never painted one chunk at a time;
-#   the `session/load' response is NOT the flush point (qoder answers first
-#   and streams history after it — flushing there silently dropped every
-#   agent turn).  `agent-org--arm-replay-render' re-arms a quiet-period
-#   timer per late update and `agent-org--finish-replay' paints the whole
-#   history once, with `buffer-undo-list t'.  Past
-#   `agent-org-replay-settle-cap' the pending render is left to fire.
-#   Tests drive this synchronously: `ao--capture-wire' captures
-#   `run-at-time'/'cancel-timer', so `ao--settle' is how a test says "the
-#   agent went quiet".
-# - NO render path may switch `font-lock-mode' OFF, and the replay is the proof
-#   of why: an OFF is restorable and an ON IS NOT.  Measured live, in a buffer
-#   no window is showing, `(font-lock-mode 1)' leaves the buffer-local variable
-#   NIL — silently, with no error and no trace — and `turn-on-font-lock' does
-#   the same, while in a displayed buffer it sticks.  So the replay's
-#   suppress-for-the-bulk-paint-and-restore-afterwards lost a chat its colors
-#   FOREVER whenever `session/load' painted into a background buffer (the
-#   user's second "colors gone again!"), and an update that raised mid-paint
-#   lost them even in a shown one, acp's own `condition-case-unless-debug'
-#   swallowing the trace.  The suppression is therefore GONE:
-#   `agent-org--render-replay' only flushes after the paint, inside the
-#   `unwind-protect' that also stops the progress reporter (a raise there must
-#   not leak a "Restoring" line).  Flushing is free when colors are off — the
-#   real `font-lock-flush' checks `font-lock-mode' itself — and jit-lock makes
-#   the per-chunk cost of leaving them on a redisplay-time job, not a
-#   per-insertion re-scan.
-# - A chat buffer therefore gets its colors at DISPLAY time, not creation:
-#   `agent-org-buffer-create' runs inside an acp handshake callback, so the
-#   buffer is always hidden then and ambient `global-font-lock-mode' can never
-#   reach it.  `agent-org-mode' adds `agent-org-buffer--ensure-font-lock' to
-#   the BUFFER-LOCAL `window-configuration-change-hook' (4th arg t, removed on
-#   off), which Emacs runs with the buffer current when it first appears in a
-#   window; the hook is an `unless', not a toggle, because it re-runs on every
-#   window change and a repeat `(font-lock-mode 1)' rebuilds jit-lock over a
-#   transcript thousands of lines long.
-# - Batch Emacs cannot turn font-lock on at all, so no test asserts faces or a
-#   successful enable.  They pin BEHAVIOUR by stubbing `font-lock-mode' and
-#   `font-lock-flush' and setting the buffer-local variable as the premise:
-#   `test-agent-org-replay-never-touches-font-lock-even-when-the-paint-errors'
-#   records the CALL SEQUENCE (no `font-lock-mode' call at all, a flush, a
-#   reporter stop) and `test-agent-org-chat-buffer-asks-for-font-lock-when-displayed'
-#   runs the buffer-local hook the way a window would.
-# - Restored turns use the SAME rendering primitives as typed ones; never
-#   add a second renderer for replay, or the two will drift.
-# - The header line shows exactly ONE status string, and for `starting'/
-#   `ready' it is the STATE LABEL, not `:message'
-#   (`agent-org-buffer--status-segment').  So a bare `:message' is invisible
-#   while Ready.  A real request failure must set `:state 'error' (which
-#   does render its message); a non-failure note that must not steal the
-#   Ready segment goes to the echo area with `message'.  Never the body.
-#   The exception is `:note', which qualifies a Ready label (`Ready (new
-#   session: listing timed out)') because an invisible listing fallback read
-#   as "the prompt never happens".  Set it through `agent-org--note-new-session'
-#   (agent text goes through `agent-org-buffer--label', one line always), never
-#   by reusing `:message'.  (The echo area has a second, transient user: a
-#   progress report while a session LOADS — see the loading bullet below.)
-# - Two different things named MiniMax: MiniMax CODE (`mcode', its own ACP
-#   server via `mcode acp', provider id `minimax', pins nothing — its default
-#   model is MiniMax already) and MiniMax MODELS served by another agent
-#   (opencode fronts them, so `:model' is what makes that mean MiniMax).
-#   Never let a provider entry borrow someone else's server.
-# - One ACP server can front many models (opencode serves MiniMax this way).
-#   A provider plist may pin `:model'; `agent-org--apply-pinned-model' sends
-#   `session/set_config_option' once per session (it clears `:want-model'
-#   first, because ready re-enters on every mid-turn update) and only for an
-#   id the agent actually advertised — a stale pin is reported, never sent.
-#   `agent-org-set-session-model' (C-c C-m) is the interactive path over the same
-#   advertised list; the model option's id is "model", except goose calls it
-#   "provider".
-# - The header line and `:Model:' show the option's `name' ("MiniMax M3"), never
-#   the id (`minimax/MiniMax-M3'), because an id is a wire value a person is not
-#   reading.  Both are stored (`:model` is still the id, and the only thing
-#   `session/set_config_option' may send) and an unnamed current value falls
-#   back to the id — a bar that drops the model field reads as "no model",
-#   which is the worse lie.  Every writer goes through
-#   `agent-org--ingest-config', so the pair cannot drift apart.
-# - Every prompt carries a SECOND text block, `<agent-org-context>', with the
-#   agent name, the selected model and the session id, built per turn by
-#   `agent-org--session-context-text' and added by `agent-org--prompt-blocks'
-#   at the ONE send site (`agent-org--send-turn'), so a drained queue prompt
-#   gets the same facts as a typed one.  An agent asked "which model are you?"
-#   answers from its own default, which is false the moment `C-c C-m' or a
-#   pinned `:model' moved it (the MiniMax-through-OpenCode case), and a commit
-#   trailer or a bug report needs an id only the client knows.  Three rules
-#   make it safe: the user's block is FIRST and VERBATIM (this is the one place
-#   the client adds to the wire, and it adds BESIDE the request, never inside
-#   it — `agent-org--make-content-blocks' is untouched); a fact the client does
-#   not know is ABSENT, never `nil' or "unknown" (a `model: nil' line is an
-#   agent told something false, and goose advertises no model option of this
-#   shape); each value is flattened to one line by `agent-org--context-field',
-#   which is `agent-org-buffer--label''s whitespace collapse WITHOUT its
-#   truncation — a model label is agent text, and half a name on the wire is
-#   the lie the block exists to prevent.  Both spellings go (`name' then `id')
-#   because they answer different questions and neither derives from the other.
-#   `agent-org-send-session-context' nil is the escape hatch.  ACP content
-#   blocks are a list of independent blocks (`acp-make-session-prompt-request'
-#   vconcat's its `:prompt'), so this is the spec's own way to carry
-#   side-channel metadata: no wire change, no new method, and every existing
-#   reader of "the first block" stays honest.
-# - A chat buffer is named for its session: `<agent>:<project> [sid]` — which
-#   harness answers, then the project after the colon.  The session TITLE is NOT
-#   in the name, on the user's report "Buffer names are showing session names in
-#   place of agent names.": a title arrives late, renames itself via
-#   `session_info_update', and is agent free text, so a name built from it
-#   mutates under a person reading `C-x b'.  The topic lives in the buffer's own
-#   `#+TITLE:' — which `agent-org-buffer--refresh-metadata' rewrites, and the
-#   transcript mirrors, so a late title still reaches the disk — and in the
-#   resume chooser, which reads titles from `session/list'.  NO `agent-org: `
-#   prefix and no `*…*` delimiters: the user asked for
-#   `Qoder:agent-org [SESSION_ID]` and the
-#   package's own name only costs a chat its place in `C-x b` (the rule is
-#   pinned by `test-agent-org-buffer-name-wears-no-star-delimiters`).  Built by
-#   `agent-org-buffer--wanted-name', applied by `agent-org-buffer-set-status'
-#   ONLY on an update carrying `:session-id' — the one half of a name that
-#   arrives after creation, since `agent-org-buffer-create' fixes `:project' and
-#   `:provider' from the cwd and the provider.  A per-chunk usage or title
-#   update therefore builds no string.  `agent-org-buffer-create' names the
-#   buffer itself, once the status (and therefore the project) exists, so even
-#   the handshake buffer is findable by project; its own first name is the
-#   internal ` *agent-org-<provider>*' (leading space = never listed), replaced
-#   three lines later.  The equality test in `agent-org-buffer--apply-name' is
-#   not an optimisation: `generate-new-buffer-name' counts this very buffer, so
-#   renaming per update walks the session through
-#   `Qoder:agent-org [s]<2><3><4>'.  No agent text reaches the name any more,
-#   so `agent-org-buffer--label' is a `#+TITLE:', quote-author and header-line
-#   concern only.
-#   `rename-buffer' with RENAME-ALL-PROCESSES nil keeps the acp process name
-#   readable in list-processes.  The id is /also/ an Org `:ID:' property, but
-#   never a header-line segment: the bar carries state, the name carries
-#   identity.
-# - Lite mode is a SCOPE, and `agent-org-lite-p` is its only reader.
-  `agent-org-lite-mode` is the global default; `agent-org-buffer--lite` is the
-  per-session scope, `inherit` / `on` / `off`, because a chat buffer IS a
-  session and the three states are what make "follow the global setting"
-  reachable again after an override.  `agent-org-lite-mode-toggle` (C-c C-l, C-u
-  for the global) cycles it, moves `buffer-undo-list` as it goes, and SAYS
-  which state it landed on --- a session that quietly stopped recording its
-  transcript is the kind of thing a person notices a week later.  Three gates,
-  and the three things it must not touch are written down in
-  `agent-org-lite-mode`; the load-bearing one is the transcript: lite writes the
-  file while `:queued` is non-nil and stops when the queue drains, because a
-  queued prompt exists in no replay and no agent memory.  `byte-compile-error-on-warn`
-  forbids a `setq` over a `defvar-local` owned by another file --- that is what
-  `agent-org--queue-note`'s `make-local-variable` is for.
-- The resource monitor is a BUFFER of Org tables, never a header-line segment,
-  and its timer follows display.  The bar has room for one status string and a
-  per-timer redraw in every open chat would be the load it exists to report.  Its
-  one repeating timer is armed by `agent-org--resource-displayed-p` --- the window
-  LIST across all frames, because `get-buffer-window` answers for one and a
-  background frame would read as hidden.  `/proc` parsing lives in PURE functions
-  (`--status-kb`, `--stat-cpu-ticks`, `--parse-load`) so the file formats can be
-  pinned by tests on a machine whose processes are not ours; `--stat-cpu-ticks`
-  counts from AFTER the `comm` field, because `(Web Content)` is a real process
-  name and a naive split reads the wrong two numbers without saying so.  A
-  batch Emacs HAS a frame and windows (measured), so a monitor is genuinely
-  displayed there: tests show and hide a window for real rather than stubbing the
-  visibility check.
-- User-facing command names follow the agent-shell package (`~/agent-shell`,
-#   same author, same ACP ground): session-level verbs name their object
-#   (`agent-org-resume-session', `agent-org-set-session-model', matching
-#   `agent-shell-resume-session' / `agent-shell-set-session-model'), and every
-#   provider id in `agent-org-providers' gets an
-#   `agent-org-<id>-start-agent' command in agent-org-providers.el, defined
-#   explicitly (autoload scraping does not see macro-generated commands) as a
-#   thin `(agent-org-start '<id>)' call.  `test-agent-org-every-provider-has-a-
-#   start-agent-command' fails if the two lists drift.  Never keep an alias for
-#   a renamed command: one action, one name in M-x.
 
-# - "Start" is a strategy, not a request: `agent-org-session-strategy'
-#   (`new' / `latest' / `prompt', default `prompt', names borrowed from agent-shell)
-#   decides what happens after `initialize', and `agent-org--begin-start' is the
-#   only reader of it.  A prefix argument forces `new' for one call and MUST be
-#   captured synchronously in the command: the handshake callback runs after the
-#   command loop has dropped `current-prefix-arg'.  An agent that cannot `list'
-#   or cannot `load' never pays for the request.
-# - One pager for both entry points: `agent-org--list-sessions' follows the
-#   agent's `nextCursor' (page limit nil = every page; a cursor the agent
-#   repeats is a FAILURE, not another request) and synthesizes
-#   `((sessions . VECTOR))', so `agent-org--session-candidates' cannot tell one
-#   page from ten.  `agent-org-start' and `agent-org--resume-locate' both call
-#   it — never hand-send a second `session/list'.
-# - A listing has exactly ONE owner: `:list-state' (`pending' then `settled')
-#   guarded by `agent-org--settle-listing', so a `session/list' that answers
-#   after `agent-org-session-list-timeout' fired cannot load a second session
-#   into a buffer already opening one.  Failure, timeout and an empty listing
-#   all degrade to `session/new' plus an echo-area note: starting a chat must
-#   never be blocked by the feature that shows you the older ones.  Candidates
-#   are `TITLE  DATE  [id]' (`agent-org--session-columns' +
-#   `agent-org--format-session-date'), sorted by `agent-org--session-stamp'
-#   (`updatedAt' else `createdAt' — live goose omits `updatedAt'), newest first,
-#   with `New session' always first in the list.
-# - The candidate list is scanned, not read, so its SHAPE is the feature:
-#   `agent-org--session-candidates' pads both columns to the batch's widest row
-#   (a measuring pass over `agent-org--session-columns' first), and dims the date
-#   and id with `shadow' so the title is what stands out.  Measured AND padded in
-#   display columns (`string-width'): `string-pad' counts characters, which puts a
-#   CJK title's date a dozen columns early.  And the order is pinned:
-#   `completing-read' must be handed `agent-org--completion-collection',
-#   a FUNCTION, because `display-sort-function' only travels on the `metadata'
-#   action — a plain list is re-sorted by the UI and newest-first is lost at the
-#   last step.  Because the displays now carry text properties, resolve a choice
-#   with `agent-org--selection-value' (property-free `equal'), NEVER `assoc':
-#   `equal' on strings compares properties too, and a framework that rebuilds the
-#   string would match nothing and resume the wrong chat.
-# - A listed session that a live buffer already holds is SHOWN, never loaded
-#   again: `agent-org--session-open-p' answers from the registry (buffer-live-p,
-#   so a session whose kill-hook has not run is not "open"), the candidate carries
-#   `agent-org--open-marker', and `agent-org--load-session' — the single choke
-#   point — pops that buffer instead of sending `session/load', killing the
-#   half-open buffer (which releases the agent spawned for it) and noting the
-#   switch in the echo area.
-# - Killing the chat buffer MUST release the agent: `acp' owns the process it
-#   spawned, so dropping the registry entry leaves an `qoder --acp' child running
-#   (~100 MB each — measured live: 1 session registered, 16 stray acp processes).
-#   `agent-org--forget-session' therefore calls `acp-shutdown' and unarms both
-#   timers, and `agent-org--list-timeout' re-checks `buffer-live-p' as the second
-#   lock (a timer is best-effort insurance, never the guarantee).  Assert the
-#   BEHAVIOUR in tests, not the `cancel-timer' call: `ao--capture-wire' stubs
-#   `cancel-timer', so firing the stored timer is how a test says "the deadline
-#   arrived".
-# - Killing a chat buffer ASKS first while its agent is alive: `agent-org--kill-query'
-#   on `kill-buffer-query-functions' (buffer-local, installed beside the kill-hook by
-#   `agent-org--register-session'), wording copied from Emacs' own `Process %s is
-#   running; kill it? ' — Emacs never asks by itself because acp starts the agent
-#   with `:noquery t' and no buffer, so `process-kill-buffer-query-function' cannot
-#   see it.  A dead child answers YES (crashed agent, no consent needed) and so does
-#   no session at all.  The query releases nothing — the kill-hook above owns the
-#   shutdown.  So every kill agent-org performs ON ITS OWN (`agent-org--cancel-open',
-#   `agent-org--show-open-instead', `agent-org-reload') goes through
-#   `agent-org--kill-buffer-silently', which binds `agent-org--inhibit-kill-query':
-#   a prompt raised inside an acp callback is a trap, not a question (see the ESC
-#   bullet).
-# - An acp client is an ALIST of dotted keyword pairs — `acp-make-client' returns
-#   `(list (cons :process nil) ...)' (acp.el:90) and mutates it with `map-put!',
-#   which for a list is the alist operation.  So read `:process' with `map-elt' (as
-#   acp's own `acp--client-started-p' does); `plist-get' walks it as a flat plist,
-#   matches nothing and answers NIL — silently, on a Ready session with a live
-#   process right there (measured live: MAP-ELT gave `#<process acp-client(goose)-1>',
-#   PLIST-GET nil).  The keys carry colons, which is what makes the flat-plist
-#   reading look right.  Mocks must copy the SHAPE, not just the key names:
-#   `tests/acp-mock.el' builds the dotted-pair alist, and with that fixture the
-#   `plist-get' reader fails 3 kill tests instead of passing 156 and breaking live.
-#   Generalise: when a stub exists to avoid a dependency, mirror the dependency's
-#   data shape, or the suite tests the stub.
-# - ESC at a session prompt is a `quit' that lands INSIDE an acp response
-#   callback, and acp swallows it (`condition-case-unless-debug'): unguarded, the
-#   chat buffer sat on "Starting"/"Restoring" holding a live agent process.  So
-#   both prompt sites go through `agent-org--quit-cancels', which releases the
-#   session by killing its buffer (the kill-hook path above is what shuts the
-#   agent down) and notes it in the echo area.  A cancelled prompt yields NIL —
-#   both readers complete with REQUIRE-MATCH, so nil is never a real answer, and
-#   the caller must then send neither `session/new' nor `session/load'.
-# - LOADING is reported in the echo area by a progress reporter, and the
-#   events ARE the clock: `agent-org--progress-start' / `-step' / `-stop'
-#   (agent-org.el, `:progress' on the session plist) wrap the two phases that can
-#   actually be slow — `session/list' paging and the `session/load' replay.  NO
-#   TIMER runs for them, deliberately: agent-shell's equivalent,
-#   `agent-shell-active-message-show', animates its reporter with `run-at-time'
-#   every 0.1 s, i.e. ten wakeups a second of which Emacs can display at most
-#   five (`make-progress-reporter''s own MIN-TIME default is 0.2 s), and they go
-#   on firing while the agent says nothing at all.  On this machine that is the
-#   cost of a decoration.  `progress-reporter-update' is documented as doing
-#   nothing when the change is too small or too soon, so stepping once per event
-#   is self-limiting: raise `agent-org-progress-min-time' for less redraw, lower
-#   it (or pin it to 0 in a test) to see every step.  Creating a report already
-#   DISPLAYS its line, so a caller needs no first step to be seen.
-# - Take the reporter's SHAPE from agent-shell, not its exit list.  Its hide is
-#   called from five subscription sites, and a site added later leaks a spinner;
-#   here each phase owns its report end to end — `agent-org--list-sessions' starts
-#   on the first page and closes on every one of its own outcomes (last page,
-#   page limit, repeated cursor, failure), `agent-org--list-timeout' closes the one
-#   the pager cannot reach (the request that never answered), and
-#   `agent-org--render-replay' / `agent-org--cancel-replay' /
-#   `agent-org--forget-session' close the replay's.  Starting REPLACES, so phases
-#   can only hand the line over, never fight over it.
-# - Closing a report is `(message nil)', NOT `progress-reporter-done': every phase
-#   here ends in something visible to read (the chooser, the restored history, the
-#   error on the header), so a `...done' line is a redisplay nobody reads —
-#   agent-shell pays it and then clears the area on the next line anyway.  ORDER
-#   matters: stop BEFORE writing an echo-area note (the stop clears what follows
-#   it), which is why `agent-org--list-timeout' stops first and explains itself
-#   second.
-# - Only the paint pass gets a PERCENTAGE, because it is the only phase with a
-#   denominator (`agent-org--render-replay' knows how many updates it buffered) and
-#   the only one that blocks Emacs in one synchronous run.  A spinner is stepped
-#   with no value while history arrives: counting the buffer (`length' of a growing
-#   list, once per chunk) and formatting a string per chunk are two costs that buy
-#   nothing, because an indicator that moves already says "arriving".  Never step
-#   with a computed count on a per-chunk path.
-# - `agent-org-switch-buffer' (M-x, agent-shell's name) reuses the CHOOSER's
-#   machinery rather than rebuilding it: `agent-org--column-width' measures,
-#   `agent-org--pad' aligns by DISPLAY columns, `agent-org--session-display'
-#   dims everything after the label, and the collection is
-#   `agent-org--completion-collection' with `agent-org--selection-value'
-#   resolving the choice.  Rows are `LABEL  STATUS  [id]' in REGISTRY order
-#   (`agent-org--register-session' pushes, so the newest chat is first, and an
-#   open session has no `session/list' stamp to sort by anyway).  What differs
-#   from the chooser is the row's VALUE: a BUFFER object, never a name — the
-#   agent renames its own chat, so a name looked up afterwards can match
-#   nothing.  Killed-but-unforgotten entries are dropped with `buffer-live-p'.
-# - One chat, ONE display label: `agent-org-buffer--chat-label' (`<agent>:<project>`)
-#   is called by `agent-org-buffer--wanted-name' AND by the switcher's first
-#   column, and it reads only `:provider' and `:project' — never the session
-#   title.  Two builders writing the same rules is how one chat ends up called
-#   "org-docs Qoder" in `C-x b' and plain "Qoder" in the switcher — which is
-#   what the first live run printed: two rows identical but for a UUID.  So the
-#   label takes the status PLIST as an argument instead of reading
-#   `agent-org-buffer--status', because the switcher labels OTHER buffers and
-#   a `with-current-buffer' there is a function that can move point in a chat
-#   you only meant to look at.
-# - Never locate an aligned column by the whitespace in front of it: a padded
-#   label and the separator are both spaces, so `(string-match-p "  " row)'
-#   measures where the PADDING began, not where the column starts (it failed a
-#   passing implementation with `(18 47)' on two identical 65-column rows).
-#   Measure the first character carrying the `shadow' face — the dim run IS the
-#   column, by construction.
-# - ONE HEADING PER EXCHANGE, and the heading IS the prompt: `agent-org-buffer-begin-exchange'
-#   writes `* <first line of the prompt>' with every later line indented ONE space (so
-#   it stays the heading's own affixed metadata, not a second paragraph), and the answer
-#   goes under it inside `#+begin_quote', preceded by `#+ATTR_TEXINFO: :author <model>' —
-#   Org's own way to name the speaker of a quotation (info "(org) Quotations in Texinfo
-#   export").  The user's order: "there will be ONE heading for each prompt-response pair.
-#   The heading will contain the prompt. And, the response should be contained in an Org
-#   quote block, with the narrator/author as the model name."  The model name is read from
-#   the buffer-local status (`agent-org-buffer--model-display' — the agent's label, else
-#   its id) and flattened with `agent-org-buffer--label', because a config option's `name'
-#   is agent text and a newline on a keyword line would split it in two.  There is NO
-#   `* Agent' heading any more and no `agent-org-use-model-headings' variable: provenance
-#   moved onto the quote, where export honours it, instead of a headline that competes with
-#   the conversation's own outline.  A turn that never produced answer text gets NO quote
-#   furniture at all (`agent-org-buffer--drop-empty-quote`) — an empty block is a fold a
-#   reader must open to discover is empty.
-# - NEVER INSERT A HEADLINE OF ANY LEVEL INSIDE THE QUOTE, and never let agent text reach
-#   column 0 there: a headline ENDS a quote block at any level, so `# Title' from a
-#   Markdown reply becomes BOLD (`*Title*', §15 of CONVENTIONS.md) and every body line goes
-#   through `agent-org-buffer--block-safe-lines' (one space of indent, plus a bare
-#   `#+end_quote' wrapped as `=#+end_quote=' because the agent's own closer would end the
-#   block and dump the rest of the answer outside it).  Measured with `org-element-parse-buffer'
-#   on the real block: an unindented `* bullet' inside a quote reports ZERO quote-blocks and
-#   TWO headlines — the answer loses its block AND its attribution.
-# - Never locate a turn by heading TEXT: placement is `agent-org-buffer--turn-anchor',
-#   `agent-org-buffer--render-end' and the quote's own closer marker
-#   (`agent-org-buffer--quote-end', rear-advancing), which is what lets the block stay shut
-#   at every instant of the stream — every chunk, drawer repaint and flush inserts ABOVE
-#   `#+end_quote'.  Same reason `agent-org-buffer-start-agent-turn' still ignores its SESSION
-#   argument: the two callers that start a turn without one (a thought chunk or a
-#   tool update arriving before any chunk) must get the same heading, and the fact
-#   lives with the buffer, not the session.
-# - The per-session transcript is a MIRROR of the buffer, not an append log, and
-#   it is written only at turn boundaries (`agent-org-buffer-transcribe`: ready,
-#   send, both send callbacks, cancel, late title, kill).  Never call it from a
-#   render site: an append log could not show a tool call's drawer line as
-#   DONE without
-#   keeping its TODO line (CONVENTIONS.md §3, §14), and a per-chunk write spends
-#   its cost inside the stream — measured 90-170 ms per turn here versus 2 whole-file
-#   writes of 3-15 ms.  The mirror spans `point-min' to
-#   `agent-org-buffer--render-end', so the live draft is never filed; the id in the
-#   file name is sanitized to `[A-Za-z0-9._-]' because it arrives over the wire and
-#   becomes a path; a `file-error' is a `message', never a broken turn; and
-#   `write-region' VISIT stays nil or the chat buffer would start `visiting' its own
-#   transcript and `C-x s' would save the draft into it.  The directory is the
-#   RELATIVE `.agent-org' resolved against the CHAT buffer's `default-directory'
-#   (`agent-org-buffer--transcript-file'), so each project keeps its own
-#   transcripts; only an absolute setting means a global pool.  So a test suite
-#   that leaves transcription on writes into whatever directory the batch was
-#   launched in — measured: 22 `sid-*.org' in the package tree.  The suite now
-#   binds `agent-org-transcribe' nil at the top of tests/test-agent-org.el, and
-#   only `ao--transcript-in' turns it back on inside a temp directory.
-# - A chat buffer's `read-only' text properties must never reach the mode line.
-#   `which-function' (which-func.el) falls through to `add-log-current-defun',
-#   which copies the heading TEXT WITH PROPERTIES and hands it to
-#   `which-func-format' — `(:propertize which-func-current ...)' — and applying
-#   a property to text that carries `read-only' signals `text-read-only'.  Under
-#   `which-function-mode' + doom-modeline that error lands inside
-#   `doom-modeline-format--main', which builds its whole right half with ONE
-#   `format-mode-line' (doom-modeline-core.el), so nothing is rescued: the bar
-#   goes blank (measured live: `(doom-modeline-format--main)' signaled
-#   text-read-only, and returned a 77-char string with `inhibit-read-only'
-#   bound).  So `agent-org-mode' sets a buffer-local
-#   `add-log-current-defun-function' = `agent-org-buffer--which-function',
-#   which returns `(substring-no-properties (org-get-heading t t t t))' at a
-#   heading and nil elsewhere.  A non-nil `add-log-current-defun-function' also
-#   suppresses which-func's own imenu fallback, so this one function is the
-#   whole answer — not a hint to add a second.
-# - A queued prompt is the only conversation text the agent has never seen, so
-#   it is the only thing a resume cannot replay.  It lives in a `:QUEUE:' drawer
-#   of the auto-managed metadata block — one line per prompt, oldest first,
-#   escaped by `agent-org-buffer--queue-encode' (newline and backslash; the `- '
-#   prefix keeps a prompt that IS `:END:' from closing its own drawer), read back
-#   by `agent-org-buffer-transcript-queue', which takes ONLY `- ' lines: an older
-#   build's `… (+N more)' tail or a line a person typed while poking at the file
-#   would otherwise come back as a phantom prompt.  Set `:queued' on the status, never
-#   write the drawer by hand: `agent-org--queue-refresh' is the single choke
-#   point that mirrors session `:pending-prompts' into the block AND the file, so
-#   every queue change (enqueue, drain, and every editor apply) is a boundary of
-#   its own — a mid-turn quit must not swallow what the user typed.  QUEUE is the
-#   one drawer with NO line cap (`agent-org-buffer--metadata-drawer' takes CAP and
-#   QUEUE passes nil) and the one that ARRIVES OPEN
-#   (`agent-org-buffer--metadata-open-drawers'): COMMANDS/MODES/CONFIG are a
-#   preview of something the agent can be asked for again, so truncating or folding
-#   them costs a look; the queue is the record the transcript keeps, so hiding part
-#   of it destroys a prompt and folding it makes it invisible exactly when it is
-#   news (the user's "Show the prompt queue within the buffer").  Both are
-#   defaults for CREATION: a drawer the user folded by hand stays folded.
-# - The queue has ONE surface: a REGION at the bottom of the chat, and no second
-#   buffer.  The entries are `* NEXT'/`* WAIT' headings between two markers, above
-#   the live `* User' box; `agent-org-queue-edit' (C-c C-q) takes point there,
-#   `C-c C-a' adds a blank `* WAIT' slot at the bottom (the user's own "add one
-#   here"), `C-c C-d' kills one, `M-UP'/`M-DOWN' reorder (narrowed to the region
-#   by `agent-org-buffer--queue-only', because the conversation's headings are
-#   what locate every turn), and `agent-org-queue-apply' is the only writer.
-#   `agent-org-queue-view', `agent-org-queue-remove', the old minibuffer
-#   `agent-org-queue-edit' and the whole `agent-org-queue-mode' editor buffer are
-#   GONE: three pagers for one list, and a second surface to keep in step with
-#   the first.  A repaint NEVER lands over an edit --- it happens only while the
-#   region still reads as `--queue-shown', and the apply reconciles instead
-#   (`--queue-note' records what the agent sent and what arrived; dropping by
-#   POSITION would resend an answered prompt and lose an edited one).  Two
-#   projections of one list (`--queue-refresh' writes the region, the drawer and
-#   the transcript from `:pending-prompts'), and the drawer is regenerated from
-#   the SESSION and never from the region: an unapplied edit must not reach the
-#   file.
-# - Queue entries: headline `* NEXT <first line>' or `* WAIT <first line>', the
-#   rest of the prompt on the lines below with ONE space in front of each
-#   (`agent-org-buffer--queue-entry' / `--queue-text', an exact inverse that keeps
-#   blank lines).  The indent is load-bearing, not cosmetic: a prompt is the
-#   user's own words and those words can be an Org document, and a `*' at column 0
-#   is a headline that would cut one prompt into two entries.  The WORD is derived
-#   from POSITION on every render and never read back, so a move cannot leave a
-#   heading promising a place in the send order it no longer has; NEXT and WAIT
-#   are per-file keywords in front of the done bar, which is what makes them Org
-#   states on real headlines (`#+TODO: NEXT WAIT TODO ONGOING | COMPLETE
-#   FAILED`).  The region's preamble is comment lines ABOVE the first entry, and
-#   that is load-bearing rather than cosmetic: an entry's text is everything from
-#   its headline to the next, so a note after the last entry would be parsed as
-#   part of that prompt and sent (measured: the queue came back as one prompt
-#   ending in "M-x agent-org-queue-apply").  A blank entry is a SLOT and is
-#   dropped by `--queue-parse', because `agent-org-send' refuses an empty draft
-#   and the queue must not smuggle one through by leaving a heading bare.
-# - The queue region is never the sole writer of a list the session has changed
-#   under it.  A turn can end, or a prompt arrive, while the user is editing, so
-#   `agent-org--drain-queue' and `agent-org--queue-enqueue' record what happened on
-#   the CHAT buffer (`agent-org--queue-note', under `--queue-sent' or
-#   `--queue-added').  `agent-org-queue-apply' then removes the sent entries BY TEXT
-#   (`agent-org--queue-drop-sent', first occurrence only) and appends what arrived,
-#   in arrival order.  BY POSITION IS A CORRUPTION BUG: the drain takes the front of
-#   the SESSION's list and the user may have moved that entry anywhere, so dropping
-#   positionally resends a prompt the agent already answered and loses an edited
-#   one.  An entry edited after it went out is the one case that does go again ---
-#   the agent never saw those words.  `agent-org--queue-note' writes through
-#   `make-local-variable': the two logs are `defvar-local' in agent-org-buffer.el and
-#   start out unbound per buffer, so a plain `(push text (symbol-value key))' would
-#   read the GLOBAL nil, cons onto it and throw the result away --- the note would
-#   silently not stick.  `agent-org-queue-apply' is the only write.
-# - `agent-org--finish-replay' reads that drawer BEFORE rendering, and applies it
-#   after `agent-org--session-ready'.  Both halves are load-bearing: session-ready
-#   mirrors the freshly replayed buffer over the transcript, and a replayed buffer
-#   carries no queue — reading after that write finds nothing.  Applying late is
-#   what lets the restored prompt go on the wire to an interactive session (id set,
-#   box open, `:loading' gone), and it drains rather than stranding the queue,
-#   because nothing else drains a session that is not busy.  An empty queue renders
-#   NO drawer: that absence is what stops a prompt being sent twice.
-# - Agents answer in Markdown and the body is Org, and the disagreement is
-#   STRUCTURAL, not cosmetic: `# Title' is an Org COMMENT (it vanishes from every
-#   export), `* item' is a level-1 HEADLINE (it cuts the turn in two), `---' under
-#   a paragraph is a headline too, and Markdown's alignment rule `|:--|--:|' is not
-#   Org's separator row (measured: the table loses its header and `--:' exports as
-#   an em-dash).  So `agent-org-convert-markdown' (default t) renders a reply — and
-#   the user's own echo — through `agent-org-buffer--markdown-line': a heading
-#   shifts ONE level down (level 1 belongs to the conversation), star bullets
-#   become dashes, and the two emphasis forms are rewritten in a SINGLE
-#   left-to-right pass — rewrite `**b**' to `*b*' and then run the `*i*' rule over
-#   the RESULT and you have italicised the bold you just made.  `_text_' and
-#   `~~text~~' are deliberately untouched (the first would eat `foo_bar_baz', the
-#   second is cosmetic).  Nothing on the wire changes: the agent receives the
-#   Markdown as typed, so this is rendering, not translation, and nil is the
-#   verbatim escape hatch.
-# - A code fence is a STATE, so conversion is line-by-line with it threaded
-#   (`agent-org-buffer--md-src-p', buffer-local and turn-local): inside a block
-#   nothing converts, because a shell sample full of `#' and `*' is code, and an
-#   open `#+begin_src' swallows the rest of the buffer AND the rest of the
-#   transcript file — which an agent that hit its token limit can send.  So every
-#   close path (`--markdown-convert', `--markdown-flush-here') shuts it.
-# - Streaming converts AS TEXT ARRIVES and rewrites only the last line.  A chunk
-#   stops wherever the model's tokenizer stopped, so `**bold' may end one and `**'
-#   open the next; the fix is NOT to hold the line until its newline (that made a
-#   one-line reply — which usually never sends one — invisible until the turn
-#   ended) but to write the partial line and let the next chunk replace that
-#   region (`agent-org-buffer--markdown-write', from `--md-tail' to
-#   `--render-end').  So a provisional region must never outlive a boundary that
-#   draws below the turn's text: `agent-org-buffer--markdown-flush-here' runs at
-#   `append-thought', `insert-tool' and `end-agent-turn' and FORGETS the state —
-#   a stale marker would put the next chunk's `delete-region' through the drawer.
-#   Two traps measured here: a marker detached with `set-marker' still answers
-#   `markerp' t while `marker-position' is nil (the chunk AFTER one ending in a
-#   newline crashed on `goto-char'), and a helper that calls `string-match'
-#   clobbers the global match data the scan is built on.
-#   Cost is a few regexps per line plus one small delete+insert per chunk:
-#   `test-agent-org-markdown-conversion-cost-per-line' prints the number.
-# - A permission request's options are ACP PermissionOption objects, keyed
-#   `optionId', `name' and `kind' (`allow_once' / `allow_always' /
-#   `reject_once' / `reject_always').  `agent-org--prompt-permission' reads
-#   exactly those.  The first reader asked for `label' and `id', keys NO agent
-#   sends, so both reads were nil and the minibuffer offered two candidates:
-#   `nil' and this package's own "cancel" (the user's report: "a weird `Allow?`
-#   prompt in the minibuffer which provides two options - Cancel and `nil`").
-#   An option with no `name' falls back to its `optionId' — a blank candidate is
-#   not an answer a person can pick, and agents are not obliged to name.
-# - The prompter returns the chosen `optionId', or NIL for "declined" (the Cancel
-#   entry, or ESC, which the handler traps); the handler then sends `:option-id'
-#   XOR `:cancelled', because upstream
-#   `acp-make-session-request-permission-response' ERRORS on both and on neither
-#   (acp.el:797).  A sentinel string compared at the call site, plus
-#   `(car (split-string choice))' to recover an id from a label, was the second
-#   half of the bug: it silently sent the wrong value whenever a name differed
-#   from an id.  Candidates here are plain strings, so `assoc' resolves them;
-#   that is NOT licence to copy the session chooser's property-laden displays
-#   into this prompt, which would need `agent-org--selection-value'.
-# - And the test lesson: `test-agent-org-permission-quit-sends-cancelled' stubbed
-#   `agent-org--prompt-permission' itself, so it never ran the extraction — a
-#   green suite over a broken dialog, same failure mode as the acp-client alist
-#   bullet (mirror the dependency's DATA shape, or the suite tests the stub).
-#   The three permission tests stub `completing-read' and send the real
-#   `{optionId, name, kind}' object: names in the collection, exact id on the
-#   wire, Cancel answers `cancelled'.
+- Alists everywhere; read with `map-elt' / `map-nested-elt' (`map.el'); `seq.el'
+  for lists; `cl-defun' with `&key' for many-arg functions.
+- Prefix every symbol: `agent-org-', `agent-org-buffer-', `agent-org-providers-'.
+  `user-error' for user-facing, `error' for programmer bugs.  `lexical-binding: t'
+  in every header.  Flatten `if`/`when`/`unless` bodies — no extra nesting.
+- Wire data is alists (`json-parse-string :object-type 'alist'); plists ONLY for
+  internal config (provider specs).
+- `inhibit-read-only' only inside `with-current-buffer'; restore read-only after.
+- Command names follow agent-shell (`~/agent-shell`): session verbs name their
+  object; every provider id in `agent-org-providers' gets an explicit
+  `agent-org-<id>-start-agent' there (autoload scraping misses macro-generated
+  commands; a drift test pins the two lists).  One action, one name in M-x —
+  never keep an alias of a renamed command.
+
+## The buffer
+
+- ALL status/progress/error feedback goes to the header line via
+  `agent-org-buffer-set-status', NEVER the body or mode line.  The body holds
+  exchanges plus one auto-managed metadata block at the top (PROPERTIES drawer,
+  `#+TITLE:', `#+TODO:', COMMANDS/MODES/CONFIG drawers) rewritten by
+  `agent-org-buffer-refresh-metadata' — never hand-edited.  §1, §2, §6.
+- The header shows ONE status string, and for starting/ready it is the state
+  LABEL, so a bare `:message' is invisible then: a real failure sets
+  `:state 'error', a non-failure note goes to the echo area, and a Ready
+  qualifier goes through `agent-org--note-new-session' (sets `:note').  §6.
+- ONE HEADING PER EXCHANGE: the prompt IS the heading
+  (`agent-org-buffer-begin-exchange', continuation lines indented one space);
+  the answer sits under it in a `#+begin_quote' block preceded by
+  `#+ATTR_TEXINFO: :author <model>'.  A turn with no answer text gets NO quote
+  furniture.  §1, §8.
+- NEVER place a headline of any level, or any column-0 line, inside the quote or
+  a drawer body: a headline ENDS a quote block and a `:END:' closes a drawer
+  (both measured with `org-element-parse-buffer' — the structure silently
+  vanishes).  Every agent-supplied line passes `--block-safe-lines' /
+  `--drawer-safe-lines': one space of indent, `:END:' doubled, bare
+  `#+end_quote' wrapped as `=#+end_quote='.  §3.2, §3.3.
+- Tool calls: ONE `:tool:' drawer per turn, one item per toolCallId
+  (`  - KEYWORD title' at two columns; pending→TODO, in_progress→ONGOING,
+  completed→COMPLETE, failed→FAILED from the per-file `#+TODO:' line).  A call's
+  output is the SAME item's body at four columns.  Every update repaints the
+  whole drawer from `agent-org-buffer--tools' (the turn-local record, reset per
+  turn) — never append per update, which is how replayed calls used to vanish.
+  A keyword on a drawer line is TEXT: a call's state is read, not cycled.  §3.
+- FOLD is a drawer's DEFAULT, not a creation instruction: `:tool:' OPEN (every
+  paint re-opens it — Org re-hides drawers on paths no variable guards, e.g. a
+  subtree move), `:thinking:' FOLDED (keeps a fold the user made).
+  `agent-org-mode' sets `org-hide-drawer-startup' nil BUFFER-LOCALLY (it is an
+  alias and `setq-local' follows aliases, so one line covers both spellings).
+  Drive folds with `org-fold-region' directly, NOT
+  `org-fold-hide-drawer-toggle' (whose org-element cache is stale mid-stream →
+  "Not at a drawer"); guard the repaint's un-hide with `invisible-p' (an
+  unconditional one walked the region and doubled per-paint cost).  §5.
+- Turn placement is MARKERS, never heading text: `--turn-anchor',
+  `--render-end', and the rear-advancing `--quote-end' keep the block shut at
+  every instant — every chunk and repaint inserts ABOVE `#+end_quote'.  A
+  drawer search starts BELOW the quote's closer: an agent quoting a transcript
+  can write `:thinking:' into its own answer, and a search from the heading
+  would redraw the reply instead of the drawer.  The fact of whose turn it is
+  lives with the BUFFER: `start-agent-turn' ignores its session argument so two
+  callers that start a turn without one get the same heading.
+- Queued prompts: ONE surface — a region of `* NEXT'/`* WAIT' headings between
+  the last exchange and the live `* User' box (`--render-end' answers with
+  `--queue-start', so a mid-queue turn lands above it).  NEXT/WAIT are per-file
+  keywords derived from POSITION on every render, never read back; an entry's
+  continuation lines carry one space (a `*' at column 0 would split the
+  prompt); the preamble comments sit ABOVE the first entry (a note after the
+  last would be parsed INTO it and sent).  `agent-org--queue-refresh' mirrors
+  `:pending-prompts' into region, `:QUEUE:' drawer and transcript (no line cap,
+  arrives open); the drawer regenerates from the SESSION, never from the
+  region.  Reconciliation on apply is BY TEXT — dropping by position resends an
+  answered prompt and loses an edited one.  §17, §20.
+- The `* User' box is always last, always typeable; programmatic text carries
+  `read-only' properties, and those must never reach the mode line:
+  `which-function' copies heading text WITH properties and doom-modeline's ONE
+  `format-mode-line' lets the `text-read-only' error eat the whole bar.  So
+  `agent-org-mode' sets a buffer-local `add-log-current-defun-function' =
+  `agent-org-buffer--which-function' (property-free `org-get-heading' at a
+  heading, nil elsewhere — which also suppresses which-func's imenu fallback).
+  §7.
+- The transcript is a MIRROR of the buffer (point-min to `--render-end'),
+  written ONLY at turn boundaries by `agent-org-buffer-transcribe' — never from
+  a render site (90–170 ms per turn vs two 3–15 ms writes).  Per-project
+  `.agent-org/sid-<id>.org' with the wire id sanitized to `[A-Za-z0-9._-]';
+  a `file-error' is a `message', never a broken turn; `write-region' VISIT
+  stays nil or `C-x s' would save a draft into the transcript.  §14.
+- Markdown → Org on the way in (`agent-org-convert-markdown', default t; nil is
+  the verbatim hatch): `# Title' is an Org COMMENT and `* item' a level-1
+  HEADLINE, so structure shifts — headings one level down, star bullets to
+  dashes, emphasis rewritten in a SINGLE left-to-right pass (two passes would
+  italicise the bold just made).  A code fence is a STATE threaded line by
+  line; every close path shuts an open block (an unclosed `#+begin_src'
+  swallows the buffer — token-capped agents send them).  Streaming rewrites
+  only the provisional last line (`--md-tail` to `--render-end`), and EVERY
+  boundary (`append-thought', `insert-tool', `end-agent-turn') flushes and
+  FORGETS it — a stale marker puts the next chunk's `delete-region' through
+  the drawer.  Wire bytes never change: rendering, not translation.  §15.
+
+## Sessions and the wire
+
+- A chat buffer is named `<agent>:<project> [sid]` — never the session TITLE
+  (arrives late, renames itself, is agent free text).  One label builder
+  (`agent-org-buffer--chat-label`) for the buffer name AND the switcher; the
+  rename happens only on an update carrying `:session-id' and only when the
+  string differs — `generate-new-buffer-name' counts this very buffer, so
+  per-update renames accumulate `<2><3><4>'.  §13.
+- Every prompt carries a SECOND text block, `<agent-org-context>' (agent name,
+  model name AND id, session id), built per turn and added at the ONE send
+  site so a drained queue prompt gets the same facts.  The user's block stays
+  FIRST and VERBATIM; a fact the client does not know is ABSENT, never nil;
+  every value one-line-flattened (collapse WITHOUT truncation).
+  `agent-org-send-session-context' nil is the hatch.  §18.
+- An acp client is an ALIST of dotted keyword pairs (acp.el:90, mutated with
+  `map-put!'): read `:process' with `map-elt' — `plist-get' walks it as a flat
+  plist, matches nothing and answers NIL on a live session.  GENERALISE: a stub
+  must mirror the dependency's DATA SHAPE, or the suite tests the stub (this
+  bit twice: acp client, permission dialog).
+- Resume replay: updates of `agent-org--replay-kinds' arriving while
+  `:loading' are BUFFERED; the `session/load' response is NOT the flush point
+  (qoder answers first and streams history after).  A quiet-period timer
+  re-arms per late update; `agent-org--finish-replay' paints the whole history
+  ONCE with `buffer-undo-list t'.  Restored turns use the SAME rendering
+  primitives — never add a second replay renderer.  The queue drawer is read
+  BEFORE rendering and applied AFTER `--session-ready' (the ready write mirrors
+  the buffer over the transcript, and a replayed buffer carries no queue).
+  §9.
+- NO render path may switch `font-lock-mode' OFF: in a buffer no window shows,
+  `(font-lock-mode 1)' silently FAILS to stick — an OFF is restorable, an ON is
+  not.  A chat gets its colors at DISPLAY time instead
+  (`agent-org-buffer--ensure-font-lock' on the buffer-local
+  `window-configuration-change-hook', an `unless' not a toggle — a repeat
+  rebuilds jit-lock over a whole transcript).  Batch Emacs cannot enable
+  font-lock, so tests stub it and pin the CALL SEQUENCE.  §16.
+- Killing a chat MUST release the agent (`acp-shutdown' in
+  `agent-org--forget-session' — measured: 16 stray `qoder --acp' children,
+  ~100 MB each) and ASKS first while the process is alive (`agent-org--kill-query'
+  on `kill-buffer-query-functions': acp starts agents `:noquery' with no
+  buffer, so Emacs never asks by itself).  Every kill the package performs on
+  its own goes through `agent-org--kill-buffer-silently' (a prompt raised
+  inside an acp callback is a trap).  A timer is insurance, never the
+  guarantee: re-check `buffer-live-p'.  §12.
+- ESC at a start/resume prompt is a `quit' INSIDE an acp response callback and
+  acp swallows it: both prompt sites go through `agent-org--quit-cancels',
+  which kills the buffer (the kill-hook shuts the agent) and sends NEITHER
+  `session/new' NOR `session/load'.  A cancelled prompt yields nil — both
+  readers complete with REQUIRE-MATCH, so nil is never a real answer.  §11.
+- Starting is a strategy: `agent-org-session-strategy' (new/latest/prompt)
+  read ONLY by `agent-org--begin-start'; a prefix arg forces `new' and MUST be
+  captured synchronously in the command (handshake callbacks run after the
+  command loop drops `current-prefix-arg').  Listing: ONE pager
+  (`agent-org--list-sessions') follows nextCursor — a cursor the agent REPEATS
+  is a failure, not another request — and one owner `:list-state'
+  (pending→settled) guards it; failure, timeout and empty all degrade to
+  `session/new' plus an echo-area note.  A session a live buffer already holds
+  is SHOWN, never loaded twice.  §10.
+- Aligned completion lists: pad by DISPLAY columns (`string-width', not
+  `string-pad' — a CJK title shifts everything); hand `completing-read' the
+  FUNCTION `agent-org--completion-collection' (display-sort-function only
+  rides a metadata action); resolve choices with `agent-org--selection-value'
+  (property-free `equal', NEVER `assoc').  Never locate an aligned column by
+  the whitespace in front of it — measure the first `shadow'-faced char.  §13.
+- Loading is reported by an event-driven progress reporter — NO timer (ten
+  wakeups a second displays at most five and costs a slow machine a
+  decoration): start/step/stop wrap list-paging and the replay, each PHASE owns
+  its report end-to-end, starting REPLACES, closing is `(message nil)' before
+  any echo note (not `progress-reporter-done').  Only the paint pass gets a
+  percentage; never step with a computed count on a per-chunk path.
+- Permission dialog: ACP options are keyed `optionId'/`name'/`kind' (a reader
+  asking for `label'/`id' offered the user `nil' as an answer).  A nameless
+  option shows its id; the prompter returns the chosen optionId or NIL for
+  declined; the handler sends `:option-id' XOR `:cancelled' (upstream
+  acp.el:797 errors on both and on neither).  Tests stub `completing-read'
+  with the real `{optionId,name,kind}' object, NEVER the prompter itself.
+- Models: one ACP server can front many (opencode serves MiniMax).  A provider
+  plist may pin `:model'; `agent-org--apply-pinned-model' sends
+  `session/set_config_option' ONCE per session (clears `:want-model' first —
+  ready re-enters per mid-turn update) and only for an advertised id (a stale
+  pin is reported, never sent).  C-c C-m is the interactive path; the option
+  id is "model", except goose ("provider").  Bars show the option's `name',
+  never the id; both stored, every writer through `agent-org--ingest-config'.
+  MiniMax CODE (own server, pins nothing) and MiniMax-MODELS-via-opencode are
+  different things: never let a provider borrow someone else's server.
+- Agent-supplied text (tool titles, session titles, config-option names)
+  ALWAYS goes through `agent-org-buffer--label' before a one-line context: live
+  qoder titles a tool call with a whole multi-hundred-character shell command.
+- Never place a headline at the position `re-search-forward' RETURNS — that is
+  the match's END, inside the body a repaint is about to rewrite.
+  (`line-beginning-position' returns a position too; it does not move point.)
+  A detached marker still answers `markerp' while `marker-position' is nil;
+  a helper calling `string-match' clobbers the global match data a scan is
+  built on.
+
+## Performance
+
+- Target machine: 4 GB Celeron.  Per-chunk paths are O(one line): the markdown
+  rewrite touches only the provisional tail, drawer repaints guard the un-hide,
+  the redraw cost of a 20-call board is a measured test.
+- Lite mode is a SCOPE: global default `agent-org-lite-mode', per-session
+  `agent-org-buffer--lite' (inherit/on/off — the three states are what make
+  "follow the global" reachable again after an override), cycled by C-c C-l
+  (C-u for the global), read ONLY through `agent-org-lite-p'.  Three gates: no
+  transcript write (EXCEPT while `:queued' is non-nil — a queued prompt exists
+  in no replay and no agent memory), no undo records
+  (`agent-org-buffer--record-undo-p' is the one gate), no whole-buffer reparse
+  per metadata rebuild.  It must NOT touch font-lock, drawers or conversion —
+  those are the conversation.  §19.
+- The resource monitor is a BUFFER of Org tables (`agent-org-resource-monitor'),
+  never a header segment; its one repeating timer is armed by display across
+  ALL frames (`agent-org--resource-displayed-p' — `get-buffer-window' answers
+  for one frame, so a background frame would read as hidden).  /proc parsing
+  lives in PURE functions (`--status-kb', `--stat-cpu-ticks', `--parse-load')
+  so formats are test-pinned on any machine; CPU is a RATE from two samples;
+  `--stat-cpu-ticks' counts from AFTER the `comm' field (`(Web Content)' is a
+  real process name and a naive split reads wrong numbers silently).  Tests
+  show/hide a real window — batch Emacs HAS frames (measured).  §21.
+- `byte-compile-error-on-warn' forbids `setq' over a `defvar-local' owned by
+  another file: write through `make-local-variable' (what
+  `agent-org--queue-note' does — a plain push onto `(symbol-value ...)' reads
+  the global nil, conses onto it and throws the result away silently).
+
+## Verifying and shipping a change
+
+1. Clean rebuild (`rm -f *.elc' + compile command above) and full suite.
+2. HOT-LOAD into the running Emacs — buffer file FIRST:
+   `emacsclient -e "(load \"/home/khalid/agent-org/agent-org-buffer.el\" nil t)"`
+   then the same for agent-org.el.  A live session left holding a half-reloaded
+   mix raises void-function from its timers minutes later (this is exactly how
+   Opencode's uncommitted, un-reloaded lite-mode work broke a running chat).
+3. Docs: CONVENTIONS.md §s for rules, TODOs.org for the story, README.org for
+   the user-facing shape (run the org-syntax check on any .org edited).
