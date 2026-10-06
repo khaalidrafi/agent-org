@@ -7283,6 +7283,215 @@ and it gets the fallback heading rather than eating the next question."
       (kill-buffer buf))))
 
 
+;;;; Per-exchange response clock: CLOCK: line + :RESPONSE: property
+;;
+;; User order (TODOs.org): "Each heading will be clocked, too, to derive the
+;; total response time of the agent since the prompt were sent."  The settled
+;; shape: a canonical `CLOCK:' line (the form `org-clock-in' writes, so a
+;; person editing it by hand gets Org's own machinery) inside the exchange's
+;; `:LOGBOOK:' drawer, plus a `:RESPONSE:' property with the EXACT seconds —
+;; the minute-granular range says what Org sees, the property says what was
+;; measured.  Started when the prompt goes out (the stamp is taken by
+;; `agent-org-buffer-begin-exchange'), closed at the turn boundary; replayed
+;; exchanges carry no clock rather than a false one, and a completed clock line
+;; must never be mistaken for a running one (`agent-org-buffer--turn-start'
+;; only feeds OUR writer, never `org-clock').
+
+(defun ao--rewind-turn-start (seconds)
+  "Claim the open turn in the current buffer began SECONDS ago.
+The clock records wall time and a test cannot wait for a minute to pass; the
+seam is the buffer-local start stamp itself, which only the turn boundary
+reads.  Pick a multiple of 60 in tests and the minute-granular `CLOCK:' range
+is deterministic whatever second the suite runs in."
+  (setq agent-org-buffer--turn-start
+        (time-subtract (current-time) (seconds-to-time seconds))))
+
+(defun ao--clock-line-p (string)
+  "Non-nil when STRING contains a canonical closed CLOCK line.
+The exact form `org-clock-in'/`org-clock-out' leave behind: two bracketed
+timestamps joined by `--' and an `=>' duration, so any tool that reads
+clocks (org-clock-collect, a person's grep) finds ours."
+  (string-match-p
+   "^CLOCK: \\[20[0-9][0-9]-[0-9][0-9]-[0-9][0-9] [A-Za-z]+ [0-9][0-9]:[0-9][0-9]\\]--\\[.+\\] => +[0-9]+:[0-9][0-9]$"
+   string))
+
+(defun ao--count-nodes (type)
+  "How many TYPE nodes the parser sees in the current buffer.
+`org-element-count' is newer than the Org this package ships against, and
+the count here is the assertion that STRUCTURE survived: a drawer that
+stops being a drawer, or a `*' line that splits a heading, changes what the
+parser reports while the text still reads fine to the eye."
+  (let ((n 0))
+    (org-element-map (org-element-parse-buffer) type
+      (lambda (_) (cl-incf n)))
+    n))
+
+(ert-deftest test-agent-org-typed-exchange-gets-a-response-clock ()
+  "A prompt typed into a live chat leaves a clock under its heading.
+Asserted through ORG'S OWN reader, not a grep: `org-entry-get' answering
+\"4500\" is proof the `:PROPERTIES:' drawer sits directly below the heading
+where Org looks, and `org-element' counting one `clock' node is proof the
+range is the canonical form rather than a comment that merely looks like
+one.  A second boundary call must not write a second clock: the stamp is
+consumed when the line goes in.
+
+4500 s = 75 minutes, a multiple of a minute, so the `=>  1:15' duration the
+writer computes from the minute-truncated timestamps is the same whatever
+second the suite runs in; the exact count lives in the property."
+  (ao--capture-wire
+    (let ((buf (ao--chat-on-model "qmodel" "QModel")))
+      (with-current-buffer buf
+        (ao--send-one "Capital?")
+        (ao--rewind-turn-start 4500)
+        (agent-org-buffer-append-chunk buf "Paris.\n" (agent-org-buffer--session))
+        (agent-org-buffer-end-agent-turn buf)
+        (should (ao--clock-line-p (buffer-string)))
+        (should (string-match-p " =>  1:15$" (buffer-string)))
+        ;; heading, its drawer, its logbook, then the answer as before
+        (should (apply #'ao--ordered (buffer-string)
+                       (list "^\\* Capital\\?$"
+                             "^:PROPERTIES:$" ":RESPONSE: 4500$" "^:END:$"
+                             "^:LOGBOOK:$" "^CLOCK: \\[" "^:END:$"
+                             "^#\\+begin_quote$" "Paris" "^#\\+end_quote$")))
+        ;; Org's own property reader finds it at the heading
+        (save-excursion
+          (goto-char (point-min))
+          (re-search-forward "^\\* Capital\\?$")
+          (should (equal "4500" (org-entry-get (point) "RESPONSE"))))
+        ;; the range is a genuine Org CLOCK node, not a line that only LOOKS
+        ;; like one — `org-clock-parse-clock-line' is gone in this Org, and
+        ;; `org-element' is the parser every clock tool (collet, a person's
+        ;; agenda) reads through, so counting its `clock' nodes is the proof
+        (should (equal 1 (ao--count-nodes 'clock)))
+        ;; and the buffer still parses as ONE headline for the exchange
+        (should (equal 2 (ao--count-nodes 'headline)))
+        ;; a second close (a late callback after the boundary) adds no clock
+        (agent-org-buffer-end-agent-turn buf)
+        (should (equal 1 (ao--count-occurrences (buffer-string) "^CLOCK: "))))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-each-exchange-gets-its-own-clock ()
+  "Two exchanges, two clocks — and the first is untouched by the second.
+The stamp is TURN state like the tool board: each `begin-exchange' takes a
+fresh one and each boundary spends it, so a close can never attribute one
+turn's elapsed time to another heading.
+
+`ao--send-one' leaves the SESSION streaming (only the wire's turn-end
+callback clears it), so between the two exchanges the test clears
+`:streaming' exactly as that callback would — otherwise the second prompt
+would be QUEUED behind a turn the buffer had already closed.  Both rewinds
+are whole minutes, so each `CLOCK:' duration is deterministic whatever
+second the suite runs in; a sub-minute answer would honestly round to
+`0:00' with the true seconds only in the property."
+  (ao--capture-wire
+    (let ((buf (ao--chat-on-model "qmodel" "QModel")))
+      (with-current-buffer buf
+        (ao--send-one "First?")
+        (ao--rewind-turn-start 4500)
+        (agent-org-buffer-append-chunk buf "One.\n" (agent-org-buffer--session))
+        (agent-org-buffer-end-agent-turn buf)
+        (setf (plist-get (agent-org-buffer--session) :streaming) nil)
+        (ao--send-one "Second?")
+        (ao--rewind-turn-start 3600)
+        (agent-org-buffer-append-chunk buf "Two.\n" (agent-org-buffer--session))
+        (agent-org-buffer-end-agent-turn buf)
+        (should (equal 2 (ao--count-occurrences (buffer-string) "^CLOCK: ")))
+        (should (equal 1 (ao--count-occurrences (buffer-string)
+                                                ":RESPONSE: 4500$")))
+        (should (equal 1 (ao--count-occurrences (buffer-string)
+                                                ":RESPONSE: 3600$")))
+        ;; the first exchange keeps its own numbers, in its own place
+        (should (apply #'ao--ordered (buffer-string)
+                       (list "^\\* First\\?$" ":RESPONSE: 4500$"
+                             "^CLOCK: \\[" " =>  1:15$"
+                             "One"
+                             "^\\* Second\\?$" ":RESPONSE: 3600$"
+                             "^CLOCK: \\[" " =>  1:00$"
+                             "Two"))))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-replayed-exchanges-carry-no-clock ()
+  "A restored session has no timing to invent, so it gets no clock.
+User order behind the whole feature is \"the total response time of the
+agent SINCE THE PROMPT WERE SENT\" — a replay carries neither moment, and a
+clock computed from `session/load' wall time would be a fabricated
+measurement filed under real ones.  The exchanges still render identically
+(that is the replay test above); only the clock is withheld."
+  (ao--capture-wire
+    (let ((buf (agent-org-resume-session 'qoder "sid-clock")))
+      (let ((session (agent-org--session-for-buffer buf)))
+        (ao--drive "initialize" ao--fake-init-resp)
+        (ao--drive "session/load" '((sessionId . "sid-clock")))
+        (dolist (update
+                 (list '((sessionUpdate . "user_message_chunk")
+                         (content . ((type . "text") (text . "Asked"))))
+                       '((sessionUpdate . "agent_message_chunk")
+                         (content . ((type . "text") (text . "Answered.\n"))))))
+          (agent-org--on-notification session (ao--update-notif update)))
+        (ao--settle)
+        (with-current-buffer buf
+          ;; the exchange is there...
+          (should (equal 1 (ao--count-occurrences (buffer-string)
+                                                  "^\\* Asked$")))
+          ;; ...and no clock or RESPONSE property anywhere in it
+          (should-not (string-match-p "^CLOCK: " (buffer-string)))
+          (should-not (string-match-p ":RESPONSE:" (buffer-string)))
+          (should-not (string-match-p "^:LOGBOOK:$" (buffer-string)))))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-response-clock-does-not-block-org-clocking ()
+  "Our completed clocks leave Org's own clock machinery free.
+User order: \"Your clocking MUSTN'T block user's Org clocking.  You should
+make separate commands for response clocking based on Org's clocking code.\"
+The separation is by FORM, not by hooking around Org: we never call
+`org-clock-in', and a COMPLETED `CLOCK:' line (start AND end AND duration)
+is not the state `org-clock' hunts for — an unfinished one
+(`CLOCK: [start]' with no `--') would be, making every chat look like a
+running clock after `org-clock-load' and refusing the user their own.
+Proved on the transcript copy (the file is where a person actually
+clocks): entering and leaving a real clock on a clocked exchange adds
+Org's line and changes nothing ours, and `org-clock-is-active' stays nil
+before and after for as long as we only ever wrote closed ranges.
+(`org-clock-current-task' no longer exists in this Org; `org-clock-is-active'
+is the supported predicate for \"is the one global running-clock slot taken\".)"
+  (require 'org-clock)
+  (ao--capture-wire
+    (let ((buf (ao--chat-on-model "qmodel" "QModel")))
+      (with-current-buffer buf
+        (ao--send-one "Capital?")
+        (ao--rewind-turn-start 4500)
+        (agent-org-buffer-append-chunk buf "Paris.\n" (agent-org-buffer--session))
+        (agent-org-buffer-end-agent-turn buf)
+        (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+          (with-temp-buffer
+            (org-mode)
+            ;; no persist file, no clock left running in the batch session:
+            ;; org-clock's state is GLOBAL, so a leaked running clock here
+            ;; would be exactly the blocking this test must not itself cause
+            (let ((org-clock-persist nil))
+              (unwind-protect
+                  (progn
+                    (insert text)
+                    ;; a closed clock is not a running one
+                    (should-not (org-clock-is-active))
+                    (goto-char (point-min))
+                    (re-search-forward "^\\* Capital\\?$")
+                    (org-clock-in)
+                    (should (org-clock-is-active))
+                    (org-clock-out)
+                    (should-not (org-clock-is-active))
+                    ;; ours survived untouched, and Org added its own range
+                    (should (equal "4500"
+                                   (save-excursion
+                                     (goto-char (point-min))
+                                     (re-search-forward "^\\* Capital\\?$")
+                                     (org-entry-get (point) "RESPONSE"))))
+                    (should (string-match-p ":RESPONSE: 4500$" (buffer-string)))
+                    (should (>= (ao--count-nodes 'clock) 2)))
+                (when (org-clock-is-active) (org-clock-cancel))))))
+        (kill-buffer buf)))))
+
+
 ;;;; Lite mode: the minimum resources, scoped per session or globally
 ;;
 ;; User order (TODOs.org): "Add a resource monitor for each session", and "a lite

@@ -62,6 +62,18 @@ emacs -Q --batch \
   the answer sits under it in a `#+begin_quote' block preceded by
   `#+ATTR_TEXINFO: :author <model>'.  A turn with no answer text gets NO quote
   furniture.  §1, §8.
+- EACH EXCHANGE IS CLOCKED: `--close-response-clock' writes a `:PROPERTIES:'
+  drawer (`:RESPONSE:' = exact whole seconds) plus a `:LOGBOOK:' with a COMPLETED
+  `CLOCK:' line directly under the heading.  It MUST never block the user's own
+  Org clock, so: never call `org-clock-in'/`-load' or set `org-clock-*'; only
+  ever a closed range (an OPEN `CLOCK:' is the one form `org-clock-load' mistakes
+  for a running clock); timing is the buffer-local `--turn-start', spent at the
+  boundary so a second close files no second clock.  Replay binds
+  `--record-clock-p' nil — restored exchanges carry NO clock, never a fabricated
+  one.  GOTCHA: `org-time-stamp-formats'' CAR is date-ONLY and neither half has
+  brackets; build the line from the CDR wrapped in `[...]', and compute the `=>'
+  duration from those truncated stamps (not `seconds') so it stays internally
+  consistent for Org's parsers.  §22.
 - NEVER place a headline of any level, or any column-0 line, inside the quote or
   a drawer body: a headline ENDS a quote block and a `:END:' closes a drawer
   (both measured with `org-element-parse-buffer' — the structure silently

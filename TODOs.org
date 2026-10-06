@@ -879,17 +879,46 @@ test), 277 total, all green; byte-compile clean.  Live verification was a replay
 rather than a new agent run --- the 26 real answers in this project's own
 transcript went through the new renderer and parsed as 26 intact quote blocks.
 
-** TODO Each heading clocked: the response time per exchange
-User order: "Each heading will be clocked, too, to derive the total response
-time of the agent since the prompt were sent."
+** DONE Each heading clocked: the response time per exchange
+User orders: "Each heading will be clocked, too, to derive the total response
+time of the agent since the prompt were sent." and "Your clocking MUSTN'T block
+user's Org clocking.  You should make separate commands for response clocking
+based on Org's clocking code."
 
-Not built yet.  The plan settled before this entry: a canonical =CLOCK:= line
-under each exchange heading plus a =:RESPONSE:= property holding exact seconds
-(a =CLOCK:= range is minute-granular on the wire but Org computes the duration
-itself, and a person running =C-c C-x C-i= / =C-c C-x C-o= gets to edit a real
-clock --- so write the canonical form, not an invented property only).  Started
-when the prompt goes out, closed at the turn boundary; a replay has no timing to
-invent, so restored exchanges carry no clock rather than a false one.
+Built.  The turn boundary (=/home/khalid/agent-org/agent-org-buffer.el=:
+=agent-org-buffer--close-response-clock=) writes, directly under each exchange
+heading, a =:PROPERTIES:= drawer holding =:RESPONSE:= = exact whole seconds, and
+a =:LOGBOOK:= drawer holding a canonical COMPLETED =CLOCK:= line
+(=[start]--[end] =>  H:MM=, =org-clock-out='s own form).  The property is the
+measurement; the range is for Org's clock tools.  Full rule in CONVENTIONS.md §22.
+
+The "mustn't block" order is satisfied by /form/, not by hooking around Org: we
+never call =org-clock-in=, =org-clock-out= or =org-clock-load= and never touch
+any =org-clock-*= variable (Org's one global "running clock" slot stays free),
+we write ONLY a closed range (an OPEN =CLOCK:= line is the single form
+=org-clock-load= would mistake for a running clock), and our timing is a
+buffer-local =--turn-start= spent at the boundary.  A test loads the transcript
+into a plain =org-mode= buffer, runs a REAL =org-clock-in=/=org-clock-out= on a
+clocked exchange, and confirms the user's clock is accepted while our
+=:RESPONSE:= and closed range survive untouched.
+
+Two measured traps fixed along the way: this Org's =org-time-stamp-formats= is
+=(("%Y-%m-%d %a" . "%Y-%m-%d %a %H:%M"))= --- its CAR is date-ONLY and neither
+half carries brackets, so the line is built from the CDR wrapped in =[...]=, and
+the ==>= duration is computed from those minute-truncated stamps (via
+=org-time-string-to-seconds=), never from =seconds=, so the range stays
+internally consistent.  Also: =org-clock-parse-clock-line= and
+=org-clock-current-task= no longer exist in this Org, so the tests assert
+through =org-element= (counting =clock= nodes) and =org-clock-is-active=.
+
+Scope for this unit, per the user: the automatic per-exchange recording only.
+
+** TODO Separate interactive response-clocking commands (based on Org's code)
+Deferred from the "make separate commands for response clocking" order.  The
+recording is decoupled already; this would add =agent-org-clock-in= /
+=-clock-out= / a total, implemented from Org's clocking logic but keeping their
+OWN buffer-local state (never =org-clock-marker=), so a manual response clock
+can never collide with the user's Org clock either.  Not built.
 
 ** TODO Idle time, shown while streaming so a stalled session is killable
 User order: "We'll also separately clock the idle time, i.e., when the agent has
@@ -902,5 +931,37 @@ CONVENTIONS.md forbids status in the body and a transcript must stay a record of
 the conversation.  One timer per turn (~5 s, =agent-org-stall-seconds=), fed by a
 =:last-event= timestamp reset at the single notification dispatch site, so the
 cost is a timer that fires while the agent is quiet and nothing at all while it
-is talking.  The accumulated idle time then gets its own =:IDLE:= property at the
-boundary.
+is talking.
+
+UPDATE 2026-10-07, user order: "idle time needs not be clocked, just measured
+and reported at the bottom for user monitoring."  So the =:IDLE:= property idea
+is GONE --- the indicator is the whole feature: transient overlay text, removed
+when the turn closes, nothing about it enters the buffer or the transcript.
+
+** TODO Hooks on the response boundary, and automation that answers the agent
+User order (2026-10-07): "add hooks for response completion, response exit with
+error/warning etc. and automation features to send a prompt on each exit or error
+of the agent's response."
+
+Not built yet.  The shape: run-hook variables at the turn-boundary callbacks —
+completion, error (and the cancel path, which is its own exit) — each hook
+receiving the buffer and what happened.  Automation is then just a hook (or an
+option holding a prompt string) that calls the normal send path, so a drained
+prompt and an automated one go through the same =agent-org--send-turn= and the
+same exchange rendering.  Care needed so an auto-prompt on error cannot loop
+forever against an agent that always errors — the first cut may leave that to
+the user's own hook function.
+
+UPDATE 2026-10-07, user order: "The automation should also have optional
+LLM/agent integration where it will look at the last response and send an
+appropriate prompt."  So the automation has two shapes: a FIXED prompt string,
+and an OPTIONAL generated one — on the response boundary a chooser (another
+agent call, or the same session asked in a side channel) reads the last
+response and returns the follow-up prompt to send.  That keeps the boundary
+hook as the single trigger and makes the chooser a pluggable function, so the
+agent integration is a value of an option, not a second mechanism.  Open design
+points to settle before building: which agent answers the chooser (a separate
+cheap session avoids polluting the chat transcript), where the generated prompt
+is shown before it goes out (it must be visible — an unexplained prompt
+appearing in the exchange reads as the agent talking to itself), and the loop
+guard (N automatic follow-ups max per human prompt).

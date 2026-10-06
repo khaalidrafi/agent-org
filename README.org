@@ -26,6 +26,17 @@ metadata block at the very top (see
 Org file per session, so a chat leaves you a document rather than a
 buffer you had to remember to save (see [[#transcript-file][Transcript file]]).
 
+Each exchange also records how long the agent took to answer: a
+=:RESPONSE:= property (exact seconds) and a canonical Org =CLOCK:= range
+sit directly under its heading, filed in a =:LOGBOOK:= drawer, so
+~org-clock-collect~ and the agenda's clocktable can total response time
+across a transcript.  It is written /only/ as a completed clock — the
+package never starts an Org clock of its own and touches none of Org's
+running-clock state, so this can never occupy the one global slot and
+block /your/ ~org-clock-in~: a person may still clock any exchange
+themselves as usual.  A resumed session's restored exchanges carry no
+clock rather than a fabricated one (see CONVENTIONS.md §22).
+
 * Prerequisites
 
 - Emacs 29.1+ (Org 9.0+ built in)

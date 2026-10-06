@@ -10,6 +10,29 @@ means you read the code and agree it is right, not that the tests passed.
 
 * MiniMax models through OpenCode (the pinned-model path)
 
+** TODO Read the response-clock recorder (=agent-org-buffer--close-response-clock=, agent-org-buffer.el)
+The user's hard order: /clocking must never block the user's own Org clocking/.
+Verify the three decoupling rules hold, since they are the whole point:
+- it never calls =org-clock-in=/=org-clock-out=/=org-clock-load= and never sets
+  an =org-clock-*= variable (so Org's single global "running clock" slot stays
+  free for the user);
+- it writes only a =CLOCK: [start]--[end] =>  H:MM= /completed/ range — grep for
+  any =CLOCK:= insertion that could leave an /open/ line (=no= =--=), because an
+  open line is the one form =org-clock-load= mistakes for a running clock;
+- the stamp is the buffer-local =agent-org-buffer--turn-start=, spent on the
+  first write (check the second boundary call is a genuine no-op, not a second
+  clock).
+Also confirm the two measured traps stayed fixed: the timestamp is built from
+=org-time-stamp-formats='s =cdr= wrapped in =[...]= (NOT the =car=, which is
+date-only here), and the ==>= duration is computed from the minute-truncated
+stamps, not from the =seconds= variable.
+The replay path must bind =agent-org-buffer--record-clock-p= nil
+(=/home/khalid/agent-org/agent-org.el=: =agent-org--render-replay=) — a restored
+exchange carries no clock.  Tests: the four =...response-clock...= /
+=each-exchange...= / =replayed-exchanges-carry-no-clock= /
+=does-not-block-org-clocking= cases.
+
+
 ** TODO Read =agent-org--apply-pinned-model= (agent-org.el)
 
 Question: is clearing ~:want-model~ *before* the request goes out the right

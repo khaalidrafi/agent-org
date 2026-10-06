@@ -592,7 +592,9 @@ From `info "(org) Headlines` (§2.1):
   type-ahead box, and NOTHING else.  A reply never contributes a headline: the
   answer is a quote block (§1) and a Markdown heading inside one becomes bold
   (§15), because a headline of any level would end the block.  A tool call is a
-  drawer line, not a heading (§3).
+  drawer line, not a heading (§3).  Directly under the heading sit its response
+  clock drawers (§22) — a `:PROPERTIES:` and a `:LOGBOOK:`, which are part of the
+  exchange, never a headline of their own.
 * **An empty line after a subtree is part of it** and is hidden when the
   subtree folds; two or more empty lines leave one visible separator.  Our
   `agent-org-buffer--separator` inserts exactly the one blank line that keeps
@@ -1312,7 +1314,87 @@ because nothing in Emacs can answer it.**  `sysconf' is void in the Emacs this
 was built against (measured), and asking the kernel by spawning `getconf` from a
 monitor is the one cost the feature exists to avoid.
 
-## Manual nodes referenced
+## 22. Each exchange is clocked — and the clock never blocks Org's
+
+User order: *"Each heading will be clocked, too, to derive the total response
+time of the agent since the prompt were sent"*, and *"your clocking MUSTN'T
+block user's Org clocking"*.  So the boundary writes two things directly under
+the exchange's `*` heading, before its `#+ATTR_TEXINFO`/`#+begin_quote` answer
+(§1, §8):
+
+```org
+* Capital?
+:PROPERTIES:
+:RESPONSE: 4500
+:END:
+:LOGBOOK:
+CLOCK: [2026-10-07 Wed 00:57]--[2026-10-07 Wed 02:12] =>  1:15
+:END:
+#+ATTR_TEXINFO: :author QModel
+#+begin_quote
+ Paris.
+#+end_quote
+```
+
+* `:RESPONSE:` in the property drawer is the **measurement** — exact whole
+  seconds from the prompt going out to the turn boundary.  It sits *directly*
+  under the heading, which is where `org-entry-get`, `org-set-property` and
+  completion look, so a person or an agenda command reads it as a real
+  property.
+* The `CLOCK:` line in the `:LOGBOOK:` drawer is Org's **canonical completed
+  range**, in `org-clock-out`'s own form: two inactive timestamps joined by `--`
+  and an `=>` duration.  It is for Org's clock tools (`org-clock-collect`, the
+  agenda's clocktable) — and because the timestamps are minute-granular, the
+  duration they encode can round a sub-minute answer to `0:00`.  That is fine:
+  the range is for Org's tools, the exact seconds live in the property.
+
+**The whole design is chosen so it cannot occupy the one global "running
+clock" slot that Org's clocking turns on.**  Org blocks a second `org-clock-in`
+only when a clock is *running* — the state held in `org-clock-marker` /
+`org-clock-hd-marker` / `org-clock-is-active`.  Three rules keep our recording
+off that slot:
+
+1. We **never call `org-clock-in`, `org-clock-out` or `org-clock-load`, and
+   never set any `org-clock-*` variable.**  The boundary emits text; it touches
+   none of Org's live clock state.  Zero coupling, so zero blocking.
+2. We write only a **completed** range (`[start]--[end] => H:MM`).  A completed
+   line is *history* — `org-clock-load` skips it.  An **open** `CLOCK:` line
+   (no `--`) is the one form that `org-clock-load` would mistake for a running
+   clock, and we deliberately never emit one.
+3. Our timing is a **buffer-local stamp** (`agent-org-buffer--turn-start`), a
+   piece of state entirely separate from Org's global marker.
+
+This is verified end-to-end: a test loads the transcript copy into a plain
+`org-mode` buffer, confirms `org-clock-is-active` is nil (our closed clocks look
+like nothing running), runs a *real* `org-clock-in` / `org-clock-out` on the
+same exchange, and confirms the user's clock was accepted while our `:RESPONSE:`
+and our closed range survived untouched — two clock nodes in the drawer.
+
+**Two measured traps this had to get right:**
+
+* `org-time-stamp-formats` here is `("%Y-%m-%d %a" . "%Y-%m-%d %a %H:%M")` —
+  its **car is date-ONLY** (no `%H:%M`) and **neither half carries brackets**.
+  Building the timestamp from the car gave two equal day-stamps, a zero range,
+  and an unparseable `CLOCK:` line.  The line is built from the **cdr wrapped in
+  `[...]`**, the inactive form `org-clock` itself writes.
+* The writer computes the `=>` duration from those minute-truncated timestamps
+  (via `org-time-string-to-seconds`), **not** from `seconds`, so the range is
+  internally consistent for Org's own clock parsers — a `CLOCK:` line whose
+  printed duration disagreed with its timestamps is exactly the kind of thing an
+  agenda would silently mis-sum.
+
+**Replayed exchanges carry no clock.**  `agent-org-buffer--record-clock-p` is
+bound nil for the resume-replay paint (`agent-org--render-replay`), so
+`begin-exchange` never stamps a start and the boundary is a no-op.  A `session/load`
+replay carries neither the moment the prompt was sent nor a real elapsed turn;
+a range computed from restore-time wall clock would be a fabricated measurement
+filed among the real ones.  The exchanges render identically — only the clock is
+withheld.
+
+`agent-org-buffer--close-response-clock` spends the stamp on first write, so a
+late second boundary call (a callback after the turn already closed) cannot file
+a second clock on the same heading.
+
 
 * `(org) Headlines` — §2.1 structure, left margin, separator lines.
 * `(org) Visibility Cycling` / `(org) Initial visibility` — §2.2.2,

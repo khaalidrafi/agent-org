@@ -568,6 +568,31 @@ joins that heading, while a chunk arriving with nothing to answer -- an
 orphan in `session/load' history -- has to open a heading of its own rather
 than write into the previous exchange.")
 
+(defvar-local agent-org-buffer--turn-start nil
+  "Lisp time of the moment the current exchange's prompt went out.
+Taken by `agent-org-buffer-begin-exchange' and SPENT by
+`agent-org-buffer--close-response-clock' at the turn boundary, which writes
+the exchange's `CLOCK:' line and `:RESPONSE:' property from it.  Spending it
+is what makes a second boundary call a no-op: the response time of one
+prompt is one measurement, and a late callback after the boundary (a second
+`end-agent-turn', a success that arrives after the next question opened)
+must not file a second clock under a heading that already has its own.
+nil between turns and after any close — which is also why an ORPHAN turn
+(an answer with no prompt) gets no clock: there is no sent moment to
+measure from.  `current-time', never the wire: the protocol timestamps
+nothing the client could trust anyway.")
+
+(defvar agent-org-buffer--record-clock-p t
+  "Whether an exchange opening in this pass records a response clock.
+Bound to nil around the resume-replay paint in
+`agent-org--render-replay', because a restored session carries no timing to
+invent: `session/load' stamps when history was REPLAYED, not when the answer
+took, and a `CLOCK:' line computed from those moments would be a fabricated
+measurement filed among the real ones.  A dynamic binding, not a
+`defvar-local': the replay paints synchronously in one pass with no process
+output interleaving, and `let' on a plain special is how a caller suppresses
+one render without touching the buffer's state.")
+
 (defvar-local agent-org-buffer--tools nil
   "Alist ((ID . PLIST) ...) of the current Agent turn's tool calls.
 PLIST is (:title T :status S :output O); each ID owns ONE item of the
@@ -2089,6 +2114,18 @@ across pairs."
                                      (make-marker))
                          beg))
           (setq agent-org-buffer--awaiting-answer-p t
+                ;; The response clock starts at the moment the question
+                ;; goes out, which is THIS instant: the stamp is spent by
+                ;; `agent-org-buffer--close-response-clock' at the next
+                ;; boundary.  Suppressed for the replay paint (see
+                ;; `agent-org-buffer--record-clock-p'): restored history
+                ;; has no timing to invent, and an orphan turn never
+                ;; records one either — no prompt was sent to measure
+                ;; from, so its stamp stays nil and the boundary writes
+                ;; no clock.
+                agent-org-buffer--turn-start
+                (and agent-org-buffer--record-clock-p
+                     (current-time))
                 agent-org-buffer--tools nil
                 agent-org-buffer--tools-shown nil
                 ;; the tool board is a window on the record, so a new turn
@@ -2249,6 +2286,69 @@ The `:author' line goes with it — the provenance of nothing is nothing."
                          (progn (forward-line 3) (point))))
         (move-marker agent-org-buffer--quote-end nil)))))
 
+(defun agent-org-buffer--close-response-clock ()
+  "Write this turn's `CLOCK:' line and `:RESPONSE:' property, once.
+Called with the chat buffer current, at the turn boundary.  Does nothing
+when there is no recorded start — between turns, on an orphan, and on
+EVERY replayed exchange (`agent-org-buffer--record-clock-p' nil means
+`agent-org-buffer-begin-exchange' never stamped one) — and consumes the
+stamp first, so a second boundary call cannot file a second clock.
+
+The shape is Org's own, chosen so the user's clocking and Org's tools meet
+no surprise (user order: \"Your clocking MUSTN'T block user's Org
+clocking\"):
+
+  - the property drawer sits DIRECTLY under the heading, which is where
+    `org-entry-get', `org-set-property' and completion look for it, with
+    the exact whole seconds under `:RESPONSE:' — the measurement;
+  - the closed range lives in a `:LOGBOOK:' drawer under it, which is where
+    `org-clock-into-drawer' files completed clocks, so a user who later
+    runs `org-clock-in' on the exchange gets their OWN planning `CLOCK:'
+    line under the drawers and nothing of ours moves;
+  - the line itself is `org-clock-in' format: minute-granular timestamps
+    from `org-time-stamp-formats' and an `=>' duration COMPUTED from those
+    timestamps, exactly as `org-clock-out' writes it.  A range of two equal
+    minutes and a duration of `0:00' for a 40-second answer is therefore
+    the honest canonical rendering — the minutes say what Org's own
+    duration tools will count, and the seconds live in the property.
+
+An OPEN `CLOCK:' line (no `--', no duration) is deliberately never written:
+that is the one form `org-clock-load' would mistake for a running clock,
+and a chat full of running clocks is how our recording would block the
+user's own.
+
+Always called with the chat buffer current."
+  (when-let* ((start agent-org-buffer--turn-start))
+    (setq agent-org-buffer--turn-start nil)    ; spend it: one clock per turn
+    (when-let* ((anchor (agent-org-buffer--live-mark
+                         agent-org-buffer--turn-anchor))
+                (inhibit-read-only t))
+      (let* ((end (current-time))
+             (seconds (max 0 (floor (float-time (time-subtract end start)))))
+             ;; A clock line's timestamps are INACTIVE — `[YYYY-MM-DD Day H:MM]' —
+             ;; the exact form `org-clock' writes and `org-clock-parse-clock-line'
+             ;; reads.  `org-time-stamp-formats'' CAR is date-only (no %H:%M) and
+             ;; NEITHER half carries brackets, so the string is built from its CDR
+             ;; wrapped in `[...]': the car would give two equal day-stamps and a
+             ;; 75-minute answer would render as `0:00' with no parseable range.
+             (ts-fmt (concat "[" (cdr org-time-stamp-formats) "]"))
+             (ts-start (format-time-string ts-fmt start))
+             (ts-end (format-time-string ts-fmt end))
+             ;; the duration Org will read: computed from the minute-truncated
+             ;; timestamps we just wrote, never from `seconds', so the range
+             ;; is internally consistent for Org's own clock parsers
+             (range (max 0 (floor (- (org-time-string-to-seconds ts-end)
+                                     (org-time-string-to-seconds ts-start)))))
+             (lines (format ":PROPERTIES:\n:RESPONSE: %d\n:END:\n:LOGBOOK:\nCLOCK: %s--%s =>  %d:%02d\n:END:\n"
+                            seconds ts-start ts-end
+                            (/ range 3600) (% (/ range 60) 60))))
+        (save-excursion
+          (goto-char anchor)
+          (forward-line 1)                     ; bol of the line after the heading
+          (let ((beg (point)))
+            (insert lines)
+            (agent-org-buffer--protect beg (point))))))))
+
 (defun agent-org-buffer-end-agent-turn (buffer)
   "Finish the streaming Agent turn in BUFFER.
 Font-lock is left as it was -- streaming never turned it off, so there
@@ -2275,7 +2375,14 @@ furniture entirely if the agent never said anything."
           (unless (bolp) (insert "\n"))
           (agent-org-buffer--drop-empty-quote)
           (setq agent-org-buffer--streaming-p nil
-                agent-org-buffer--stream-start nil))))))
+                agent-org-buffer--stream-start nil))
+        ;; The response clock closes at EVERY boundary, streaming or not:
+        ;; a tool-only turn answered in 90 seconds measured just as well as
+        ;; a paragraph, and a cancelled turn's elapsed time is the number
+        ;; the user wanted when they asked for a killable session.  Outside
+        ;; the `when' above so a late second call still finds the stamp
+        ;; spent rather than a second clock.
+        (agent-org-buffer--close-response-clock)))))
 
 (defun agent-org-buffer-append-chunk (buffer text session)
   "Append TEXT chunk from agent into BUFFER.

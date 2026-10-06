@@ -1742,7 +1742,14 @@ user nothing except through the echo area.  Stepping the report once per
 update costs a comparison; the display behind it is bounded by
 `agent-org-progress-min-time', which is why the loop does not also need
 to count down to some stride."
-  (let* ((buffer (plist-get session :buffer))
+  ;; `agent-org-buffer--record-clock-p' nil for the whole pass: a replay
+  ;; carries no timing to invent (`session/load' timestamps belong to the
+  ;; moment of RESTORING), so the exchanges render identically but no
+  ;; `CLOCK:' line and no `:RESPONSE:' property is written — the stamp is
+  ;; withheld at the one place that takes it
+  ;; (`agent-org-buffer-begin-exchange').
+  (let* ((agent-org-buffer--record-clock-p nil)
+         (buffer (plist-get session :buffer))
          (updates (nreverse (plist-get session :replay)))
          (total (length updates))
          (painted 0)
