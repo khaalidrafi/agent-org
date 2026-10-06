@@ -1703,15 +1703,16 @@ header line."
       (_ nil))))
 
 (defun agent-org--flush-user (buffer text)
-  "Freeze replayed user prompt TEXT under its own `* User' heading.
+  "Freeze replayed user prompt TEXT as the exchange heading it belongs to.
 No-op when TEXT is empty.  The Agent turn before it closes first, or
 the heading would land inside that response.
 
 A replay splits one prompt across several chunks, so this is where
-they become a single turn again."
+they become a single turn again.  The previous Agent turn needs no explicit
+close here: opening an exchange closes it (`agent-org-buffer-begin-exchange'),
+or the heading would land inside the answer it follows."
   (when (and text (not (string-empty-p (string-trim text))))
-    (agent-org-buffer-end-agent-turn buffer)
-    (agent-org-buffer-insert-user buffer (string-trim text))))
+    (agent-org-buffer-begin-exchange buffer (string-trim text))))
 
 (defun agent-org--render-replay (session)
   "Paint SESSION's buffered `session/load' replay into its buffer.
@@ -2131,15 +2132,15 @@ silently drop it (see `agent-org-queue--note-added')."
   "Send SESSION's next queued prompt into BUFFER, or open a live prompt.
 Reached only from a successful turn end: `agent-org--send-turn''s
 failure callback never drains, so a broken agent is not hammered and the
-queue survives for the user to inspect.  A drained prompt is rendered as
-its own frozen `* User' heading above the live type-ahead box first
-(`agent-org-buffer-insert-user'), exactly like a typed one; the box and
+queue survives for the user to inspect.  A drained prompt opens its own
+exchange above the live type-ahead box first
+(`agent-org-buffer-begin-exchange'), exactly like a typed one; the box and
 whatever draft it holds stay untouched."
   (let ((prompts (plist-get session :pending-prompts)))
     (if (null prompts)
         (agent-org-buffer-insert-prompt buffer)
       (setf (plist-get session :pending-prompts) (cdr prompts))
-      (agent-org-buffer-insert-user buffer (car prompts))
+      (agent-org-buffer-begin-exchange buffer (car prompts))
       ;; Refresh AFTER the heading is in the buffer: the one write that
       ;; drops the prompt from the `:QUEUE:' drawer is then also the write
       ;; that puts it in the conversation, so no mirror on disk is ever
@@ -2198,10 +2199,10 @@ failure is silent: =#+TITLE:= simply keeps the fallback it already had."
 
 (defun agent-org--send-turn (session buffer text)
   "Put TEXT on the wire as the current turn of SESSION.
-The frozen `* User' heading for TEXT is already in BUFFER (written above
-the live type-ahead box by `agent-org-send' with
-`agent-org-buffer-insert-user', or by `agent-org--drain-queue' for a
-queued prompt); this only does the busy bookkeeping and installs the two
+The exchange heading TEXT is written in BUFFER above the live type-ahead box
+before this runs (by `agent-org-send' directly, or by
+`agent-org--drain-queue' for a queued prompt); this only does the busy
+bookkeeping and installs the two
 callbacks.  Success ends the turn, accounts usage and drains the queue
 (`agent-org--drain-queue'); failure leaves the queue where it is.
 
@@ -2293,7 +2294,7 @@ turn and preparing the next message happen in the same window."
       ;; take-draft first: a user-error from an empty box leaves the
       ;; buffer untouched, and the checks above ran before anything moved
       (let ((text (agent-org-buffer-take-draft buffer)))
-        (agent-org-buffer-insert-user buffer text)
+        (agent-org-buffer-begin-exchange buffer text)
         (agent-org--send-turn session buffer text)))))
 
 ;;;; Queue editor: show, edit and re-order the waiting prompts

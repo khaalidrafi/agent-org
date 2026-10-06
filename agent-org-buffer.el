@@ -127,17 +127,24 @@ Either way, status text is never written into the chat buffer body."
   :type 'boolean
   :group 'agent-org-buffer)
 
-(defcustom agent-org-use-model-headings t
-  "When non-nil, an agent turn is headed by the model that answered it.
-So a turn reads \"* MiniMax M3\" instead of \"* Agent\": which model produced
-an answer is a fact about the transcript, and the header line that says so is
-gone the moment the buffer is buried or the file is re-read a week later.
-Nil keeps the stable word for anyone who wants headings not to carry a
-provider's catalog naming into their notes.
+(defcustom agent-org-quote-model-author t
+  "When non-nil, a reply's quote block is authored by the model that answered it.
+So the line above `#+begin_quote' reads \"#+ATTR_TEXINFO: :author MiniMax M3\":
+which model produced an answer is a fact about the transcript, and the header
+line that says so is gone the moment the buffer is buried or the file is
+re-read a week later.  Nil keeps the stable word \"Agent\" for anyone who does
+not want a provider's catalog naming written into their notes.
 
-Only the heading TEXT changes: every placement still goes through the
-turn anchor and `agent-org-buffer--render-end', so no code finds a turn by
-its heading."
+`:author' is the Org manual's own mechanism for the speaker of a quotation
+\(info \"(org) Quotations in Texinfo export\"), and it lands on the
+`quote-block' element as :attr_texinfo, which is where a reader — Org's own
+parser or an export backend — looks.  Nothing else is claimed for it: HTML
+and LaTeX export ignore it in Org 9.7, and the transcript is read in Emacs,
+where the attribute is visible on the line above the block.
+
+The heading is the user's question now, so this line is the only place the
+answer's provenance lives.  It is written once, when the answer starts, so a
+later `C-c C-m' renames the NEXT quote and leaves the older ones alone."
   :type 'boolean
   :group 'agent-org-buffer)
 
@@ -400,11 +407,30 @@ box stays typeable.  nil when no box is open.")
   "Point at the start of the current streaming body.")
 
 (defvar-local agent-org-buffer--turn-anchor nil
-  "Marker at the start of the streaming `* Agent' heading, if any.
-The turn's drawers are located relative to this anchor, not to the
-buffer end, because the body trails it: the type-ahead box, the
-`:thinking:' drawer and the `:tool:' drawer all live after the heading,
-so the heading is never the last thing in the turn.")
+  "Marker at the start of the current exchange's heading, if any.
+The heading's text is the user's prompt, and one heading covers the whole
+prompt-response pair.  The pair's drawers are located relative to this
+anchor, not to the buffer end, because the body trails it: the answer's
+quote block, the `:thinking:' drawer, the `:tool:' drawer and the
+type-ahead box all live after the heading, so the heading is never the
+last thing in the turn.")
+
+(defvar-local agent-org-buffer--quote-end nil
+  "Marker at the start of the streaming answer's `#+end_quote' line.
+The answer is written ABOVE this marker, so the block is closed at every
+moment of a turn: an open `#+begin_quote' would swallow the drawers, the
+type-ahead box and the rest of the transcript file.  The marker is
+rear-advancing (`set-marker-insertion-type' t) precisely so that text
+inserted at it pushes it down with the block's end instead of leaving it
+behind, inside the body.  nil between turns.")
+
+(defvar-local agent-org-buffer--awaiting-answer-p nil
+  "Non-nil when this buffer's last heading is a question with no answer yet.
+`agent-org-buffer-begin-exchange' sets it and `start-agent-turn' clears it.
+The flag is what keeps ONE heading per pair: an answer arriving under it
+joins that heading, while a chunk arriving with nothing to answer -- an
+orphan in `session/load' history -- has to open a heading of its own rather
+than write into the previous exchange.")
 
 (defvar-local agent-org-buffer--tools nil
   "Alist ((ID . PLIST) ...) of the current Agent turn's tool calls.
@@ -480,7 +506,7 @@ already telling them apart.
 Only `:provider' and `:project' are read, and `agent-org' is the fallback
 if even the provider is missing; nothing here is agent-supplied text, so
 no label filter is needed and none is applied.  Flattening and truncation
-stay `#+TITLE:' and turn-heading concerns.
+stay `#+TITLE:', quote-author and header-line concerns.
 
 STATUS is a parameter, not a read of `agent-org-buffer--status': the
 switcher labels OTHER buffers, and a function that is only correct when
@@ -925,6 +951,14 @@ Org tolerates but renders poorly."
           (not (get-text-property (point) 'read-only))))
     (error nil)))
 
+(defun agent-org-buffer--live-mark (marker)
+  "Position of MARKER, or nil when it points into no buffer.
+`mark' is the wrong tool here: it returns nil whenever the region is
+inactive, which is nearly always the case for a bookkeeping marker."
+  (and (markerp marker)
+       (marker-buffer marker)
+       (marker-position marker)))
+
 (defun agent-org-buffer--render-end ()
   "Where the next per-turn block belongs in the current buffer.
 The live type-ahead box's start when one is open -- so a streaming turn
@@ -998,27 +1032,6 @@ Signals a `user-error' when no box is open or nothing has been typed."
         (goto-char (point-max))
         text))))
 
-(defun agent-org-buffer-insert-user (buffer text)
-  "Insert a frozen User heading with TEXT into BUFFER (programmatic use).
-Lands above the live type-ahead box when one is open, so a drained queue
-prompt renders in history order rather than underneath the draft.
-
-The echo is a complete message, so it converts in one pass
-(`agent-org-buffer--markdown-convert') rather than the streaming feed --
-but with the SAME rules, which is why one reply reads alike on both sides of
-the exchange.  The agent still receives the Markdown as typed: the conversion
-belongs to the rendering, never to the wire."
-  (with-current-buffer buffer
-    (when agent-org-convert-markdown
-      (setq text (agent-org-buffer--markdown-convert text)))
-    (let ((inhibit-read-only t))
-      (save-excursion
-        (goto-char (agent-org-buffer--render-end))
-        (let ((beg (point)))
-          (agent-org-buffer--separator)
-          (insert (format "* User\n\n%s\n" text))
-          (agent-org-buffer--protect beg (point)))))))
-
 ;;;; Markdown -> Org on the reply body
 
 (defconst agent-org-buffer--md-inline-regexp
@@ -1043,7 +1056,8 @@ still letting the user watch the answer arrive.")
 
 (defvar-local agent-org-buffer--md-tail nil
   "Marker at the start of the provisional last line of the streaming turn.
-The region from here to `agent-org-buffer--render-end' is the only text
+The region from here to `agent-org-buffer--text-end' -- the answer's closing
+`#+end_quote' while one is open -- is the only text
 `agent-org-buffer--markdown-receive' ever rewrites: everything before it is
 finished, and anything drawn at a boundary (`:tool:', `:thinking:') is finished
 too, because `agent-org-buffer--markdown-flush-here' freezes the tail first.
@@ -1137,13 +1151,19 @@ turns into italics, which is a corruption of the reply, not a rendering."
   "Org structural markup for the Markdown LINE, before inline rules run.
 Only what starts at column 0 is structure: `#' there is an Org comment and
 `*' there is a headline, which is the whole reason this function exists.
-A Markdown heading is shifted ONE level down (`#' -> `**') because level 1 in
-this buffer belongs to the conversation -- a reply's `# Title' must nest
-inside its own turn, not become a sibling of it."
+A Markdown heading becomes a BOLD line (`# Title' -> `*Title*'), because this
+reply now lives inside a quote block and a headline of ANY level ends one — the
+parser stops the block at the star and everything the agent said afterwards
+leaves its own answer.  It cannot be shifted a level down either, since level 1
+is the conversation's own level (the exchange heading) and there is no level
+below one that is not still a headline.  So the words are kept and the size is
+lost, which is the least damaging reading of a heading that cannot exist here.
+`*Title*' with no space after the star is emphasis and never a headline (info
+\"(org) Headlines\": stars must be followed by whitespace) — which is why the
+stars hug the text."
   (cond
    ((string-match "^\\(#+\\) \\(.*\\)" line)
-    (concat (make-string (1+ (length (match-string 1 line))) ?*) " "
-            (agent-org-buffer--md-inline (match-string 2 line))))
+    (concat "*" (agent-org-buffer--md-inline (match-string 2 line)) "*"))
    ((string-match "^\\([ \t]*\\)\\* \\(.*\\)" line)
     ;; Exactly ONE star: `* item' is Markdown's bullet and an Org headline, but
     ;; `** not emphasis' is neither, and a looser `\\*+ ' would have rewritten it
@@ -1211,7 +1231,18 @@ when nothing is pending).  Run it in the chat buffer.
 
 The region replaced is exactly the one the previous PARTIAL wrote, so nothing
 that was already finished — and no drawer drawn at a boundary — can be touched
-by a later chunk."
+by a later chunk.  The region's END is `agent-org-buffer--text-end' rather than
+`agent-org-buffer--render-end': the provisional line lives INSIDE the answer's
+quote block, and rewriting it must never reach past `#+end_quote' into the
+drawers or the type-ahead box below it.
+
+BOTH strings go through `agent-org-buffer--block-safe-lines', which is what
+makes a converted reply safe to place in a block it could otherwise close: the
+converter's own `#+begin_src' output is a real block marker, but a `* bold'
+line it produced from a Markdown heading would have ended the quote.  The
+partial line takes its newline too, so at every instant between two chunks
+`#+end_quote' still begins its own line — the block is closed all the way
+through the turn, never only at its end."
   (when (or (and frozen (not (string-empty-p frozen)))
             (and partial (not (string-empty-p partial)))
             (markerp agent-org-buffer--md-tail))
@@ -1224,19 +1255,23 @@ by a later chunk."
         ;; `integer-or-marker-p nil' on the way to `goto-char').
         (let* ((tail-pos (and (markerp agent-org-buffer--md-tail)
                               (marker-position agent-org-buffer--md-tail)))
-               (beg (or tail-pos (agent-org-buffer--render-end))))
+               (beg (or tail-pos (agent-org-buffer--text-end))))
           (when (markerp agent-org-buffer--md-tail)
             (set-marker agent-org-buffer--md-tail nil)
             (setq agent-org-buffer--md-tail nil))
           (goto-char beg)
-          (delete-region beg (max beg (agent-org-buffer--render-end)))
+          (delete-region beg (max beg (agent-org-buffer--text-end)))
           (when (and frozen (not (string-empty-p frozen)))
             (let ((start (point)))
-              (insert frozen "\n")
+              (insert (mapconcat #'identity
+                                 (agent-org-buffer--block-safe-lines frozen)
+                                 "\n")
+                      "\n")
               (agent-org-buffer--protect start (point))))
           (when (and partial (not (string-empty-p partial)))
-            (let ((start (point)))
-              (insert partial)
+            (let* ((start (point))
+                   (text (car (agent-org-buffer--block-safe-lines partial))))
+              (insert text "\n")
               (move-marker (setq-local agent-org-buffer--md-tail (make-marker))
                            start)
               (agent-org-buffer--protect start (point)))))))))
@@ -1276,7 +1311,7 @@ The text is already there — streaming writes every chunk — so this ends the
 line, closes a fence the agent never closed, and FORGETS the state.  Forgetting
 is load-bearing, not tidiness: a provisional region must not outlive a
 boundary, because the next chunk would rewrite everything from its marker to
-`agent-org-buffer--render-end', which by then holds the drawer drawn here.  So
+`agent-org-buffer--text-end', which by then holds the drawer drawn here.  So
 a paragraph may be split across a drawer, which is what the drawer is for;
 nothing is ever rewritten twice.
 
@@ -1290,47 +1325,224 @@ Called at every boundary that draws below the turn's text — `append-thought',
           (set-marker agent-org-buffer--md-tail nil)
           (setq agent-org-buffer--md-tail nil))
         (setq agent-org-buffer--md-fragment nil)
-        (goto-char (agent-org-buffer--render-end))
+        ;; INSIDE the block, ahead of `#+end_quote': an unclosed fence shut
+        ;; after the quote would be a source block that swallowed the closing
+        ;; marker and everything under it.
+        (goto-char (agent-org-buffer--text-end))
         (let ((start (point)))
           (unless (bolp) (insert "\n"))
           (when agent-org-buffer--md-src-p
-            (insert "#+end_src\n")
+            (insert (car (agent-org-buffer--block-safe-lines "#+end_src")) "\n")
             (setq agent-org-buffer--md-src-p nil))
           (agent-org-buffer--protect start (point)))))))
 
+;;;; One heading per exchange: the question IS the heading
+
+(defun agent-org-buffer--block-safe-lines (text)
+  "TEXT as lines that cannot end the block or section they are placed in.
+Two shapes that are ordinary in agent and prompt text are STRUCTURAL here,
+and both were measured with `org-element-parse-buffer' on a real
+`#+begin_quote':
+
+  - a line starting with `*' at column 0 is not text inside the block — the
+    parser ENDS the block, makes a headline, and everything the agent said
+    after that bullet leaves its own answer.  Nesting is no protection: the
+    same happened to a `* x' line inside a `#+begin_src' the reply itself
+    opened, because headline scanning does not respect block contents.
+  - a line reading `#+end_quote' CLOSES the block, and indentation does not
+    save you (measured: the block stopped there and the following line was
+    outside it), so it needs a character that is not a marker.  Wrapping it
+    in `=...=' does that and exports as the literal text it is.
+
+So: indent every non-blank line one space, and wrap a bare end-marker in
+verbatim markers first.  Indentation is the same guard the drawer bodies use,
+and it costs nothing to the reply's own markup — measured that an indented
+`- item' is still an unordered list, an indented `|a|b|' still a table, and an
+indented `#+begin_src' still a source block.  Blank lines stay blank.
+
+This is also why the answer is never truncated and never re-flowed: the block
+is the affordance, and a record that quietly lost its middle is worse than an
+indented one."
+  (let ((case-fold-search t))
+    (mapcar (lambda (line)
+              (if (string-empty-p line)
+                  ""
+                (concat " "
+                        (if (string-match-p "^[ \t]*\\(?:=+\\)?#\\+end_quote\\(?:=+\\)?[ \t]*$" line)
+                            (format "=%s=" (string-trim line))
+                          (string-trim-right line)))))
+            (split-string (string-trim-right text) "\n"))))
+
+(defun agent-org-buffer--heading-text (text)
+  "The heading this exchange gets, from the FIRST line of the prompt TEXT.
+A heading is one line and a prompt is whatever the user typed, so the first
+line is the heading — the question a person scans for — and the rest of the
+prompt stays under it (`agent-org-buffer-begin-exchange'), because a record
+that quietly dropped lines 2..n is worse than a long heading.
+
+Whitespace runs collapse: a newline on a heading line is a broken headline.
+Nothing is TRUNCATED: `agent-org-buffer--label' is the gate for
+AGENT-supplied labels — a live qoder titles a tool call with the whole shell
+command — and a person's own question is not that.
+
+With `agent-org-convert-markdown' the line takes the same structural rule a
+reply does, so a pasted `## Setup' arrives as a bold `*Setup*' instead of
+leaving Markdown stars on a heading; the agent still receives the Markdown as
+typed, because all of this is rendering and none of it is the wire."
+  (let ((first (car (split-string (string-trim text) "\n"))))
+    (when agent-org-convert-markdown
+      (setq first (agent-org-buffer--md-structure first)))
+    (let ((flat (mapconcat #'identity (split-string first "[ \t\r]+" t) " ")))
+      (if (string-empty-p flat) "User" flat))))
+
+(defun agent-org-buffer-begin-exchange (buffer text)
+  "Open one prompt-response pair in BUFFER, headed by the question TEXT.
+User order: \"there will be ONE heading for each prompt-response pair.  The
+heading will contain the prompt.\"  So this replaces the old `* User' echo
+heading: the sent question is no longer body text under a generic word, it IS
+the heading, and the answer that follows belongs to it
+(`agent-org-buffer-start-agent-turn').
+
+Lands above the live type-ahead box when one is open, so a drained queue
+prompt renders in history order rather than underneath the draft — and the
+box is never consumed here, which is what keeps a mid-turn draft alive.
+
+Closes the previous turn first: a heading must not open inside the answer it
+follows.  And it resets the turn-local tool, thought and converter state,
+because the next `:tool:' board belongs to THIS exchange and is built from
+scratch — as is the answer's quote block, whose furniture cannot be shared
+across pairs."
+  (when (and text (not (string-empty-p (string-trim text))))
+    (with-current-buffer buffer
+      (agent-org-buffer-end-agent-turn buffer)
+      (let ((inhibit-read-only t))
+        (save-excursion
+          (goto-char (agent-org-buffer--render-end))
+          (agent-org-buffer--separator)
+          (let ((beg (point)))
+            (insert (format "* %s\n" (agent-org-buffer--heading-text text)))
+            (let* ((rest (cdr (split-string (string-trim text) "\n"))))
+              (when rest
+                (when agent-org-convert-markdown
+                  (setq rest (split-string
+                              (agent-org-buffer--markdown-convert
+                               (mapconcat #'identity rest "\n"))
+                              "\n")))
+                ;; the separator line before the answer's quote block comes from
+                ;; `agent-org-buffer-start-agent-turn', so the body of a
+                ;; multi-line question is the block's first lines, not a
+                ;; paragraph glued to the furniture
+                (insert "\n"
+                        (mapconcat #'identity
+                                   (agent-org-buffer--block-safe-lines
+                                    (mapconcat #'identity rest "\n"))
+                                   "\n"))))
+            (insert "\n")
+            (agent-org-buffer--protect beg (point))
+            (move-marker (setq-local agent-org-buffer--turn-anchor
+                                     (make-marker))
+                         beg))
+          (setq agent-org-buffer--awaiting-answer-p t
+                ;; turn-local: the drawer is rebuilt from scratch under the new
+                ;; heading, so the previous exchange's entries (and any reused
+                ;; toolCallId arriving after `resume') start fresh
+                agent-org-buffer--tools nil
+                agent-org-buffer--tools-shown nil
+                agent-org-buffer--thought nil
+                ;; markdown->org is turn-local too: a held half line from the
+                ;; previous answer must not open this one, and a fence left
+                ;; unclosed by a truncated reply must not hide this answer
+                ;; inside a code block.  The provisional tail goes with them —
+                ;; it points into the PREVIOUS answer's text, and rewriting
+                ;; from there would delete it.
+                agent-org-buffer--md-fragment nil
+                agent-org-buffer--md-src-p nil
+                agent-org-buffer--md-tail nil))))))
+
 ;;;; Streaming (the hot path)
 
-(defun agent-org-buffer--turn-heading ()
-  "The heading text of the Agent turn about to start in this buffer.
-With `agent-org-use-model-headings' (the default) that is the model in
-force — `agent-org-buffer--model-display', which is the agent's own label
-else its id — flattened by `agent-org-buffer--label', because a config
-option's `name' is agent text and a newline on a heading line is a broken
-headline.  With no model at all (Goose advertises none of this shape) or the
-option off, the word is \"Agent\": `* ' alone would be a malformed headline.
+(defun agent-org-buffer--author-line ()
+  "The affiliated keyword line naming who is answering, for the quote block.
+`#+ATTR_TEXINFO: :author NAME' is the Org manual's own way to say who is
+speaking inside a quotation (info \"(org) Quotations in Texinfo export\"), and
+the value goes unquoted: a multi-word model label is what the manual's example
+shows, and the parser stores the whole rest of the line as the value.
 
-Written ONCE, at turn start, and never derived again — which is why no
-per-turn model map is needed: the heading text IS the record of which model
-answered, and a later `C-c C-m' renames the turns after it and leaves the
-older ones alone."
-  (or (and agent-org-use-model-headings
-           (when-let* ((model (agent-org-buffer--model-display
-                               agent-org-buffer--status)))
-             (agent-org-buffer--label model)))
-      "Agent"))
+With `agent-org-quote-model-author' (the default) the name is the model in
+force — `agent-org-buffer--model-display', the agent's own label else its id —
+flattened by `agent-org-buffer--label', because a config option's `name' is
+agent text and a newline on a keyword line would end the attribute and leave a
+stray paragraph.  With no model at all (Goose advertises none of this shape) or
+the option off, the word is \"Agent\": an empty `:author' is a claim about
+nobody.
+
+Written ONCE, when the answer starts, and never derived again — which is why no
+per-turn model map is needed: this line IS the record of which model answered,
+and a later `C-c C-m' renames the quotes after it and leaves the older ones
+alone.  It moved here from the heading because the heading is the user's
+question now."
+  (format "#+ATTR_TEXINFO: :author %s"
+          (or (and agent-org-quote-model-author
+                   (when-let* ((model (agent-org-buffer--model-display
+                                       agent-org-buffer--status)))
+                     (agent-org-buffer--label model)))
+              "Agent")))
+
+(defun agent-org-buffer--text-end ()
+  "Where the next byte of the answer belongs in this buffer.
+The start of this turn's `#+end_quote' line while an answer is open, so the
+block is CLOSED at every moment of a turn — an open `#+begin_quote' swallows
+the drawers, the type-ahead box and the rest of the transcript file.  Falls
+back to `agent-org-buffer--render-end' when there is no block yet (a boundary
+arriving before any chunk does) or after the turn closed.
+
+Always called with the chat buffer current."
+  (or (agent-org-buffer--live-mark agent-org-buffer--quote-end)
+      (agent-org-buffer--render-end)))
+
+(defun agent-org-buffer--orphan-heading ()
+  "Open a heading for an answer that has no question in front of it.
+`session/load' history can carry agent updates that no `user_message_chunk'
+precedes, and dropping them because there is nothing to answer would lose the
+history the restore was for.  The word is the old heading's \"Agent\", which
+is what a turn with no recorded question actually is.
+
+This is the start of a NEW turn, so it resets the turn-local record exactly as
+`agent-org-buffer-begin-exchange' does for a question-headed turn: without it a
+second orphan turn — the tool-only case, where nothing ever streams a fresh
+quote — inherits the previous turn's `:tool:' board and thought text, because
+`agent-org-buffer--tools' is the whole record the drawer redraws from.  With the
+heading written by `begin-exchange' the reset already happened there and this
+branch never runs, so the board is never cleared a second time mid-turn."
+  (insert "* Agent\n\n")
+  (move-marker (setq agent-org-buffer--turn-anchor (make-marker))
+               (line-beginning-position))
+  (setq agent-org-buffer--awaiting-answer-p t
+        agent-org-buffer--tools nil
+        agent-org-buffer--tools-shown nil
+        agent-org-buffer--thought nil
+        agent-org-buffer--md-fragment nil
+        agent-org-buffer--md-src-p nil
+        agent-org-buffer--md-tail nil))
 
 (defun agent-org-buffer-start-agent-turn (buffer _session)
-  "Begin a new Agent heading in BUFFER if one isn't already streaming.
+  "Open this exchange's answer as a quote block in BUFFER, once per turn.
 Font-lock stays on for the whole turn so Org colors never vanish while
 streaming.  Incremental cost is kept low by the append path, which only
 ever fontifies the freshly inserted chunk (see
 `agent-org-buffer-append-chunk'), not the whole buffer.
 
-The heading names the model answering, and it reads that from the
-buffer-local status — hence the unused SESSION: the two callers that start a
-turn without a session in hand (a thought chunk or a tool update arriving
-before any chunk did) get the same heading as the streaming path, because
-the fact lives with the buffer.
+The block's furniture is three lines — the `:author' keyword, `#+begin_quote'
+and `#+end_quote' — and the answer is written BETWEEN them for the whole turn
+(`agent-org-buffer--text-end'), which is what keeps the buffer valid Org while
+the agent is still talking.  The closing marker is rear-advancing, so text
+inserted at it pushes the marker down with the line instead of leaving the
+marker inside the body.
+
+It joins the heading `agent-org-buffer-begin-exchange' wrote, because one
+heading covers the pair; with nothing to answer it opens a heading of its own
+(`agent-org-buffer--orphan-heading') rather than writing into the previous
+exchange.
 
 The whole mutation runs in `save-excursion': a turn can start while the
 user is mid-sentence in the type-ahead box, and this is one of the
@@ -1341,60 +1553,90 @@ ABOVE the box instead of inside it."
     (save-excursion
       (let ((inhibit-read-only t))
         (unless agent-org-buffer--streaming-p
+          ;; already streaming means the block is open: a second one per
+          ;; exchange would be a second answer
           (goto-char (agent-org-buffer--render-end))
           (agent-org-buffer--separator)
+          (unless agent-org-buffer--awaiting-answer-p
+            (agent-org-buffer--orphan-heading)
+            (goto-char (agent-org-buffer--render-end))
+            (agent-org-buffer--separator))
           (let ((beg (point)))
-            (insert (format "* %s\n\n" (agent-org-buffer--turn-heading)))
-            (agent-org-buffer--protect beg (point))
-            (move-marker (setq-local agent-org-buffer--turn-anchor
-                                     (make-marker))
-                         beg))
-          ;; turn-local tool state: the drawer is rebuilt from scratch
-          ;; under a new heading, so the previous turn's entries (and any
-          ;; reused toolCallId arriving after `resume') start fresh
+            (insert (format "%s\n#+begin_quote\n" (agent-org-buffer--author-line)))
+            (let ((close (point)))
+              (insert "#+end_quote\n")
+              (agent-org-buffer--protect beg (point))
+              (let ((marker (make-marker)))
+                ;; rear-advancing: text inserted AT this position goes before
+                ;; the marker, so it keeps pointing at the closing line
+                (set-marker-insertion-type marker t)
+                (move-marker marker close)
+                (setq-local agent-org-buffer--quote-end marker))))
           (setq agent-org-buffer--streaming-p t
-                agent-org-buffer--stream-start (point)
-                agent-org-buffer--tools nil
-                agent-org-buffer--tools-shown nil
-                agent-org-buffer--thought nil
-                ;; markdown->org is turn-local too: a held half line from the
-                ;; previous turn must not open this one, and a fence left
-                ;; unclosed by a truncated reply must not hide this turn's
-                ;; text inside a code block.  The provisional tail goes with
-                ;; them — it points into the PREVIOUS turn's text, and
-                ;; rewriting from there would delete it.
-                agent-org-buffer--md-fragment nil
-                agent-org-buffer--md-src-p nil
-                agent-org-buffer--md-tail nil))))))
+                agent-org-buffer--awaiting-answer-p nil
+                agent-org-buffer--stream-start (point)))))))
+
+(defun agent-org-buffer--drop-empty-quote ()
+  "Remove this turn's quote furniture when no answer text ever arrived.
+An empty quotation is not a fact about a silent agent, it is noise in the
+user's notes: a turn that only ran tools should read as the question plus its
+`:tool:' board.  Called at the turn boundary, when nothing more can arrive.
+The `:author' line goes with it — the provenance of nothing is nothing."
+  (when-let* ((end-pos (agent-org-buffer--live-mark agent-org-buffer--quote-end)))
+    (let ((inhibit-read-only t))
+      (save-excursion
+        (goto-char end-pos)                    ; bol of `#+end_quote'
+        (forward-line -1)
+        ;; EMPTY iff the line right above the closer is the opener: a real body
+        ;; line would sit between them.  (`line-end-position' of that line is
+        ;; always one short of `end-pos' — the closer's own newline — so an
+        ;; equality test there could never fire, and every tool-only turn kept
+        ;; a quote block with nothing in it.)
+        (when (looking-at "#\\+begin_quote[ \t]*$")
+          (forward-line -1)                    ; the `:author' keyword line
+          (delete-region (line-beginning-position)
+                         (progn (forward-line 3) (point))))
+        (move-marker agent-org-buffer--quote-end nil)))))
 
 (defun agent-org-buffer-end-agent-turn (buffer)
   "Finish the streaming Agent turn in BUFFER.
 Font-lock is left as it was -- streaming never turned it off, so there
 is nothing to re-enable here.  `save-excursion' for the same reason as
 `agent-org-buffer-start-agent-turn': the turn can end under a live
-draft, and point belongs with the user, not on the box's anchor."
+draft, and point belongs with the user, not on the box's anchor.
+
+The quote block needs no closing line — the answer was written INSIDE the
+block for the whole turn (`agent-org-buffer--text-end'), so the buffer has
+been valid Org since the first chunk.  What is left is bookkeeping: freeze
+the line the converter still owns, end it inside the block, and drop the
+furniture entirely if the agent never said anything."
   (with-current-buffer buffer
     (save-excursion
       (let ((inhibit-read-only t))
         (when agent-org-buffer--streaming-p
           ;; End the line the converter still owns and close a fence the agent
           ;; never closed; the text itself is already in the buffer, so this is
-          ;; bookkeeping, not a paint (see the flush's docstring).
+          ;; bookkeeping, not a paint (see the flush's docstring).  It lands
+          ;; inside the block, because `--text-end' is the closing marker while
+          ;; one is live.
           (agent-org-buffer--markdown-flush-here)
-          (goto-char (agent-org-buffer--render-end))
+          (goto-char (agent-org-buffer--text-end))
           (unless (bolp) (insert "\n"))
+          (agent-org-buffer--drop-empty-quote)
           (setq agent-org-buffer--streaming-p nil
                 agent-org-buffer--stream-start nil))))))
 
 (defun agent-org-buffer-append-chunk (buffer text session)
   "Append TEXT chunk from agent into BUFFER.
-Starts a new Agent heading if not already streaming.
+Opens this exchange's answer block if one isn't already streaming.
 
 With `agent-org-convert-markdown' (the default) the chunk goes to
 `agent-org-buffer--markdown-receive', which converts it and keeps only the last,
 still-arriving line provisional — so what the buffer holds is always what the
 user reads, and the transcript mirrors that.  Without it the agent's bytes land
-verbatim, exactly as this package behaved before the option existed."
+as they were sent — but still through
+`agent-org-buffer--block-safe-lines', because verbatim is a rendering
+sentence, not a licence to let a `*' bullet end the answer's own quote block."
   (when (and text (not (string-empty-p text)))
     (agent-org-buffer-start-agent-turn buffer session)
     (with-current-buffer buffer
@@ -1402,9 +1644,12 @@ verbatim, exactly as this package behaved before the option existed."
           (agent-org-buffer--markdown-receive text)
         (let ((inhibit-read-only t))
           (save-excursion
-            (goto-char (agent-org-buffer--render-end))
+            (goto-char (agent-org-buffer--text-end))
             (let ((beg (point)))
-              (insert text)
+              (insert (mapconcat #'identity
+                                 (agent-org-buffer--block-safe-lines text)
+                                 "\n"))
+              (unless (bolp) (insert "\n"))
               (agent-org-buffer--protect beg (point)))))))))
 
 ;;;; Auto-folded per-turn structure (tool and thinking drawers)
@@ -1440,14 +1685,6 @@ middle is worse than a long one."
                (t (concat " " line))))
             (split-string (string-trim-right text) "\n"))))
 
-(defun agent-org-buffer--live-mark (marker)
-  "Position of MARKER, or nil when it points into no buffer.
-`mark' is the wrong tool here: it returns nil whenever the region is
-inactive, which is nearly always the case for a bookkeeping marker."
-  (and (markerp marker)
-       (marker-buffer marker)
-       (marker-position marker)))
-
 (defun agent-org-buffer--redraw-drawer (buffer name lines &optional fold)
   "Replace the current turn's :NAME: drawer in BUFFER with LINES (list of strings).
 Creates the drawer at the end of the turn region when absent -- folded
@@ -1461,7 +1698,11 @@ guards and a board must not quietly collapse the agent's next action.  The
 `:thinking:' drawer's default is folded (the raw reasoning is not the point
 of the turn), the `:tool:' drawer's open (what the agent is running right
 now is).  The search is bounded by the turn anchor, not the last heading,
-because the turn's drawers and body lines all trail that heading.  Fold
+because the turn's drawers and body lines all trail that heading -- and it
+STARTS below the answer's closing `#+end_quote', not at the heading, because
+an agent that quotes a transcript back at you can put the word `:thinking:'
+in its own text, and a search from the heading would find that line and
+redraw the reply instead of the drawer.  Fold
 state is driven with `org-fold-region' directly:
 `org-fold-hide-drawer-toggle' validates the org-element cache, which
 is stale for the just-streamed region until it is re-fontified, and
@@ -1472,6 +1713,8 @@ raises \"Not at a drawer\"."
       (save-excursion
         (let* ((turn-end (agent-org-buffer--render-end))
                (region-start (or (agent-org-buffer--live-mark
+                                  agent-org-buffer--quote-end)
+                                 (agent-org-buffer--live-mark
                                   agent-org-buffer--turn-anchor)
                                  turn-end))
                ;; While a turn streams it runs from its anchor to
