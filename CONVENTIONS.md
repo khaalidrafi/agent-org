@@ -17,14 +17,17 @@ Top to bottom, a session buffer is exactly:
 
 1. **One auto-managed metadata block** at `point-min` (see §2).
 2. A blank line separating it from the conversation.
-3. The conversation: alternating `* User` and `* Agent` level-1 headings.
-   An Agent turn carries a `:thinking:` drawer of its reasoning and ONE
-   `:tool:` drawer whose items are its tool calls — `  - KEYWORD title`, with
-   what that call printed as the item's body, four columns in (see §3).  The
-   `:tool:` drawer is the tool half of the activity; the response text lives
-   outside it, which is what the drawer is *for*.
-   By default the Agent heading is not the word
-   `Agent` but the model that answered — `* MiniMax M3` (see below).
+3. The conversation: **one exchange per prompt-response pair**, each exchange
+   ONE level-1 heading whose text is the prompt, the answer under it inside an
+   Org `quote` block preceded by `#+ATTR_TEXINFO: :author <model>` (see the
+   exchange rule below).  The exchange carries a `:thinking:` drawer of the
+   reasoning and ONE `:tool:` drawer whose items are its tool calls —
+   `  - KEYWORD title`, with what that call printed as the item's body, four
+   columns in (see §3).  Both drawers sit BELOW the quote: the drawer is the
+   tool half of the activity, and the quote is the answer, which is what the
+   separation is *for*.  The persistent `* User` type-ahead box stays at the
+   end of the buffer (§7); it is where the next prompt is typed, not an
+   exchange.
 
 ```org
 :PROPERTIES:
@@ -47,37 +50,66 @@ Top to bottom, a session buffer is exactly:
 - ask about the tests\nfirst
 :END:
 
-* User
+* Refactor the auth module
 
-What does agent-org-buffer.el do?
+ and keep the tests green
 
-* Claude Sonnet
+#+ATTR_TEXINFO: :author Claude Sonnet
+#+begin_quote
+ The parser is *line* based:
+
+ - one rule per line
+#+end_quote
+
 :thinking:
-Let me look at the buffer first…
+ Let me look at the buffer first…
 :end:
+
 :tool:
   - TODO read_file
   - COMPLETE write_file
     + def login(user):
 :end:
+
+* User
+
 ```
 
 Nothing else may live in the body.  Status, progress and errors never
 become text — see §6.
 
-**The Agent heading names the model that answered** (`agent-org-use-model-headings`,
-default on): `* Claude Sonnet`, not `* Agent`.  Which model produced an answer is
-a fact about the transcript, and the header line that says so is gone as soon as
-the buffer is buried or the file is re-read.  The text comes from
-`agent-org-buffer--turn-heading` — the buffer status's model label, else its id,
-else the word `Agent` — flattened by `agent-org-buffer--label` because a config
-option's `name` is agent text and a newline on a heading line is a broken
-headline.  Two rules keep this cosmetic: the heading is written **once**, at turn
-start, so it records the model in force then and a later `C-c C-m` renames only
-the turns after it; and nothing ever finds a turn by its heading text — placement
-goes through the turn anchor and `agent-org-buffer--render-end`, which is why the
-two callers that start a turn with no session (a thought chunk or a tool update
-arriving first) get the same heading as the streaming path.
+**One heading per exchange, and the heading IS the prompt** — the user's order:
+*"From now on, there will be ONE heading for each prompt-response pair.  The
+heading will contain the prompt.  And, the response should be contained in an Org
+quote block, with the narrator/author as the model name."*  So `agent-org-buffer-begin-exchange`
+writes the prompt as the heading (its first line after the `* `, every later line
+indented ONE space so it stays the heading's own affixed metadata rather than a
+second paragraph), and the answer arrives inside `#+begin_quote`.  Attribution is
+the keyword line above the block, `#+ATTR_TEXINFO: :author <model>`, which is Org's
+own way to name the speaker of a quotation (`info "(org) Quotations in Texinfo
+export"`): Texinfo export renders it as an `@author` on the `quote` environment.
+HTML and LaTeX export ignore an author on a quotation in Org 9.7, so the line is
+also plain-readable in the buffer itself — which is where a chat is actually read.
+The model name comes from the buffer status (label, else wire id) exactly as the
+header line's model segment does, flattened by `agent-org-buffer--label` because a
+config option's `name` is agent free text and a newline on a keyword line would
+split it in two.
+
+Three consequences are load-bearing, and each is a test:
+
+* **A turn with no answer text gets no quote.**  A tool-only turn is a heading,
+  its drawers, and nothing else — `agent-org-buffer--drop-empty-quote` removes the
+  `:author`/`#+begin_quote`/`#+end_quote` furniture when the agent never wrote a
+  word, because an empty quote is a block a reader has to open to discover
+  there is nothing in it.
+* **A heading of ANY level ends a quote block**, so a Markdown `# Heading` in a
+  reply cannot keep its size here (it becomes bold — §15), and any `*` the agent
+  or a shell result puts at column 0 is indented one space before it lands in the
+  body (§16).
+* **Nothing locates a turn by heading text.**  Placement is the turn anchor and
+  `agent-org-buffer--render-end`; the quote's closer is a rear-advancing marker
+  (`agent-org-buffer--quote-end`) so every chunk, drawer repaint and flush inserts
+  ABOVE `#+end_quote` and the block stays shut at every instant of the stream.
 
 **The buffer is named for its session**: `<agent>:<project> [<session id>]`, with no
 `agent-org: ` prefix and no `*…*` delimiters.  `C-x b` and any switcher list names,
@@ -105,8 +137,8 @@ builds no string and renames nothing.  The equality guard in
 `generate-new-buffer-name` counts *this* buffer, so renaming on every
 update walks a session through `Qoder:agent-org [s]<2><3><4>`.
 Nothing agent-supplied reaches the name any more, so
-`agent-org-buffer--label` is a `#+TITLE:` and turn-heading concern, not a buffer
-one.  `agent-org-buffer-create` does give its buffer one internal
+`agent-org-buffer--label` is a `#+TITLE:`, quote-author and header-line
+concern, not a buffer one.  `agent-org-buffer-create` does give its buffer one internal
 name, ` *agent-org-<provider>*` — the leading space is Emacs' own convention for
 a buffer that should not be listed — and renames it three lines later, before
 anything could see it.
@@ -141,7 +173,7 @@ default for creation, never an instruction to every repaint.
 **`:QUEUE:` is the one volatile drawer, and it comes last.**  COMMANDS, MODES
 and CONFIG are reference the agent advertised once; QUEUE holds the prompts
 the user sent into a busy session — text that is neither reference nor
-conversation yet, because a queued prompt gets its `* User` heading only when
+conversation yet, because a queued prompt gets its exchange heading only when
 it drains.  It belongs to the block because the block is inside the range the
 transcript mirrors (§14), and a prompt the agent has never seen is the one
 thing its `session/load` replay cannot give back.  One escaped line per
@@ -173,8 +205,8 @@ it is never the buffer's name (§1).
 
 ## 3. Tool calls are items of a `:tool:` drawer
 
-Each ACP tool call renders as **one item per `toolCallId`**, inside the current
-agent turn's `:tool:` drawer (the turn heading is named for the model, see §1):
+Each ACP tool call renders as **one item per `toolCallId`**, inside the exchange's
+`:tool:` drawer (which sits below its quote block, see §1):
 
 ```org
 :tool:
@@ -292,8 +324,8 @@ status-only update that changes nothing costs no redraw.  It used to be a `:show
 field on each entry, which stopped meaning anything once the bodies shared the
 drawer: the drawer is redrawn as one string, and a per-entry guard could not stop
 a rewrite of every byte the turn ever printed.  Measured (Celeron,
-`test-agent-org-one-drawer-board-redraw-cost`, quiet machine): 20 calls of 40
-lines each cost ~140-170 ms for the turn, ~7 ms per redraw of the growing
+`test-agent-org-one-drawer-board-redraw-cost`): 20 calls of 40
+lines each cost ~140-340 ms for the turn, ~7-16 ms per redraw of the growing
 800-line body — a busy machine prints more, so re-measure rather than quoting.
 If a real session outgrows that, the drawer grows append-only instead, in
 `agent-org-buffer--tool-board-body`.
@@ -321,6 +353,34 @@ stream writes — `:thinking:` and `:tool:` alike:
 A tool body takes **three further spaces** on top of the guard's one, which is
 what makes it the contents of its `  - KEYWORD title` item rather than loose
 drawer text (§3.1); its escapes therefore appear as `    * …` and `    ::END:`.
+
+### 3.3 A quote body has the same problem, with one more shape
+
+The answer's `#+begin_quote` block (§1) is guarded by
+`agent-org-buffer--block-safe-lines`, which takes the drawer guard's indent rule
+and adds the one thing that only a quote can trip over: **an agent that prints
+`#+end_quote` at column 0 closes the block early**, and everything after it leaves
+its own answer — which an agent quoting Org syntax, or a shell result that cat'ed
+this package's own source, does routinely.  So a line that is exactly a block
+closer is wrapped as verbatim (`=#+end_quote=`), which reads as the text it is and
+is not markup.  The indent is load-bearing for the same reason as in a drawer: the
+first character of every body line is ours, never the agent's.
+
+The guard is not a nicety.  Measured with `org-element-parse-buffer' on the
+exchange, counting what the parser really made (the same three cases the test
+suite replays):
+
+| Body line as the agent wrote it | Unguarded | Guarded |
+|---+---+---|
+| `* bullet answer` at column 0 | **0** quote-blocks, 2 headlines | 1 quote-block, 0 paragraphs outside it |
+| `#+end_quote` mid-body | the block closes there: 1 paragraph escapes it | 0 escape (`=#+end_quote=`) |
+| `#+begin_src sh` … `#+end_src` | a `src-block` INSIDE the quote | the same, indented — nesting is legal |
+
+The first row is the one that decides the design: with the guard off, the answer
+has no block at all, so it has no author line either — the attribution §1 exists
+to write is silently thrown away with the quotation that carried it.  The third
+row is why indenting is cheap: a source block nested in a quotation is legal Org
+(info "(org) Example blocks"), so converted code samples survive the guard.
 
 ### The per-file keyword line
 
@@ -376,8 +436,9 @@ the old one.
 
 ## 4. Extended thinking is a folded `:thinking:` drawer
 
-Thinking text accumulates in **one** `:thinking:` drawer per Agent turn, updated
-in place.  This is the legitimate drawer use from §2.7: plain content, no
+Thinking text accumulates in **one** `:thinking:` drawer per exchange, updated
+in place, BELOW that exchange's quote block (§1).  This is the legitimate drawer
+use from §2.7: plain content, no
 headlines inside — but thinking is markdown-flavoured prose, so a `* ` bullet in
 it is a headline to Org; its body goes through the same
 `agent-org-buffer--drawer-safe-lines` guard as a tool output (§3.2).  A tool call is an item of a SEPARATE `:tool:` drawer (§3), so
@@ -427,8 +488,9 @@ number `test-agent-org-one-drawer-board-redraw-cost` prints).
 Two hard rules, both from `AGENTS.md` and enforced by tests:
 
 1. **Body stays pure conversation.**  No status messages, comment blocks, or
-   bullet lines are ever inserted as content.  The body holds only `* User` /
-   `* Agent` turns, the turn's `:thinking:` and `:tool:` drawers, and the one
+   bullet lines are ever inserted as content.  The body holds only the
+   exchanges — a prompt's heading, its attributed quote block, that turn's
+   `:thinking:` and `:tool:` drawers — the `* User` type-ahead box, and the one
    metadata block.
 2. **Status lives in the `header-line`** (the top bar, gptel/agent-shell
    style) via `agent-org-buffer-set-status`.  We do **not** mutate the
@@ -525,9 +587,12 @@ bypass `read-only` properties and would corrupt heading boundaries.
 From `info "(org) Headlines` (§2.1):
 
 * Headlines start at the **left margin** with one or more `*` + a space.
-  Our levels: `*` = turn (User/Agent), and a deeper level only where a
-  Markdown heading in a reply was converted (§15) — a tool call is a drawer
-  line, not a heading (§3).
+  Our levels: `*` = one exchange — the prompt itself is the heading text —
+  plus the `* User`
+  type-ahead box, and NOTHING else.  A reply never contributes a headline: the
+  answer is a quote block (§1) and a Markdown heading inside one becomes bold
+  (§15), because a headline of any level would end the block.  A tool call is a
+  drawer line, not a heading (§3).
 * **An empty line after a subtree is part of it** and is hidden when the
   subtree folds; two or more empty lines leave one visible separator.  Our
   `agent-org-buffer--separator` inserts exactly the one blank line that keeps
@@ -539,8 +604,9 @@ From `info "(org) Headlines` (§2.1):
 ## 9. Resume replay — buffer it, then paint once
 
 `agent-org-resume-session` replays a session's history into a fresh buffer.  Restored
-turns are laid out **exactly** like typed ones (`* User`, the model-named agent
-heading, the `:thinking:` and `:tool:` drawers), because the replay feeds the same
+turns are laid out **exactly** like typed ones (the prompt's heading, the
+`:author` line and quote block, the `:thinking:` and `:tool:` drawers), because
+the replay feeds the same
 `agent-org-buffer-*` primitives through `agent-org--buffer-update`.  Nothing
 about resume gets a private renderer.
 
@@ -842,16 +908,21 @@ in Org, not cosmetic.  Every claim below is what
 | Markdown as written | What Org makes of it | Consequence |
 |---+---+---|
 | `# Title` | an Org **comment** | the heading vanishes from every export |
-| `* item` (bullet) | a **level-1 headline** | it cuts the turn in two, and joins the conversation's own `* User` / `* Agent` siblings |
+| `* item` (bullet) | a **level-1 headline** | it ends the answer's quote block and becomes a sibling of the exchange headings |
 | `---` under a paragraph | a **headline** | same, with no title |
 | `\|:--\|--:\|` (Markdown's alignment rule) | an ordinary **data row** | the table loses its header, and `--:` even exports as an em-dash |
 | `**bold**` | bold inside bold | `*bold*` is Org's one marker; two is nesting |
 
-* **A heading is shifted ONE level down** (`#` → `**`, `###` → `*****`), never
-  rewritten in place: level 1 in this buffer belongs to the conversation (§8),
-  so a reply's `# Title` must nest inside its own turn, not become a sibling of
-  it.  That keeps the transcript's outline honest — `C-c C-t TAB` on a chat still
-  shows turns, not fragments of one answer.
+* **A Markdown heading becomes a BOLD line, never an Org headline** (`# Title` →
+  `*Title*`).  It used to be shifted one level down (`#` → `**`), and that is the
+  shape this document described until the exchange rule (§1) put the answer inside
+  a quote block: **a headline of ANY level ends a quote block**, so a reply's own
+  heading — at any level — would cut the rest of the answer out of its own block
+  and out of its attribution.  There is no level below one that is not still a
+  headline, so the words are kept and the size is lost, which is the least
+  damaging reading of a heading that cannot exist here.  `*Title*` with no space
+  after the star is emphasis and never a headline (info "(org) Headlines": stars
+  must be followed by whitespace) — which is why the stars hug the text.
 * **One scan, not a chain of rewrites.** Converting `**b**` to `*b*` and then
   running the `*i*` rule over the *result* italicises the bold it just made.  So
   all inline forms live in one alternation
@@ -915,11 +986,14 @@ depends on the conversion — the Markdown tests pin both directions, so the
 default can be argued about without touching a renderer.
 
 Cost, measured on this machine (spinning disk, 4 GB RAM, `emacs -Q --batch`,
-`test-agent-org-markdown-conversion-cost-per-line`): 400 markup-DENSE lines
-(`**bold** *emph* and `code` see [docs](...)`) in 42–55 ms, i.e. **~110 µs per
-line**, and plain prose in 7 ms — **~17 µs per line**.  So a 50-line answer costs
-about 2 ms once, a 2000-line replay about 230 ms inside the one synchronous pass a
-replay already is, and the streaming path adds one small delete+insert per chunk.
+`test-agent-org-markdown-conversion-cost-per-line` — the test PRINTS the number
+and the box's load moves it by 3x, so treat these as a band, not a constant):
+400 markup-DENSE lines (`**bold** *emph* and `code` see [docs](...)`) in 42–141
+ms, i.e. **~110–350 µs per line**, and plain prose in 7–23 ms — **~17–58 µs per
+line**.  A real answer is mostly plain prose, so a 50-line reply costs a few ms
+once; 2000 lines — a full replay — costs well under a second inside the one
+synchronous pass a replay already is, and the streaming path adds one small
+delete+insert per chunk.
 That is the same order as the 3–15 ms a transcript boundary write costs (§14), and
 it is paid per LINE, never per character.  Nothing here justifies defaulting the
 switch off; if a future rule makes it expensive, the test's ceiling (1 s for 400

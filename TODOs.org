@@ -297,6 +297,11 @@ from, and it carries the project directory.  Nine tests in /tests, both column
 assertions mutation-checked.
 
 ** DONE Model-name turn headings
+/Superseded:/ [[*One heading per exchange, the answer a quote block, authored by the model]].
+The model still names who answered, but from the quotation's =:author=
+attribute, not the heading: the next order made the heading /the user's
+question/, so provenance moved off it.
+
 User order: "Use model name instead of 'Agent' by default. You will have
 to maintain a map for each agent response's model in a session for it."
 Shipped: =agent-org-use-model-headings= (default t) in agent-org-buffer.el,
@@ -739,3 +744,73 @@ prompt now goes out as TWO ACP text blocks:
 
 7 tests (=test-agent-org-context-block-*= and friends), 267 total, all green;
 byte-compile clean; three mutations each seen to break 3, 6 and 8 tests.
+
+** DONE One heading per exchange, the answer a quote block, authored by the model
+User order: "From now on, there will be ONE heading for each prompt-response
+pair. The heading will contain the prompt. And, the response should be contained
+in an Org quote block, with the narrator/author as the model name. Read Org
+manual on how to set the author of a quote in a quote template."
+
+Shipped in agent-org-buffer.el:
+- =agent-org-buffer-begin-exchange= writes =* <the prompt>= --- the question IS
+  the heading, replacing the =* User= echo --- and the prompt's remaining lines
+  stay under it, one space in.  The type-ahead box keeps its =* User= heading
+  because it is an input control, not a pair.
+- =agent-org-buffer-start-agent-turn= opens the answer as three furniture lines
+  --- =#+ATTR_TEXINFO: :author <model>=, =#+begin_quote=, =#+end_quote= --- and
+  every chunk lands BETWEEN them through =agent-org-buffer--text-end=, so the
+  buffer is valid Org at every moment of a turn, not only at the boundary.  The
+  closer is a rear-advancing marker.
+- =:author= is the manual's own way to name a speaker in a quotation (info
+  "(org) Quotations in Texinfo export"), and the proof was run: the parser
+  attaches =(":author MiniMax M3")= as =:attr_texinfo= and a Texinfo export
+  emits =@author= inside =@quotation=.  =agent-org-quote-model-author= (default
+  t) is the knob; off, or no model reported, gives the word =Agent=.
+  Provenance is written once, at turn start, so a later =C-c C-m= renames the
+  quotes after it --- the same discipline the old model heading had.
+- =agent-org-buffer--block-safe-lines= guards the body: =*= at column 0 ENDS a
+  quote block (measured with =org-element-parse-buffer=: zero quote blocks and
+  two headlines), so every line takes one space, and a literal =#+end_quote= is
+  wrapped in verbatim markers because indentation alone does not stop it closing
+  the block.  This is also why a Markdown =# Heading= in a reply becomes a bold
+  line: a headline of /any/ level would end the quotation.
+- =agent-org-buffer--drop-empty-quote= removes the furniture when no text ever
+  arrived, so a tool-only exchange reads as the question plus its board.
+  The first cut compared positions --- =line-end-position= of the opener is
+  always one short of the closer's bol, so it could never fire.  The case is now
+  pinned by a test, and the mutation (old guard restored) fails it.
+- =agent-org-buffer--orphan-heading= is the one place =* Agent= survives: a
+  replayed chunk with no question in front of it gets a heading of its own
+  rather than writing into the previous exchange.
+
+14 tests in the exchange section (=test-agent-org-exchange-heading-wears-the-prompt=
+through =test-agent-org-replay-paints-the-same-exchange-shape=, plus the furniture
+test), 277 total, all green; byte-compile clean.  Live verification was a replay
+rather than a new agent run --- the 26 real answers in this project's own
+transcript went through the new renderer and parsed as 26 intact quote blocks.
+
+** TODO Each heading clocked: the response time per exchange
+User order: "Each heading will be clocked, too, to derive the total response
+time of the agent since the prompt were sent."
+
+Not built yet.  The plan settled before this entry: a canonical =CLOCK:= line
+under each exchange heading plus a =:RESPONSE:= property holding exact seconds
+(a =CLOCK:= range is minute-granular on the wire but Org computes the duration
+itself, and a person running =C-c C-x C-i= / =C-c C-x C-o= gets to edit a real
+clock --- so write the canonical form, not an invented property only).  Started
+when the prompt goes out, closed at the turn boundary; a replay has no timing to
+invent, so restored exchanges carry no clock rather than a false one.
+
+** TODO Idle time, shown while streaming so a stalled session is killable
+User order: "We'll also separately clock the idle time, i.e., when the agent has
+paused responding for some time and show that temporarily at the end of the
+prompt while streaming so that the user can kill a stalled session."
+
+Not built yet.  The shape decided: a TRANSIENT indicator --- an =after-string=
+overlay at the end of the prompt heading, never buffer text, because §6 of
+CONVENTIONS.md forbids status in the body and a transcript must stay a record of
+the conversation.  One timer per turn (~5 s, =agent-org-stall-seconds=), fed by a
+=:last-event= timestamp reset at the single notification dispatch site, so the
+cost is a timer that fires while the agent is quiet and nothing at all while it
+is talking.  The accumulated idle time then gets its own =:IDLE:= property at the
+boundary.

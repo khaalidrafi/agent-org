@@ -2080,3 +2080,171 @@ the delimiters work: the agent did not treat the metadata as the request.
 - /The queue editor does not show it./  A waiting prompt has no facts of its own
   yet: the block is built when the turn actually goes out, from the model in
   force /then/.
+
+* One heading per exchange: the question IS the heading, the answer a quote block
+
+The user's order, verbatim: /"From now on, there will be ONE heading for each
+prompt-response pair. The heading will contain the prompt. And, the response
+should be contained in an Org quote block, with the narrator/author as the model
+name. Read Org manual on how to set the author of a quote in a quote template."/
+
+So the shape on disk is =* <the question>=, its remaining lines indented one
+space, then =#+ATTR_TEXINFO: :author <model>= / =#+begin_quote= / the answer /
+=#+end_quote=, then the turn's =:thinking:= and =:tool:= drawers, then the
+persistent =* User= type-ahead box.  The old =* Agent= heading is gone; a turn
+with no question in front of it is the one exception
+(=agent-org-buffer--orphan-heading=).
+
+** TODO Read =agent-org-buffer--quote-end= and the one invariant it guards (agent-org-buffer.el:418, 1566)
+
+Question: is /closing the block before writing a byte of the answer/ the right
+way to keep a streaming buffer valid Org, or is it a marker discipline that will
+break the first time someone adds a render site?
+
+The furniture goes in as three lines at turn start
+(=agent-org-buffer-start-agent-turn=:1564), and every chunk is inserted AT the
+=#+end_quote= line through =agent-org-buffer--text-end= (1491).  The marker is
+rear-advancing (=set-marker-insertion-type= t, 1572), which is the whole trick:
+text inserted at the closer's position pushes the closer down instead of leaving
+the marker inside the body.  The alternative — append text, then write the closer
+at the boundary — is what an open =#+begin_quote= does today, and it is not a
+style preference: an open block swallows the drawers, the type-ahead box and the
+rest of the transcript file (§14 of CONVENTIONS.md).
+
+The cost is real and this is the thing to judge: a new render site below the
+quote must call =--text-end= and not =--render-end=, or it writes outside the
+answer.  Both exist, both are right in their own place — =--render-end= is the
+/turn/ anchor (the box, or =point-max= on a replay) and =--text-end= is the
+/answer/ anchor.  =agent-org-buffer-begin-exchange= and the drawer redraws use
+the former; the chunk path uses the latter.
+
+** TODO Read =agent-org-buffer--block-safe-lines= and its two measurements (1341)
+
+Question: is one space of indentation an acceptable price for every reply?
+
+It is the guard, and the parser is what makes it non-negotiable.  Measured with
+=org-element-parse-buffer= on a real =#+begin_quote=: a =*= at column 0 inside
+the block does not render as text — the block ENDS there and the rest of the
+answer becomes headlines and paragraphs outside it.  A Markdown bullet list in a
+reply, i.e. the single most common thing an agent writes, is exactly that shape.
+Nesting is no protection either: a =* x= line inside a =#+begin_src= the reply
+itself opened still ended the quote, because headline scanning does not respect
+block contents.  A literal =#+end_quote= in the body closes the block and
+indentation alone does not fix it, so that one line additionally gets wrapped in
+=...= and exports as the text it is.
+
+The trade to confirm: indentation is invisible in the buffer and in HTML export,
+and it means =org-edit-special= on a reply shows the indented form.  Nothing is
+ever truncated or re-flowed, for the same reason the drawers hold that line.
+
+** TODO Read =agent-org-buffer--drop-empty-quote= and the guard that was wrong (1579)
+
+Question: is "no text arrived" the right test for dropping the furniture?
+
+A tool-only turn must read as the question plus its board, not as a quote block
+with nothing in it — an empty quotation is noise in the user's notes, and the
+=:author= line goes with it because the provenance of nothing is nothing.  The
+test is "the line above the closer is the opener".
+
+This is the one function that had a real bug this round and it is worth seeing
+why: the first cut compared =line-end-position= of the line above against the
+closer's position, which can never be equal — the closer's own newline sits
+between them — so every tool-only turn kept an empty block and the test that
+looked right passed for the wrong reason.  The test is structural (=forward-line -1= then =looking-at= the opener), and the
+new test =test-agent-org-turn-with-no-answer-text-keeps-no-quote-furniture= now
+pins the case.  It did not exist when the bug was found — the bug came out of a
+live replay, not a red test, which is the honest version of this story and the
+reason to add the test rather than trust the fix.  Mutation check, run: put the
+position comparison back and that test fails with =(equal 0 1)= — one quote block
+where there should be none.
+
+** TODO Read the author line against the manual (1464)
+
+Question: is =#+ATTR_TEXINFO: :author= the right carrier, given it only /shows/
+in a Texinfo export?
+
+It is the manual's own way to name a speaker inside a quotation (info
+"(org) Quotations in Texinfo export"), and the ordered asked for exactly that
+node.  So this is a deliberate choice, not an accident: the attribution is
+/org-native metadata/, attached to the block by an affiliated keyword, which is
+why it survives =org-mode=, folding, and a transcript round trip, and why no
+invented =[[narrator]]=-style syntax exists.  The value is unquoted because that
+is what the manual's example shows and because the parser stores the whole rest
+of the line as the value.
+
+Proof, run against this Emacs: parse gives =(org-element-property :attr_texinfo
+q)= → =(":author MiniMax M3")=, and a Texinfo export of the exchange emits
+
+#+begin_example
+@quotation
+answer
+
+@author MiniMax M3
+@end quotation
+#+end_example
+
+Note the accessor: =:affiliated= reads NIL on this Emacs.  A scratch probe
+reporting "0 authorised quotes" was the probe's wrong accessor, not a code bug —
+if you check this yourself, use =org-element-property :attr_texinfo=.
+
+** TODO Read =agent-org-buffer--heading-text= and what a heading may hold (1376)
+
+Question: is the FIRST line of the prompt the right heading, with lines 2..n left
+as indented body?
+
+A headline is one line, so a multi-line prompt cannot go on the heading line
+whole.  Putting only line 1 there and dropping the rest would silently lose the
+question, so the remainder stays under the heading, one space in, through the
+same =--block-safe-lines= guard (a pasted prompt that begins with ="* foo"= is
+then body text, not a second headline).  Nothing is truncated here —
+=agent-org-buffer--label= is the gate for /agent/-supplied labels (a live qoder
+titles a tool call with a whole shell command) and a person's own question is not
+that.  With =agent-org-convert-markdown= the first line gets the same structural
+rule a reply does, so a pasted =## Setup= becomes a bold =*Setup*' rather than
+leaving Markdown stars on a heading line.
+
+=agent-org-quote-model-author= (130) is the knob: nil gives =:author Agent= for
+every quote.  Model provenance then lives nowhere, which is the trade — the
+heading is the user's question now, so the model moved off it.
+
+** DONE The two bugs this round found, both seen failing first
+
+- =--drop-empty-quote='s position comparison, above: an empty block survived on
+  every tool-only turn.
+- =--orphan-heading= did not reset the turn-local record.  A tool-only turn
+  streams nothing, so nothing ever wrote a fresh board, and the next orphan turn
+  redrew the PREVIOUS exchange's =:tool:= entries under it —
+  =agent-org-buffer--tools= is the whole record the drawer is redrawn from.  With
+  the reset in place the board starts empty (test
+  =test-agent-org-orphan-agent-chunk-gets-a-heading-of-its-own= plus the
+  tool-only pair).
+
+** DONE Live replay, and the load-shedding that came with it
+
+No live agent run was possible while this session's own Emacs was the review
+target, so the shape was checked against /real/ data instead: the 26 agent answers
+in this project's own transcript (=.agent-org/b480ebca-….org=) were extracted and
+replayed through =begin-exchange= / =append-chunk= / =end-agent-turn=, then parsed
+with =org-element-map=.  26 quote blocks, no runaway headlines, drawers intact.
+The scratch file that did it was deleted rather than kept: it hard-coded a /tmp
+path and its author-count accessor was the wrong one, and
+=test-agent-org-replay-paints-the-same-exchange-shape= already pins the same
+invariant in the suite.
+
+Cost was re-measured on this box for the docs
+(=test-agent-org-markdown-conversion-cost-per-line=,
+=test-agent-org-one-drawer-board-redraw-cost=): the numbers move by 3x with load,
+so CONVENTIONS.md §15 and §3.1 now quote a band and say the test prints the
+number, instead of a constant nobody can reproduce.
+
+** TODO What this does NOT do
+
+- /Clocking is not in this commit./  The order that follows this one ("Each
+  heading will be clocked too …") is the next unit: a =CLOCK:= line and a
+  =:RESPONSE:= property per exchange, then the stall/idle indicator.
+- /The prompt echo is not re-styled./  What a person typed is the heading text
+  and the body under it; no prefix, no decoration, nothing added to the wire.
+- /Old transcripts keep the old shape./  A =* User= / =* Agent= pair from an
+  earlier build replays as itself: =session/load= replays chunks, and
+  =begin-exchange= rebuilds the exchange from those chunks, so a restored chat
+  gets the new shape even when its mirrored file has the old one.

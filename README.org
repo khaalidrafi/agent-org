@@ -6,20 +6,21 @@
 ~agent-org~ is a lightweight, Org-native chat UI for coding agents that
 speak [[https://agentclientprotocol.com/][ACP]] (Agent Client Protocol).  Unlike ~agent-shell~, it runs no hidden
 comint/terminal buffer: it talks to the ~acp~ package directly and
-renders agent output natively as Org headlines.
+renders the conversation natively as an Org document.
 
 All status, progress and error feedback appears in the chat buffer's
 own *header line* (the top bar, as used by ~gptel~ and ~agent-shell~) — never
-as system messages in the document body.  The body contains the
-~* User~ / agent-turn conversation, each agent turn headed by the model that
-answered it (~* MiniMax M3~; see ~agent-org-use-model-headings~), with that
-turn's tool calls as one ~  - KEYWORD title~ item per call in an open ~:tool:~
-drawer (its state written as ~TODO~/~ONGOING~/~COMPLETE~/~FAILED~), with what
-each call printed as that item's own body, and its
-extended thinking in
-a folded ~:thinking:~ drawer under the same heading — the text of a reply
-converted from the agent's Markdown into Org markup on the way in (see
-[[*What the agent wrote becomes Org]]) — plus one auto-managed
+as system messages in the document body.  The body is a conversation in
+/exchanges/: ONE heading per prompt-response pair, and the heading's text /is/
+the prompt (~* Refactor the auth module~).  The answer sits under it inside an
+Org quote block, attributed to the model that wrote it by a
+~#+ATTR_TEXINFO: :author~ line, so the pair reads as /you asked this — that
+model answered/ with nothing else to parse.  Tool calls follow the quote as one
+~  - KEYWORD title~ item per call in an open ~:tool:~ drawer (its state written
+as ~TODO~/~ONGOING~/~COMPLETE~/~FAILED~), with what each call printed as that
+item's own body, and extended thinking in a folded ~:thinking:~ drawer — the
+text of a reply converted from the agent's Markdown into Org markup on the way
+in (see [[*What the agent wrote becomes Org]]) — plus one auto-managed
 metadata block at the very top (see
 [[#session-metadata][Session metadata]]) — and, by default, that whole body is mirrored to one
 Org file per session, so a chat leaves you a document rather than a
@@ -113,17 +114,32 @@ NonGNU ELPA.
    unlocking, no composing step.  Once the session is Ready the box
    appears and never goes away: the heading itself is frozen, the body
    under it is always typeable, mid-turn included (that is where
-   type-ahead goes).  Hit ~C-c C-c~ to send; the draft freezes into its
-   own =~* User=~ heading above the reply and the same empty box stays
+   type-ahead goes).  Hit ~C-c C-c~ to send; the draft becomes its own
+   exchange — /the heading is what you typed/ — and the same empty box stays
    open for the next message.  Everything the program writes (headings,
    agent output, tool calls) is read-only via text properties, and turns
    render /above/ the box, so chat history can't be mangled by accident
    and a streaming reply never scribbles over what you are typing.  The
    cursor still travels freely over history — you can browse and copy
    it; typing into frozen text is refused.
-3. Watch the reply stream under the agent-turn heading — the model that
-   answered it (~* MiniMax M3~), or ~* Agent~ with
-   ~agent-org-use-model-headings~ nil; each tool call is
+3. Watch the reply stream into the exchange's quote block — under a
+   ~#+ATTR_TEXINFO: :author~ line naming the model that answered it
+   (~#+ATTR_TEXINFO: :author MiniMax M3~), so the pair reads
+   ~* <your prompt>~ / that model said this, with no ~* Agent~ heading to
+   wade through:
+   #+begin_example
+   * Refactor the auth module
+
+    and keep the tests green
+
+   #+ATTR_TEXINFO: :author MiniMax M3
+   #+begin_quote
+    The parser is *line* based:
+
+    - one rule per line
+   #+end_quote
+   #+end_example
+   Every tool call is
    one ~  - KEYWORD title~ item of the turn's ~:tool:~ drawer (~TODO~ pending →
    ~ONGOING~ running → ~COMPLETE~
    done / ~FAILED~ failed), redrawn in place as the state changes,
@@ -133,7 +149,7 @@ NonGNU ELPA.
    agent's next action — and ~TAB~ on the turn folds calls and output together
    once it has stopped (nothing is ever truncated, and a call that printed
    nothing gets no body lines), while extended thinking accumulates in one
-   folded ~:thinking:~ drawer under the same heading.
+   folded ~:thinking:~ drawer below the quote.
    Sending while the agent is still responding /queues/ the draft
    (~agent-org-queue-when-busy~, on by default — agent-shell's type-ahead
    model): queued prompts go out FIFO as each turn ends successfully.
@@ -477,12 +493,13 @@ appearing behind it.  A project that has no use for the files can add
 Agents answer in Markdown, and this buffer is Org, where the two syntaxes
 disagree /structurally/: a ~#~ heading at column 0 is an Org comment (it
 disappears from every export), a ~*~ bullet is a level-1 headline (it cuts the
-turn in two), and a line of dashes under a paragraph is a headline too.  So a
+turn in two / and ends the answer's quote block), and a line of dashes under a
+paragraph is a headline too.  So a
 reply's text — and your own echoed prompt — is rewritten on the way in
 (~agent-org-convert-markdown~, default on):
 
 #+begin_example
-  # Heading     ** Heading      one level down
+  # Heading     *Heading*       bold: a headline would end the quote
   * item        - item
   **bold**      *bold*          one marker, not two
   *italic*      /italic/
@@ -493,9 +510,10 @@ reply's text — and your own echoed prompt — is rewritten on the way in
   |:--|--:|     |---+---|       Org's column groups
 #+end_example
 
-- The heading shift is the point: a reply that starts its own outline nests
-  /inside/ its turn instead of becoming a sibling of it, which would cut the
-  rest of the answer off into a new section.
+- A Markdown heading becomes BOLD, not an Org heading: the answer lives inside a
+  quote block and a headline of /any/ level ends one, so ~## Summary~ that kept
+  its size would cut the reply out of its own block.  The words survive, the
+  size is what is given up.
 - A fence becomes a real source block and its body is left alone — a shell
   sample full of ~#~ and ~*~ is code, not markup.  A fence the agent never
   closed is closed for it, because an open one hides the rest of the buffer
@@ -522,13 +540,12 @@ what this package did before the option existed.
 
 - ~agent-org-use-header-line~ — when nil, status messages go to the
   echo area via ~message~ instead of the top bar.
-- ~agent-org-use-model-headings~ — when non-nil (the default) an agent turn
-  is headed by the model that answered it (~* MiniMax M3~) rather than the
-  word ~* Agent~.  Which model produced an answer is a fact about the
-  transcript, and the top bar that says so is gone the moment the buffer is
-  buried or the file is re-read.  Nil keeps the stable heading for anyone
-  who would rather a provider's catalog naming not appear in their notes;
-  an agent that advertises no model gets ~* Agent~ either way.
+- ~agent-org-quote-model-author~ — when non-nil (the default) an answer's quote
+  block is attributed to the model that wrote it
+  (~#+ATTR_TEXINFO: :author MiniMax M3~).  Nil keeps the stable word
+  ~:author Agent~, for a transcript kept across a provider switch where a model
+  name in the notes would be a claim about someone else's catalog; an agent that
+  advertises no model gets ~Agent~ either way.
 - ~agent-org-convert-markdown~ — when non-nil (the default) Markdown in a
   reply, and in your own echoed prompt, becomes real Org markup: see
   [[*What the agent wrote becomes Org]].  Nil leaves the agent's bytes verbatim.

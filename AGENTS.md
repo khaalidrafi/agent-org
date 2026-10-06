@@ -53,7 +53,9 @@ emacs -Q --batch \
 # - ALL status / progress / error feedback goes to the chat buffer's header
 #   line (top bar) via `agent-org-buffer-set-status'.  NEVER write system
 #   messages, comment blocks, or bullet lines into the Org body.  The body
-#   holds User/Agent conversation content plus ONE auto-managed block at
+#   holds EXCHANGE content (one heading per prompt-response pair: the prompt as
+#   the heading, the answer in an attributed quote block) plus ONE auto-managed
+#   block at
 #   the very top: the PROPERTIES drawer first, then `#+TITLE:', then
 #   COMMANDS/MODES/CONFIG drawers — all folded by default, no heading
 #   (headings belong to the conversation).  Rewritten by
@@ -128,8 +130,8 @@ emacs -Q --batch \
 #   redraw guard is `agent-org-buffer--tools-shown' — the WHOLE rendered board,
 #   reset per turn — because a per-entry `:shown' is meaningless once the
 #   bodies share the drawer: a status-only update would rewrite and re-protect
-#   every byte the turn ever printed (measured on a quiet machine: 20 calls x
-#   40 lines = ~7 ms per redraw, ~140-170 ms for the turn,
+#   every byte the turn ever printed (measured: 20 calls x
+#   40 lines = ~7-16 ms per redraw, ~140-340 ms for the turn,
 #   `test-agent-org-one-drawer-board-redraw-cost'; the same test prints more
 #   when the box is busy).
 # - Every drawer BODY the stream writes goes through
@@ -283,7 +285,8 @@ emacs -Q --batch \
 #   not an optimisation: `generate-new-buffer-name' counts this very buffer, so
 #   renaming per update walks the session through
 #   `Qoder:agent-org [s]<2><3><4>'.  No agent text reaches the name any more,
-#   so `agent-org-buffer--label' is a `#+TITLE:' and turn-heading concern only.
+#   so `agent-org-buffer--label' is a `#+TITLE:', quote-author and header-line
+#   concern only.
 #   `rename-buffer' with RENAME-ALL-PROCESSES nil keeps the acp process name
 #   readable in list-processes.  The id is /also/ an Org `:ID:' property, but
 #   never a header-line segment: the bar carries state, the name carries
@@ -447,23 +450,35 @@ emacs -Q --batch \
 #   passing implementation with `(18 47)' on two identical 65-column rows).
 #   Measure the first character carrying the `shadow' face — the dim run IS the
 #   column, by construction.
-# - An Agent turn's heading is the MODEL that answered: `agent-org-buffer--turn-heading'
-#   reads the buffer-local status (`agent-org-buffer--model-display' — the agent's
-#   label, else its id) and flattens it with `agent-org-buffer--label', because a
-#   config option's `name' is agent text and a newline on a heading line is a
-#   broken headline.  No model at all (Goose advertises none of this shape), or
-#   `agent-org-use-model-headings' nil, gives the word "Agent": `* ' alone is a
-#   malformed headline.  The text is written ONCE at turn start and never derived
-#   again, so a later `C-c C-m' renames the turns after it and the transcript
-#   carries per-turn provenance for free — which is why the settled design's
-#   `:turn-models' map was NOT built: nothing could read it (the heading is the
-#   record), and a resume cannot know per-turn models anyway, since
-#   `session/load' attaches no model to a chunk.
-# - Never locate a turn by heading TEXT: placement is `agent-org-buffer--turn-anchor'
-#   and `agent-org-buffer--render-end', which is what makes renaming the heading a
-#   cosmetic change (5 pre-existing ~^\\* Agent$~ assertions stayed green — they run
-#   on fixtures whose status carries no model, so they ARE the fallback path).
-#   Same reason `agent-org-buffer-start-agent-turn' still ignores its SESSION
+# - ONE HEADING PER EXCHANGE, and the heading IS the prompt: `agent-org-buffer-begin-exchange'
+#   writes `* <first line of the prompt>' with every later line indented ONE space (so
+#   it stays the heading's own affixed metadata, not a second paragraph), and the answer
+#   goes under it inside `#+begin_quote', preceded by `#+ATTR_TEXINFO: :author <model>' —
+#   Org's own way to name the speaker of a quotation (info "(org) Quotations in Texinfo
+#   export").  The user's order: "there will be ONE heading for each prompt-response pair.
+#   The heading will contain the prompt. And, the response should be contained in an Org
+#   quote block, with the narrator/author as the model name."  The model name is read from
+#   the buffer-local status (`agent-org-buffer--model-display' — the agent's label, else
+#   its id) and flattened with `agent-org-buffer--label', because a config option's `name'
+#   is agent text and a newline on a keyword line would split it in two.  There is NO
+#   `* Agent' heading any more and no `agent-org-use-model-headings' variable: provenance
+#   moved onto the quote, where export honours it, instead of a headline that competes with
+#   the conversation's own outline.  A turn that never produced answer text gets NO quote
+#   furniture at all (`agent-org-buffer--drop-empty-quote`) — an empty block is a fold a
+#   reader must open to discover is empty.
+# - NEVER INSERT A HEADLINE OF ANY LEVEL INSIDE THE QUOTE, and never let agent text reach
+#   column 0 there: a headline ENDS a quote block at any level, so `# Title' from a
+#   Markdown reply becomes BOLD (`*Title*', §15 of CONVENTIONS.md) and every body line goes
+#   through `agent-org-buffer--block-safe-lines' (one space of indent, plus a bare
+#   `#+end_quote' wrapped as `=#+end_quote=' because the agent's own closer would end the
+#   block and dump the rest of the answer outside it).  Measured with `org-element-parse-buffer'
+#   on the real block: an unindented `* bullet' inside a quote reports ZERO quote-blocks and
+#   TWO headlines — the answer loses its block AND its attribution.
+# - Never locate a turn by heading TEXT: placement is `agent-org-buffer--turn-anchor',
+#   `agent-org-buffer--render-end' and the quote's own closer marker
+#   (`agent-org-buffer--quote-end', rear-advancing), which is what lets the block stay shut
+#   at every instant of the stream — every chunk, drawer repaint and flush inserts ABOVE
+#   `#+end_quote'.  Same reason `agent-org-buffer-start-agent-turn' still ignores its SESSION
 #   argument: the two callers that start a turn without one (a thought chunk or a
 #   tool update arriving before any chunk) must get the same heading, and the fact
 #   lives with the buffer, not the session.
