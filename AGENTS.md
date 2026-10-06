@@ -291,7 +291,34 @@ emacs -Q --batch \
 #   readable in list-processes.  The id is /also/ an Org `:ID:' property, but
 #   never a header-line segment: the bar carries state, the name carries
 #   identity.
-# - User-facing command names follow the agent-shell package (`~/agent-shell`,
+# - Lite mode is a SCOPE, and `agent-org-lite-p` is its only reader.
+  `agent-org-lite-mode` is the global default; `agent-org-buffer--lite` is the
+  per-session scope, `inherit` / `on` / `off`, because a chat buffer IS a
+  session and the three states are what make "follow the global setting"
+  reachable again after an override.  `agent-org-lite-mode-toggle` (C-c C-l, C-u
+  for the global) cycles it, moves `buffer-undo-list` as it goes, and SAYS
+  which state it landed on --- a session that quietly stopped recording its
+  transcript is the kind of thing a person notices a week later.  Three gates,
+  and the three things it must not touch are written down in
+  `agent-org-lite-mode`; the load-bearing one is the transcript: lite writes the
+  file while `:queued` is non-nil and stops when the queue drains, because a
+  queued prompt exists in no replay and no agent memory.  `byte-compile-error-on-warn`
+  forbids a `setq` over a `defvar-local` owned by another file --- that is what
+  `agent-org--queue-note`'s `make-local-variable` is for.
+- The resource monitor is a BUFFER of Org tables, never a header-line segment,
+  and its timer follows display.  The bar has room for one status string and a
+  per-timer redraw in every open chat would be the load it exists to report.  Its
+  one repeating timer is armed by `agent-org--resource-displayed-p` --- the window
+  LIST across all frames, because `get-buffer-window` answers for one and a
+  background frame would read as hidden.  `/proc` parsing lives in PURE functions
+  (`--status-kb`, `--stat-cpu-ticks`, `--parse-load`) so the file formats can be
+  pinned by tests on a machine whose processes are not ours; `--stat-cpu-ticks`
+  counts from AFTER the `comm` field, because `(Web Content)` is a real process
+  name and a naive split reads the wrong two numbers without saying so.  A
+  batch Emacs HAS a frame and windows (measured), so a monitor is genuinely
+  displayed there: tests show and hide a window for real rather than stubbing the
+  visibility check.
+- User-facing command names follow the agent-shell package (`~/agent-shell`,
 #   same author, same ACP ground): session-level verbs name their object
 #   (`agent-org-resume-session', `agent-org-set-session-model', matching
 #   `agent-shell-resume-session' / `agent-shell-set-session-model'), and every
@@ -538,40 +565,56 @@ emacs -Q --batch \
 #   of it destroys a prompt and folding it makes it invisible exactly when it is
 #   news (the user's "Show the prompt queue within the buffer").  Both are
 #   defaults for CREATION: a drawer the user folded by hand stays folded.
-# - The queue has ONE command, `agent-org-queue-edit' (C-c C-q): a buffer of its
-#   own, in `agent-org-queue-mode' (derived from `org-mode'), where an entry is a
-#   prompt.  `agent-org-queue-view' (read-only listing), `agent-org-queue-remove'
-#   (minibuffer number-pick) and the old `agent-org-queue-edit' (last entry only,
-#   via `read-string') are GONE — three pagers for one list, and none of them
-#   could re-order it, which is the one thing a queue of prompts needs.  Never
-#   edit the queue's text in the chat buffer's own drawer: that drawer belongs to
-#   the metadata block, which is deleted and reinserted on every usage update, so
-#   a cursor and a half-typed word would be destroyed mid-turn.
-# - Queue entries: headline `* N' where N is the position in the SEND ORDER, and
-#   the prompt on the lines below with ONE space in front of each
-#   (`agent-org-queue--indent' / `--dedent', an exact inverse that keeps blank
-#   lines).  The indent is load-bearing, not cosmetic: a prompt is the user's own
-#   words and those words can be an Org document, and a `*' at column 0 is a
-#   headline that would cut one prompt into two entries — and
-#   `agent-org-queue--headline-re' matches a bare `* <number>' line only, so the
-#   preamble and any hand-typed heading are never an entry and cannot be sent by
-#   accident.  `agent-org-queue--renumber' MUST follow every move, insert and
-#   kill (a number that lies about its place is worse than no number), and
-#   `agent-org-queue--parse' DROPS a blank entry (`agent-org-send' refuses an
-#   empty draft; the queue must not smuggle one past it).
-# - The editor is never the sole writer of a list the session has changed under
-#   it.  A turn can end, or a prompt arrive, while the editor is open, so
-#   `agent-org--drain-queue' and `agent-org--queue-enqueue' tell it through the
-#   chat -> editor link (`agent-org-queue--editor', read with
-#   `agent-org-queue--editor-for', which checks `buffer-live-p' so a killed
-#   editor needs no cleanup hook).  `agent-org-queue-apply' then removes the sent
-#   entries BY TEXT (`agent-org-queue--drop-sent`, first occurrence only) and
-#   appends what arrived, in arrival order.  BY POSITION IS A CORRUPTION BUG: the
-#   drain takes the front of the SESSION's list and the user may have moved that
-#   entry anywhere, so dropping positionally resends a prompt the agent already
-#   answered and loses an edited one.  An entry edited after it went out is the
-#   one case that does go again — the agent never saw those words.  `C-c C-c'
-#   apply is the only write; `C-c C-k' abandon writes nothing.
+# - The queue has ONE surface: a REGION at the bottom of the chat, and no second
+#   buffer.  The entries are `* NEXT'/`* WAIT' headings between two markers, above
+#   the live `* User' box; `agent-org-queue-edit' (C-c C-q) takes point there,
+#   `C-c C-a' adds a blank `* WAIT' slot at the bottom (the user's own "add one
+#   here"), `C-c C-d' kills one, `M-UP'/`M-DOWN' reorder (narrowed to the region
+#   by `agent-org-buffer--queue-only', because the conversation's headings are
+#   what locate every turn), and `agent-org-queue-apply' is the only writer.
+#   `agent-org-queue-view', `agent-org-queue-remove', the old minibuffer
+#   `agent-org-queue-edit' and the whole `agent-org-queue-mode' editor buffer are
+#   GONE: three pagers for one list, and a second surface to keep in step with
+#   the first.  A repaint NEVER lands over an edit --- it happens only while the
+#   region still reads as `--queue-shown', and the apply reconciles instead
+#   (`--queue-note' records what the agent sent and what arrived; dropping by
+#   POSITION would resend an answered prompt and lose an edited one).  Two
+#   projections of one list (`--queue-refresh' writes the region, the drawer and
+#   the transcript from `:pending-prompts'), and the drawer is regenerated from
+#   the SESSION and never from the region: an unapplied edit must not reach the
+#   file.
+# - Queue entries: headline `* NEXT <first line>' or `* WAIT <first line>', the
+#   rest of the prompt on the lines below with ONE space in front of each
+#   (`agent-org-buffer--queue-entry' / `--queue-text', an exact inverse that keeps
+#   blank lines).  The indent is load-bearing, not cosmetic: a prompt is the
+#   user's own words and those words can be an Org document, and a `*' at column 0
+#   is a headline that would cut one prompt into two entries.  The WORD is derived
+#   from POSITION on every render and never read back, so a move cannot leave a
+#   heading promising a place in the send order it no longer has; NEXT and WAIT
+#   are per-file keywords in front of the done bar, which is what makes them Org
+#   states on real headlines (`#+TODO: NEXT WAIT TODO ONGOING | COMPLETE
+#   FAILED`).  The region's preamble is comment lines ABOVE the first entry, and
+#   that is load-bearing rather than cosmetic: an entry's text is everything from
+#   its headline to the next, so a note after the last entry would be parsed as
+#   part of that prompt and sent (measured: the queue came back as one prompt
+#   ending in "M-x agent-org-queue-apply").  A blank entry is a SLOT and is
+#   dropped by `--queue-parse', because `agent-org-send' refuses an empty draft
+#   and the queue must not smuggle one through by leaving a heading bare.
+# - The queue region is never the sole writer of a list the session has changed
+#   under it.  A turn can end, or a prompt arrive, while the user is editing, so
+#   `agent-org--drain-queue' and `agent-org--queue-enqueue' record what happened on
+#   the CHAT buffer (`agent-org--queue-note', under `--queue-sent' or
+#   `--queue-added').  `agent-org-queue-apply' then removes the sent entries BY TEXT
+#   (`agent-org--queue-drop-sent', first occurrence only) and appends what arrived,
+#   in arrival order.  BY POSITION IS A CORRUPTION BUG: the drain takes the front of
+#   the SESSION's list and the user may have moved that entry anywhere, so dropping
+#   positionally resends a prompt the agent already answered and loses an edited
+#   one.  An entry edited after it went out is the one case that does go again ---
+#   the agent never saw those words.  `agent-org--queue-note' writes through
+#   `make-local-variable': the two logs are `defvar-local' in agent-org-buffer.el and
+#   start out unbound per buffer, so a plain `(push text (symbol-value key))' would
+#   read the GLOBAL nil, cons onto it and throw the result away --- the note would
+#   silently not stick.  `agent-org-queue-apply' is the only write.
 # - `agent-org--finish-replay' reads that drawer BEFORE rendering, and applies it
 #   after `agent-org--session-ready'.  Both halves are load-bearing: session-ready
 #   mirrors the freshly replayed buffer over the transcript, and a replayed buffer

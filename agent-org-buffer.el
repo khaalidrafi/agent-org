@@ -103,6 +103,133 @@
   :group 'agent-org
   :prefix "agent-org-buffer-")
 
+;;;; Lite mode (the minimum-resources scope)
+
+(defcustom agent-org-lite-mode nil
+  "When non-nil, every chat runs LITE: the minimum resources, honestly named.
+This is the GLOBAL scope; a session that sets its own scope overrides it
+(see `agent-org-lite-mode-toggle').  Lite is not a rendering change and never
+hides conversation: it drops the three costs a chat pays for machinery nobody
+is reading, and nothing else.
+
+- No transcript write, except the one that carries something irreplaceable: a
+  queued prompt exists in no other place, so a lite session writes its file
+  while its queue is non-empty and stops the moment the queue drains.
+- No undo records.  A chat body is generated text plus one live prompt box;
+  nobody edits the transcript, so the undo list was pure memory, and on a
+  long chat it is the largest thing in the buffer.
+- No whole-buffer Org reparse per metadata rebuild.  The rebuild happens on
+  every usage update, and `org-set-regexps-and-options' re-reads the WHOLE
+  buffer; the block's `#+TODO:' line has to be parsed once, and a lite
+  session parses it once (see `agent-org-buffer--todo-live-p').
+
+What lite deliberately does NOT do, because each of these is a fact about the
+conversation rather than a decoration: font-lock (turning it off is the
+one-way door of CONVENTIONS.md 16, and colors are the reader's own map), the
+`:thinking:' and `:tool:' drawers (an agent's reasoning and its calls are the
+transcript), and Markdown conversion (it is ~110 us per markup-dense line
+against a network fetch measured in seconds)."
+  :type 'boolean
+  :group 'agent-org-buffer)
+
+(defvar-local agent-org-buffer--lite 'inherit
+  "This session's lite-mode scope: `inherit', `on' or `off'.
+A chat buffer IS a session, so the per-session scope is a buffer-local
+variable and dies with the buffer.  `inherit' follows `agent-org-lite-mode';
+`on' and `off' pin this session against it, which is what makes \"lite for
+the one chat that is filling the disk, full for the rest\" sayable without
+editing an init file.  Three states rather than two because \"follow the
+global setting\" has to be reachable again after an override.")
+
+(defun agent-org-lite-p (&optional buffer)
+  "Non-nil when BUFFER's session runs in lite mode; BUFFER defaults to current.
+The ONE reader of the scope: `agent-org-buffer--lite' is a scope, not a
+setting, so every place that acts on lite reads this and nothing reads the
+variable directly."
+  (let ((scope (if buffer
+                   (with-current-buffer buffer agent-org-buffer--lite)
+                 agent-org-buffer--lite)))
+    (cond ((eq scope 'inherit) agent-org-lite-mode)
+          ((eq scope 'on) t)
+          (t nil))))
+
+(defun agent-org-buffer--lite-word (buffer)
+  "How BUFFER's lite scope should be READ: \"Lite\", \"Full\" or \"·\".
+The monitor's MODE column and the toggle's message both want one short word
+for a three-valued scope, and \"·\" (no scope of its own) is what `inherit'
+looks like next to the other two.  A DEAD buffer has no scope at all, which
+is also the dot."
+  (if (not (buffer-live-p buffer))
+      "·"
+    (pcase (with-current-buffer buffer agent-org-buffer--lite)
+      ('on "Lite")
+      ('off "Full")
+      (_ "·"))))
+
+(defun agent-org-lite-mode-toggle (&optional global)
+  "Cycle this session's lite scope; with GLOBAL, flip the global default.
+The scope cycles `inherit' → `on' → `off' → `inherit' and says which it
+landed on, because a scope with three values cannot be a silent toggle: a
+binary one would leave \"follow the global setting\" unreachable once a
+session had been overridden, and a chat that quietly stopped recording its
+transcript is the kind of thing a person only notices later.
+
+With a prefix argument, GLOBAL is non-nil and the cycling happens on
+`agent-org-lite-mode' instead: every session still on `inherit' follows at
+once, and the message says so, because that is the only part of the effect
+the command can promise.  Run on the session you want to keep lean."
+  (interactive "P")
+  (if global
+      (setq agent-org-lite-mode (not agent-org-lite-mode))
+    (setq agent-org-buffer--lite
+          (pcase agent-org-buffer--lite
+            ('inherit 'on)
+            ('on 'off)
+            (_ 'inherit)))
+    ;; undo recording is the resource the toggle owns outright, so the
+    ;; toggle owns it: a session that becomes lite stops accumulating undo
+    ;; entries and one that becomes full starts again.  Turning it off
+    ;; discards nothing a person wrote, because a chat body is read-only
+    ;; text outside the prompt box.
+    (setq buffer-undo-list (agent-org-buffer--record-undo-p)))
+  (message "agent-org: %s"
+           (if global
+               (format "lite mode is %s — a session with its own scope is unaffected"
+                       (if agent-org-lite-mode "ON" "OFF"))
+             (pcase agent-org-buffer--lite
+               ('on "this session is LITE (minimum resources)")
+               ('off (format "this session is FULL (the global setting is %s)"
+                             (if agent-org-lite-mode "ON" "OFF")))
+               (_ (format "this session follows the global setting, which is %s"
+                          (if agent-org-lite-mode "ON" "OFF")))))))
+
+(defun agent-org-buffer--record-undo-p ()
+  "Non-nil when this buffer should record undo entries.
+The VALUE a `buffer-undo-list' binding wants, which is why it is a function
+and not a variable: the replay and the queue render each bind
+`buffer-undo-list' around a bulk insertion, and a lite session has to bind
+nil there or one resume rebuilds the very undo list the mode exists to
+avoid.  Two call sites would otherwise each re-derive the rule."
+  (not (agent-org-lite-p)))
+
+(defvar-local agent-org-buffer--todo-parsed nil
+  "Non-nil once this buffer's `#+TODO:' line has been parsed into keywords.
+Our own flag rather than Org's `org-todo-keywords-1', which lives in
+org-agenda.el -- a package this one does not require for the sake of one
+read.  What it answers is the only question a metadata rebuild has: does the
+file's keyword set still need reading?  After the first parse it does not,
+and `org-set-regexps-and-options' re-reads the WHOLE buffer (see
+`agent-org-lite-mode').")
+
+(defun agent-org-buffer--todo-live-p ()
+  "Non-nil when this buffer's tool-call keyword set has already been parsed.
+The board's `  - KEYWORD title' lines carry the file's own TODO words, and
+those words reach Org through exactly one parse of the `#+TODO:' line in the
+metadata block.  One parse is enough for the life of the buffer: a chat body
+is read-only text, `C-c C-t' is bound to `agent-org-buffer--blocked' in a chat
+buffer, and the line itself is rewritten byte-identically by every rebuild."
+  agent-org-buffer--todo-parsed)
+
 ;;;; Status header line (the "top bar")
 
 (defface agent-org-status-ready
@@ -326,19 +453,28 @@ session and says nothing about the session's state."
 ;; Defined here rather than in the metadata section below: `buffer-create'
 ;; seeds the title block with it, and a use before `defconst' byte-compiles
 ;; as a free-variable reference.
-(defconst agent-org-buffer--todo-setup "#+TODO: TODO ONGOING | COMPLETE FAILED"
+(defconst agent-org-buffer--todo-setup
+  "#+TODO: NEXT WAIT TODO ONGOING | COMPLETE FAILED"
   "Per-file keyword set (`org-set-regexps-and-options' reads it from
-the metadata block) naming the tool-call states, in the user's own words:
-pending→TODO, in_progress→ONGOING, completed→COMPLETE, failed→FAILED.
-COMPLETE and FAILED are both AFTER the bar, so Org sees them as this
-file's two done states -- a call that finished and a call that finished
-badly are both finished, and neither is the `CANCELLED' a person cycles to
-on purpose.  A call is a line of the `:tool:' drawer rather than a heading
--- Org forbids headlines inside drawers -- so on that line a keyword is
-TEXT the reader sees, not an Org state `C-c C-t' can cycle (that acts on
-headlines).  Declaring the set still pays: it documents the only
-vocabulary a transcript or a chat uses for a call, in the file that uses
-it, and it keeps `DONE' out of a file that means COMPLETE.")
+ the metadata block) naming the tool-call states and the queued-prompt states.
+
+The call states are the user's own words: pending→TODO,
+in_progress→ONGOING, completed→COMPLETE, failed→FAILED.  COMPLETE and
+FAILED are both AFTER the bar, so Org sees them as this file's two done
+states -- a call that finished and a call that finished badly are both
+finished, and neither is the `CANCELLED' a person cycles to on purpose.  A
+call is a line of the `:tool:' drawer rather than a heading -- Org forbids
+headlines inside drawers -- so on that line a keyword is TEXT the reader
+sees, not an Org state `C-c C-t' can cycle (that acts on headlines).
+Declaring the set still pays: it documents the only vocabulary a transcript
+or a chat uses, and it keeps `DONE' out of a file that means COMPLETE.
+
+NEXT and WAIT are the QUEUE's states, in front of the bar with the call
+states because neither is done: a prompt that will go out when this turn
+ends is NEXT, and every prompt behind it is WAITING.  The user's words
+(\"TODO headings with WAIT keywords with the next in-line prompt as
+NEXT\"), and a queue entry IS a headline here rather than a drawer line, so
+unlike a tool call the keyword is a real Org state on a real headline.")
 
 ;;;; Buffer creation
 
@@ -592,6 +728,47 @@ and the name says which harness answers it."
   (interactive)
   (user-error "Chat content is managed automatically"))
 
+(defun agent-org-buffer--queue-only (up)
+  "Move the queued prompt at point one place, up when UP is non-nil.
+THE DISPATCH that lets one key be two commands: inside the queue region
+`M-UP'/`M-DOWN' reorder the user's own prompts, and everywhere else they stay
+`agent-org-buffer--blocked'.  A chat buffer refuses Org's structure commands
+because they would cut the CONVERSATION's heading boundaries apart (a headline
+is what locates a turn), but the queue region is the user's text at the bottom
+and moving it is the one structural act they need -- so the block is narrowed
+by point rather than lifted.
+
+Both directions go through the same function on purpose: a key that moves only
+up in the region and only refuses out of it would be a key with two unrelated
+meanings, and the region test is the only thing that tells them apart."
+  (if (agent-org-buffer--queue-at-p)
+      (agent-org-buffer-queue-move (current-buffer) up)
+    (agent-org-buffer--blocked)))
+
+(defun agent-org-buffer-queue-move-up ()
+  "Move the queued prompt at point one place towards the front of the queue."
+  (interactive)
+  (agent-org-buffer--queue-only t))
+
+(defun agent-org-buffer-queue-move-down ()
+  "Move the queued prompt at point one place further back in the queue."
+  (interactive)
+  (agent-org-buffer--queue-only nil))
+
+(defun agent-org-buffer-queue-add ()
+  "Add a blank queued prompt at the bottom of this buffer, and go to it.
+`C-c C-a' in a chat, which is the user's own \"add one here\" -- the same
+gesture the queue editor offered as an entry command.  Point lands inside the
+new entry, because a slot nobody is looking at is not a slot."
+  (interactive)
+  (goto-char (agent-org-buffer-queue-insert-entry (current-buffer)))
+  (message "[agent-org] new queued prompt; type it, then M-x agent-org-queue-apply"))
+
+(defun agent-org-buffer-queue-kill ()
+  "Kill the queued prompt at point in this buffer."
+  (interactive)
+  (agent-org-buffer-queue-kill-entry (current-buffer)))
+
 (defvar agent-org-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") #'agent-org-send)
@@ -599,13 +776,26 @@ and the name says which harness answers it."
     (define-key map (kbd "C-c C-q") #'agent-org-queue-edit)
     (define-key map (kbd "C-c C-r") #'agent-org-queue-resume)
     (define-key map (kbd "C-c C-k") #'agent-org-cancel-turn)
+    (define-key map (kbd "C-c C-l") #'agent-org-lite-mode-toggle)
+    (define-key map (kbd "C-c C-a") #'agent-org-buffer-queue-add)
+    (define-key map (kbd "C-c C-d") #'agent-org-buffer-queue-kill)
+    ;; the two movers, as named commands rather than lambdas: an autoloaded
+    ;; keymap entry pointing at an anonymous function is not loadable
     ;; Org structure commands bypass `read-only' text properties and would
-    ;; corrupt heading boundaries; block them all.
+    ;; corrupt heading boundaries; block them all.  M-UP/M-DOWN are the two
+    ;; exceptions, and only inside the queue region -- see
+    ;; `agent-org-buffer--queue-only'.
     (dolist (key (list (kbd "M-RET") (kbd "C-c C-t")
-                       [(meta up)] [(meta down)] [(meta left)] [(meta right)]
+                       [(meta left)] [(meta right)]
                        [(shift up)] [(shift down)]
                        (kbd "C-c -")))
       (define-key map key #'agent-org-buffer--blocked))
+    ;; `[(meta up)]' and not `(kbd "M-UP")': the kbd parser wants ONE
+    ;; character after a modifier and reads "UP" as two, so the modifier
+    ;; prefix error is raised at LOAD time -- in a keymap, which every
+    ;; chat buffer evaluates.
+    (define-key map [(meta up)] #'agent-org-buffer-queue-move-up)
+    (define-key map [(meta down)] #'agent-org-buffer-queue-move-down)
     map))
 
 (defun agent-org-buffer--which-function ()
@@ -652,8 +842,12 @@ Type at the live `* User' prompt at the end of the buffer.
 Keys:
   C-c C-c  Send the typed prompt (queues it while the agent responds)
   C-c C-k  Cancel the running turn
+  C-c C-l  Cycle this session's lite scope (C-u: the global one)
   C-c C-m  Switch the session's model
-  C-c C-q  Edit the prompts queued for this session"
+  C-c C-q  Go to the prompts waiting in this session's queue
+  C-c C-a  Add a queued prompt at the bottom
+  C-c C-d  Kill the queued prompt at point
+  M-UP / M-DOWN  Reorder the queued prompt at point (in the queue only)"
   :init-value nil
   :lighter nil
   :keymap agent-org-mode-map
@@ -664,6 +858,13 @@ Keys:
                 '(:eval (agent-org-buffer--render-header-line))))
         (setq-local add-log-current-defun-function
                     #'agent-org-buffer--which-function)
+        ;; Lite mode is seeded here, where the buffer is still empty: the
+        ;; mode has to apply to the whole life of the chat, not from the
+        ;; first toggle onward.  Only the value is set, because the
+        ;; variable is a SCOPE (see `agent-org-buffer--lite') and the
+        ;; mode is not its owner — `agent-org-lite-mode-toggle' is, and it
+        ;; moves the value as the scope changes.
+        (setq buffer-undo-list (agent-org-buffer--record-undo-p))
         ;; Org re-hides EVERY drawer when a buffer's visibility is set --
         ;; `org-cycle-set-startup-visibility' ends with that call
         ;; (org-cycle.el:643) and mode startup runs it, as does the
@@ -679,6 +880,10 @@ Keys:
     (kill-local-variable 'header-line-format)
     (kill-local-variable 'add-log-current-defun-function)
     (kill-local-variable 'org-hide-drawer-startup)
+    ;; undo recording is the mode's, so the mode gives it back: a buffer
+    ;; that is no longer a chat gets ordinary undo behaviour whatever scope
+    ;; it was left in
+    (setq buffer-undo-list t)
     (remove-hook 'window-configuration-change-hook
                  #'agent-org-buffer--ensure-font-lock t)))
 
@@ -796,7 +1001,7 @@ does not name, and blanking the field there would lie harder."
                           'name))
             current)))))
 
-(defun agent-org-buffer--render-metadata (status)
+(defun agent-org-buffer--render-metadata (status &optional lite)
   "Render the buffer-top Org metadata block for STATUS (pure).
 The PROPERTIES drawer comes first, carrying the scalars (Provider, ID,
 Mode, Model, Context, Cost, Tokens), then the `#+TITLE:' keyword line,
@@ -806,7 +1011,12 @@ reported, then QUEUE with the prompts waiting to be sent.  No heading:
 unknown are omitted — including QUEUE the moment the queue empties,
 which is what stops a drained prompt being restored a second time — and
 so is the `:ID:' line until an id exists; a `:ID: unknown' would be a
-property Org's id machinery would choke on, and a lie besides."
+property Org's id machinery would choke on, and a lie besides.
+
+LITE is the session's resolved lite scope, passed in for the same reason
+the status is: this is a pure renderer, and a buffer-local read here
+would answer for whichever buffer happened to be current.  It adds the
+`:Lite:' line and nothing else."
   (let* ((provider (or (plist-get status :provider) "agent-org"))
          (sid (plist-get status :session-id))
          (used (plist-get status :used))
@@ -855,6 +1065,10 @@ property Org's id machinery would choke on, and a lie besides."
                       (or (agent-org-buffer--cost-indicator status) "$0.00"))
               (when-let* ((tokens (plist-get status :tokens)))
                 (format ":Tokens: %d\n" tokens))
+              ;; only when the session says so: a transcript is a record,
+              ;; and "this session was told not to keep one" is a fact
+              ;; worth having in it (see `agent-org-lite-mode')
+              (when lite ":Lite: yes\n")
               ":END:\n")
              ;; `#+TITLE:' is the harness's own session title, verbatim;
              ;; the provider name only stands in until one arrives.
@@ -906,7 +1120,8 @@ Skips entirely when the rendered block is byte-identical to
 `agent-org-buffer--metadata-cache': no deletion, no insertion, and no
 `org-set-regexps-and-options' reparse of the whole buffer."
   (with-current-buffer buffer
-    (let ((rendered (agent-org-buffer--render-metadata agent-org-buffer--status)))
+    (let ((rendered (agent-org-buffer--render-metadata agent-org-buffer--status
+                                                      (agent-org-lite-p))))
       (unless (equal rendered agent-org-buffer--metadata-cache)
         (let ((inhibit-read-only t))
           (save-excursion
@@ -935,10 +1150,15 @@ Skips entirely when the rendered block is byte-identical to
                 (insert rendered)
                 (setq agent-org-buffer--metadata-cache rendered)
                 (agent-org-buffer--protect beg (point))
-                ;; parse the freshly inserted `#+TODO:' setup line so tool
-                ;; headings get their buffer-local keyword set; only
-                ;; needed because the block text actually changed
-                (org-set-regexps-and-options)
+;; parse the freshly inserted `#+TODO:' setup line so tool
+                 ;; headings get their buffer-local keyword set.  Only the
+                 ;; FIRST rebuild needs it, and only a full session pays:
+                 ;; `org-set-regexps-and-options' re-reads the WHOLE buffer,
+                 ;; and this runs on every usage update of every turn.
+                 (when (or (not (agent-org-lite-p buffer))
+                           (not (agent-org-buffer--todo-live-p)))
+                   (org-set-regexps-and-options)
+                   (setq agent-org-buffer--todo-parsed t))
                 (dolist (state folded)
                   (when (cdr state)
                     (save-excursion
@@ -978,6 +1198,33 @@ Org tolerates but renders poorly."
           (not (get-text-property (point) 'read-only))))
     (error nil)))
 
+(defvar-local agent-org-buffer--queue-start nil
+  "Marker at the first byte of this buffer's queue region, or nil when empty.
+Rear-advancing, so text inserted AT it -- which is where every turn renders,
+since `--render-end' answers with it -- pushes the REGION down instead of
+landing in the middle of it.  It is what makes the queue the last thing a chat
+shows: a turn rendered below the waiting prompts would bury the prompts the
+user is waiting to send.")
+
+(defvar-local agent-org-buffer--queue-end nil
+  "Marker just past this buffer's queue region, or nil when the queue is empty.
+The region's other side, so a repaint deletes exactly the region and never the
+turn's `#+end_quote' above it or the `* User' box below it.  Rear-advancing for
+the same reason as `--queue-start'.")
+
+(defvar-local agent-org-buffer--queue-shown nil
+  "The prompts the queue region held at the last repaint.
+THE EDIT GUARD, and the only reason in-place editing is safe here.  A refresh
+arrives at every queue change and at every turn boundary, while the region is
+the user's own text: a repaint that ignored this would delete a half-typed
+prompt in the middle of a word.  So `agent-org-buffer-refresh-queue' repaints
+only while the region still says what this says; once the user has changed it,
+the session's list is reconciled at `agent-org-queue-apply' instead -- the same
+contract the queue editor used to have, for the same reason.")
+
+;;;; Queue region markers live with the other buffer state, above
+;;;; `--render-end', which reads `--queue-start'.
+
 (defun agent-org-buffer--live-mark (marker)
   "Position of MARKER, or nil when it points into no buffer.
 `mark' is the wrong tool here: it returns nil whenever the region is
@@ -988,14 +1235,374 @@ inactive, which is nearly always the case for a bookkeeping marker."
 
 (defun agent-org-buffer--render-end ()
   "Where the next per-turn block belongs in the current buffer.
-The live type-ahead box's start when one is open -- so a streaming turn
-renders above it and the draft the user is typing survives -- and
-`point-max' otherwise (during a replay, before any box exists).
+The queue region's start when there is one -- so a turn renders ABOVE the
+waiting prompts and the queue stays the last thing in the chat -- then the live
+type-ahead box's start when one is open (so a streaming turn renders above it
+and the draft the user is typing survives), and `point-max' otherwise (during
+a replay, before any queue and any box exist).
 Always called with the chat buffer current."
-  (if (and agent-org-buffer--prompt-anchor
-           (marker-buffer agent-org-buffer--prompt-anchor))
-      (marker-position agent-org-buffer--prompt-anchor)
-    (point-max)))
+  (cond ((agent-org-buffer--live-mark agent-org-buffer--queue-start)
+         (agent-org-buffer--live-mark agent-org-buffer--queue-start))
+        ((agent-org-buffer--live-mark agent-org-buffer--prompt-anchor)
+         (agent-org-buffer--live-mark agent-org-buffer--prompt-anchor))
+        (t (point-max))))
+
+(defconst agent-org-buffer--queue-keywords '("NEXT" "WAIT")
+  "The two states a queued prompt's heading can wear, in the user's words.
+`NEXT' is the prompt that goes out when the current turn ends and `WAIT' is
+every prompt behind it.  The word is DERIVED from position on every render,
+never read back from the buffer: a keyword that drifted from the queue's order
+would be a lie about which prompt leaves next, and `M-UP'/`M-DOWN' must be able
+to move a heading without anybody restating what it means.")
+
+(defconst agent-org-buffer--queue-headline-re "^[*] NEXT \\|^[*] WAIT "
+  "A queued prompt's headline: one of `agent-org-buffer--queue-keywords'.
+Two anchored alternatives and NO grouping, which is not a style choice: the
+only backslash in this literal is the alternation bar, so there is no
+`\\(...\\)' for a lost backslash to turn into a literal paren.  That mistake is
+not hypothetical -- it shipped once in this file and every queue entry came
+back with its first line swallowed by a group that was never closed.
+
+Only these two words make a headline an ENTRY, so the conversation's own
+headlines -- which are prompts and agent turns -- are never mistaken for a
+queue, and a `* note' the user typed at the bottom is text he can keep.")
+
+(defun agent-org-buffer--queue-headline-text (line)
+  "LINE's prompt text when it is a queue headline, else nil.
+String surgery and NOT a regexp, for the reason
+`agent-org-buffer--queue-headline-re' gives: this is the one place that has to
+recover a prompt's first line from its headline, and a pattern with a group in
+it is a pattern that can lose its closing paren.  Both keywords are tried
+because there are two and neither is a special case."
+  (cl-loop for keyword in agent-org-buffer--queue-keywords
+           for prefix = (concat "* " keyword " ")
+           when (string-prefix-p prefix line)
+           return (substring line (length prefix))))
+
+(defun agent-org-buffer--queue-entry (text next)
+  "One queued prompt's heading and body: TEXT under NEXT, or under WAIT.
+The same shape as an exchange heading (`agent-org-buffer-begin-exchange'): the
+first line of the prompt IS the heading, and every later line takes one space
+of indent so it stays the heading's own affixed metadata instead of becoming a
+second paragraph -- and, more importantly, so a prompt that contains Org markup
+cannot introduce a headline of its own.  A prompt that starts with `*' is the
+user's own words about a document, and one space is all a headline needs to
+stop being one (info \"(org) Headlines\").
+
+EXACTLY one newline separates the heading from the body, and that is what
+`agent-org-buffer--queue-text' counts on when it takes the body from the line
+after the heading: a second one becomes a blank line, and a blank line between
+a heading and its first body line is a prompt the user never wrote.  So a
+single-line prompt is a heading and nothing else, and the entry's trailing
+newline is the one the renderer owns."
+  (let* ((lines (split-string (string-trim text) "\n"))
+         (first (if lines (car lines) ""))
+         (rest (mapconcat (lambda (line)
+                            (if (string-empty-p line) line (concat " " line)))
+                          (cdr lines)
+                          "\n"))
+         (heading (format "* %s %s"
+                          (if next (car agent-org-buffer--queue-keywords)
+                            (cadr agent-org-buffer--queue-keywords))
+                          (if (string-empty-p first) "" first))))
+    (if (string-empty-p rest)
+        (concat heading "\n")
+      (concat heading "\n" rest "\n"))))
+
+(defconst agent-org-buffer--queue-note-text
+  ";; Waiting prompts: NEXT goes out when this turn ends.
+;; Edit them here, then M-x agent-org-queue-apply.
+"
+  "The region's preamble, ABOVE the entries and never below them.
+Comment lines, so it can never be read back as an entry, and FIRST for a
+reason that is not cosmetic: an entry's text is everything from its headline
+to the next one, so a note AFTER the last entry would be parsed as part of that
+prompt and sent to the agent (measured while this was written: the queue
+parsed back as one prompt ending in \"M-x agent-org-queue-apply\").  Above the
+first headline it is outside every entry's body, and it is still the one thing
+a reader of a TRANSCRIPT cannot work out for himself.")
+
+(defun agent-org-buffer-render-queue (prompts)
+  "The whole queue REGION for PROMPTS, oldest first.
+The first prompt wears NEXT and every other WAIT, because the head of the list
+is the one that goes out when the turn ends (`agent-org--drain-queue').  PROMPTS
+nil renders as the EMPTY STRING, and no queue leaves no trace at all: an empty
+entry is a slot to compose in, which is what `agent-org-queue-edit' asks
+`agent-org-buffer-queue-insert-entry' for, and a permanent blank heading would
+put a headline in every transcript for nothing.
+
+A non-nil PROMPTS whose only member is the empty string renders the preamble
+and NO entry, which is how a slot exists before the user has typed anything."
+  (if (null prompts)
+      ""
+    (concat agent-org-buffer--queue-note-text
+            (mapconcat (lambda (pair)
+                         ;; an empty prompt renders as NOTHING: the slot a
+                         ;; user is about to type in is not an entry yet, and a
+                         ;; bare `* WAIT' heading here would be one that says
+                         ;; it (the renderer is called with the list before
+                         ;; the heading is inserted)
+                         (if (string-empty-p (car pair))
+                             ""
+                           (agent-org-buffer--queue-entry (car pair) (cdr pair))))
+                       (cl-loop for text in prompts
+                                for first = t then nil
+                                collect (cons text first))
+                       ""))))
+
+;;;; The queue region: waiting prompts at the bottom of the chat
+
+(defun agent-org-buffer--queue-mark (position)
+  "A rear-advancing marker at POSITION, for a queue region's edges."
+  (let ((marker (make-marker)))
+    (set-marker-insertion-type marker t)
+    (move-marker marker position)
+    marker))
+
+(defun agent-org-buffer--queue-region ()
+  "The queue region's bounds as (BEG . END) in this buffer, or nil when empty.
+Computed fresh from the markers rather than cached: a marker position is always
+current, and a cached pair would go stale on every insert at the region."
+  (let ((beg (agent-org-buffer--live-mark agent-org-buffer--queue-start))
+        (end (agent-org-buffer--live-mark agent-org-buffer--queue-end)))
+    (when (and beg end)
+      (cons beg (min end (point-max))))))
+
+(defun agent-org-buffer-queue-p (&optional buffer)
+  "Non-nil when BUFFER shows a queue region at all; the current buffer if nil.
+The MARKERS and not the text, so a queue the user has emptied by hand is still
+a region -- with nothing in it -- and a repaint can put it back where it
+belongs.  A region found only by searching for a `* NEXT' line would refuse."
+  (with-current-buffer (or buffer (current-buffer))
+    (not (null (agent-org-buffer--queue-region)))))
+
+(defun agent-org-buffer--queue-paint (region prompts)
+  "Replace the queue REGION with PROMPTS and re-arm both markers.
+Called with this buffer current; REGION is nil or a (BEG . END) pair.  An empty
+PROMPTS drops the markers too, so a session with no queue leaves no trace of
+one -- in the buffer or in the transcript."
+  (let ((inhibit-read-only t))
+    (save-excursion
+      (when region
+        (delete-region (car region) (cdr region)))
+      (let* ((beg (or (car region) (agent-org-buffer--render-end)))
+             ;; a COPY of the position, because the two markers are made
+             ;; after the insert and `beg' itself may have moved with it
+             (start (copy-marker beg)))
+        (goto-char beg)
+        (insert (agent-org-buffer-render-queue prompts))
+        (setq agent-org-buffer--queue-start (agent-org-buffer--queue-mark start)
+              agent-org-buffer--queue-end (agent-org-buffer--queue-mark (point))
+              agent-org-buffer--queue-shown prompts)
+        (when (and (null prompts) (not (equal prompts "")))
+          (setq agent-org-buffer--queue-start nil
+                agent-org-buffer--queue-end nil))
+        ;; the keywords have to be live for NEXT/WAIT to read as Org states
+        ;; on the headings the user is about to edit
+        (org-set-regexps-and-options)))))
+
+(defun agent-org-buffer--queue-region-text ()
+  "The raw text of this buffer's queue region, empty when there is no region.
+The RAW text, which is what makes the edit guard exact: an unedited region is
+byte-for-byte `agent-org-buffer-render-queue's own output, and anything the
+user did --- a re-order, a kill, a blank slot, one typed word --- is a
+difference from that.  A comparison of PARSED entries would not do: the parser
+drops a blank entry, so a brand-new slot in an empty queue would parse as the
+same list and look untouched."
+  (let ((region (agent-org-buffer--queue-region)))
+    (if region
+        (buffer-substring-no-properties (car region) (cdr region))
+      "")))
+
+(defun agent-org-buffer--queue-pristine-p ()
+  "Non-nil when this buffer's queue region still says what was last written.
+THE edit guard, and the only reason in-place editing is safe here (see
+`agent-org-buffer--queue-shown').  Byte-for-byte against a fresh render of the
+baseline, which is the one comparison that cannot be fooled by a change the
+parser cannot see."
+  (equal (agent-org-buffer--queue-region-text)
+         (agent-org-buffer-render-queue agent-org-buffer--queue-shown)))
+
+(defun agent-org-buffer-refresh-queue (buffer prompts)
+  "Repaint BUFFER's queue region from PROMPTS, unless the user is mid-edit.
+Idempotent by construction: the region between the two markers is deleted and
+reinserted, so a refresh can never append a second copy -- the same rule as
+`agent-org-buffer-refresh-metadata', over a region whose owner is the queue.
+
+The GUARD is what makes editing here safe, and it has two halves.  Repaint only
+when the session's queue and `--queue-shown' actually differ, so a usage
+update cannot rewrite a line nobody touched; and then only while the region is
+PRISTINE (`agent-org-buffer--queue-pristine-p'), so a region the user has
+edited is left alone.  A prompt that went out while he was editing it stays on
+the page until he applies, and the apply drops it by text
+(`agent-org--queue-note').
+
+`--queue-shown' is the BASELINE, not the region's content: a move, a kill and a
+new slot deliberately leave it behind, because that difference is exactly what
+tells the guard the region has been touched."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (unless (equal prompts agent-org-buffer--queue-shown)
+        (when (agent-org-buffer--queue-pristine-p)
+          (agent-org-buffer--queue-paint (agent-org-buffer--queue-region)
+                                          prompts))))))
+
+(defun agent-org-buffer--queue-headlines ()
+  "Positions of this buffer's queue entry headlines, top to bottom.
+`match-beginning', never what `re-search-forward' returns: that is the match's
+END, one line into the entry's body.  Searched WITHIN the region, so a turn's
+own heading cannot be read as a queued prompt even if an agent writes a
+question that begins with those words."
+  (let ((region (agent-org-buffer--queue-region)))
+    (when region
+      (save-excursion
+        (goto-char (car region))
+        (let (spots)
+          (while (and (< (point) (cdr region))
+                      (re-search-forward agent-org-buffer--queue-headline-re
+                                         (cdr region) t))
+            (push (match-beginning 0) spots))
+          (nreverse spots))))))
+
+(defun agent-org-buffer--queue-text (spot end)
+  "The prompt stored in the entry whose headline starts at SPOT, up to END.
+Inverse of `agent-org-buffer--queue-entry', in both halves: the headline
+CARRIES the prompt's first line (as an exchange heading does), so the keyword
+and its spaces come off the front of that line, and every body line gives back
+the one leading space the renderer put there.  Blank lines are kept -- a
+prompt is the user's own text and its own blank lines are part of it -- while
+the entry as a whole is trimmed, so a slot nobody typed in reads as blank and
+`agent-org-buffer-queue-parse' drops it."
+  (save-excursion
+    (goto-char spot)
+    (let ((first (buffer-substring-no-properties
+                  (point) (line-end-position))))
+(string-trim
+       (concat (or (agent-org-buffer--queue-headline-text first) "")
+               "\n"
+               (mapconcat (lambda (line)
+                            (if (string-prefix-p " " line) (substring line 1) line))
+                          (split-string
+                           (buffer-substring-no-properties
+                            (1+ (line-end-position)) end)
+                           "\n")
+                          "\n"))))))
+
+(defun agent-org-buffer-queue-parse (&optional buffer)
+  "BUFFER's queue entries as prompts, top to bottom; the current buffer if nil.
+An entry is everything from its headline to the next one, so a multi-line
+prompt stays ONE prompt, and a blank entry is dropped: `agent-org-send' refuses
+an empty draft, and the queue must not smuggle one through by leaving a heading
+bare."
+  (when (buffer-live-p (or buffer (current-buffer)))
+    (with-current-buffer (or buffer (current-buffer))
+      (let ((spots (agent-org-buffer--queue-headlines))
+            (region (agent-org-buffer--queue-region)))
+        (when (and spots region)
+          (let ((ends (append (cdr spots) (list (cdr region)))))
+            (delq nil
+                  (cl-loop for spot in spots
+                           for end in ends
+                           for text = (agent-org-buffer--queue-text spot end)
+                           unless (string-blank-p text)
+                           collect text))))))))
+
+(defun agent-org-buffer--queue-at-p ()
+  "Non-nil when point is inside this buffer's queue region.
+What lets one key be two commands: `M-UP'/`M-DOWN' move a queued prompt when
+point is in the region and refuse everywhere else, where Org's own subtree
+move would cut the conversation's own heading boundaries apart."
+  (let ((region (agent-org-buffer--queue-region)))
+    (and region
+         (<= (car region) (point))
+         (<= (point) (cdr region)))))
+
+(defun agent-org-buffer-queue-entry-bounds ()
+  "Start and end of the queue entry containing point, as a cons.
+`user-error' when point is not on one: a move or a kill from outside the
+region has no entry to act on, and taking the first one anyway would be a
+guess."
+  (let* ((spots (agent-org-buffer--queue-headlines))
+         (here (car (last (seq-take-while (lambda (s) (<= s (point))) spots)))))
+    (unless here
+      (user-error "Not on a queued prompt"))
+    (cons here (or (seq-find (lambda (s) (> s here)) spots) (point-max)))))
+
+(defun agent-org-buffer-queue-restate (buffer)
+  "Rewrite BUFFER's queue region from what it now holds, keywords and all.
+Called after a move or a kill: the WORDS on the headlines are derived from
+position (`agent-org-buffer--queue-keywords'), so a heading that kept its old
+word after a move would promise a place in the send order it no longer has.
+The prompts themselves are re-read from the region and re-rendered, so only the
+keywords and the order change -- what the user typed is untouched.
+
+The MARKERS are re-armed around the new text, and that is not tidiness: a
+region whose markers still bracket the old positions has no entries to parse,
+so the very next `agent-org-buffer-queue-parse' answers nil and the queue the
+user can see has become a queue nothing can read.  Measured here, on the kill
+that leaves two entries behind."
+  (with-current-buffer buffer
+    (let ((region (agent-org-buffer--queue-region))
+          (entries (agent-org-buffer-queue-parse buffer)))
+      (when region
+        (let ((inhibit-read-only t)
+              (start (copy-marker (car region))))
+          (save-excursion
+            (delete-region (car region) (cdr region))
+            (goto-char (car region))
+            (insert (agent-org-buffer-render-queue entries))
+            (setq agent-org-buffer--queue-start
+                  (agent-org-buffer--queue-mark start)
+                  agent-org-buffer--queue-end
+                  (agent-org-buffer--queue-mark (point))))))
+      ;; `--queue-shown' is NOT updated here: it is the baseline the edit guard
+      ;; compares against, and a move IS a touch.  The apply is what makes the
+      ;; session agree with what the region now says.
+      (when entries
+        nil))))
+
+(defun agent-org-buffer-queue-insert-entry (buffer)
+  "Append a blank `* WAIT' entry to BUFFER's queue region; return its position.
+A blank entry is a SLOT to type in, which is how the user adds a prompt of his
+own at the bottom -- and `--queue-parse' drops it if he leaves it empty, so
+composing one cannot send a blank.  The word is WAIT whatever the queue holds:
+a new entry is last, so it cannot be the next to go out."
+  (with-current-buffer buffer
+    (let ((inhibit-read-only t))
+      (unless (agent-org-buffer-queue-p)
+        ;; Paint the BASELINE the slot will be read against -- a list of one
+        ;; empty string, which renders as the preamble and no entry -- and only
+        ;; then insert the heading.  The two differ, so the edit guard sees a
+        ;; touched region from the moment the slot exists: a refresh that
+        ;; arrived then would delete a half-typed prompt.
+        (agent-org-buffer--queue-paint nil (list "")))
+      (goto-char (cdr (agent-org-buffer--queue-region)))
+      (insert (format "* %s \n" (cadr agent-org-buffer--queue-keywords)))
+      (point-max))))
+
+(defun agent-org-buffer-queue-kill-entry (buffer)
+  "Kill the queue entry at point in BUFFER, onto the kill ring.
+A KILL, because this is the command with no confirmation and dropping a prompt
+the user meant to keep is the mistake worth making recoverable: `C-y' puts the
+entry back.  The rest are re-stated afterwards, so the words left on them match
+the order the queue is now in."
+  (with-current-buffer buffer
+    (let ((bounds (agent-org-buffer-queue-entry-bounds)))
+      (kill-region (car bounds) (cdr bounds)))
+    (agent-org-buffer-queue-restate buffer)
+    (message "[agent-org] queued prompt killed (C-y puts it back)")))
+
+(defun agent-org-buffer-queue-move (buffer up)
+  "Move the queue entry at point in BUFFER one place, up when UP is non-nil.
+Org's own subtree move, so the text travels with its headline.  At the first or
+the last entry Org refuses and nothing moves, which is the right answer: there
+is nothing in front of the first and nothing behind the last."
+  (with-current-buffer buffer
+    (save-excursion
+      (goto-char (car (agent-org-buffer-queue-entry-bounds)))
+      (if up (org-move-subtree-up) (org-move-subtree-down)))
+    (agent-org-buffer-queue-restate buffer)
+    (message "[agent-org] queued prompt moved %s" (if up "up" "down"))))
 
 (defun agent-org-buffer-insert-prompt (buffer)
   "Ensure BUFFER ends with a live `* User' type-ahead box.
@@ -1016,7 +1623,8 @@ at `point-max'."
              ;; keep point where it was unless it was at the end or
              ;; trapped in frozen text (then it belongs at the prompt)
              (stay (or (eq orig (point-max))
-                       (get-text-property orig 'read-only))))
+                       (get-text-property orig 'read-only)))
+             (queue (agent-org-buffer-queue-p)))
         (goto-char (point-max))
         (let ((box-beg (point)))
           (agent-org-buffer--separator)
@@ -1035,6 +1643,17 @@ at `point-max'."
             (set-marker-insertion-type anchor t)
             (move-marker anchor box-beg)
             (setq-local agent-org-buffer--prompt-anchor anchor))
+          ;; The box went in at `point-max', which with a queue region already
+          ;; painted is BELOW it, so the region's end moves to where the box
+          ;; starts.  Re-arming the marker rather than inserting above it is
+          ;; what makes that true in every case: a region sitting at the very
+          ;; end has no line after it to insert into, and a rear-advancing end
+          ;; marker pushed down by the box would swallow the box INTO the
+          ;; region -- measured here, the queue then parsed as one prompt whose
+          ;; text ended with the words `* User'.
+          (when queue
+            (setq-local agent-org-buffer--queue-end
+                        (agent-org-buffer--queue-mark box-beg)))
           (unless stay (goto-char orig)))))))
 
 (defun agent-org-buffer-take-draft (buffer)
@@ -2161,11 +2780,22 @@ Called from turn boundaries and from the queue's own mutations (see
 agent-org.el), never from a render site: twenty chunks of an answer cost
 no writes, so a slow disk cannot stall a stream.  No-op with
 `agent-org-transcribe' nil, or before the agent has given the session an
-id."
+id.
+
+LITE is the third gate, and it is not \"no file\": a lite session writes its
+file while `:queued' is non-nil and stops the moment the queue drains.  The
+queue is the one piece of conversation text that exists NOWHERE ELSE — it was
+never sent, so it is in no `session/load' replay and in no `* User' heading
+(see `agent-org-buffer-transcript-queue') — so dropping it to save a 3–15 ms
+write trades the record of a prompt against the mirror of history the agent
+itself can replay.  The queue wins; the mirror waits for it."
   (when (and agent-org-transcribe (buffer-live-p buffer))
     (with-current-buffer buffer
-      (let ((session-id (plist-get agent-org-buffer--status :session-id)))
-        (when session-id
+      (let* ((status agent-org-buffer--status)
+             (session-id (plist-get status :session-id))
+             (queue (plist-get status :queued))
+             (lite (agent-org-lite-p)))
+        (when (and session-id (or (not lite) queue))
           (let ((text (buffer-substring-no-properties
                        (point-min) (agent-org-buffer--render-end))))
             (unless (equal text agent-org-buffer--transcript-cache)

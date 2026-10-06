@@ -1035,84 +1035,69 @@ Everything follows from that asymmetry:
 
 ---
 
-## 17. The prompt queue: one command, one editor, text-not-position
+## 17. The prompt queue: one region, in the chat, text-not-position
 
 A queue of prompts is a LIST, and the only interesting thing about a list of
 things you are about to say is its ORDER.  The first port had three commands
 and none of them could reorder: `agent-org-queue-view` printed a read-only
 listing in a hidden buffer, `agent-org-queue-remove` picked a number in the
 minibuffer, and `agent-org-queue-edit` re-read the LAST entry only through
-`read-string`.  All three are the same list seen three ways, so all three are
-now one command — `agent-org-queue-edit` on `C-c C-q` — that opens a buffer
-where an entry is a prompt (`agent-org-queue-mode`, derived from `org-mode`).
-One action, one name in `M-x`, same rule as §10's command naming.
+`read-string`.  All three were the same list seen three ways.  Then it was ONE
+command in ONE other buffer, and now it is one region in the chat itself (§20
+for its shape): `agent-org-queue-edit` on `C-c C-q` puts point on the
+`entries, `agent-org-queue-apply` writes them back, and there is nothing to
+switch to.  One action, one name in `M-x`, same rule as §10.
 
-* **A separate buffer, never the chat's own `:QUEUE:` drawer.**  That drawer is
-  part of the metadata block, and the block is deleted and reinserted on every
-  `usage_update` (§5).  A cursor and a half-typed word inside it would be
-  destroyed mid-turn.  So the drawer is for READING and the editor is for
-  WORKING, and both are driven by the same session list.
-* **Entry grammar.**  Headline `* N`, where N is the position in the send order;
-  the prompt on the lines below it, EVERY line indented by one space
-  (`agent-org-queue--indent`, with `--dedent` as its exact inverse).  The indent
-  is not decoration: a prompt is the user's own words, those words can be an Org
-  document, and a `*` at column 0 is a headline — which would cut one prompt
-  into two entries and send half of each.  `agent-org-queue--headline-re`
-  matches a bare `* <number>` line and nothing else, so the preamble and any
-  heading a user types are not entries and cannot be sent by accident.
-  `agent-org-queue--renumber` MUST run after every move, insert and kill: a
-  number that lies about its place is worse than no number, because the number
-  IS the order the user is choosing.
-* **An empty entry is dropped, never sent.**  `agent-org-send` refuses an empty
-  draft, so the queue must not be able to smuggle one through by leaving a
-  headline bare.  That is also why an empty queue opens with one blank entry:
-  the buffer doubles as the place to compose the next prompt, and a blank entry
-  costs nothing.
-* **The editor is never the sole writer of a list that moved under it.**  A turn
-  can end, or a prompt can arrive, while the editor is open.  So
-  `agent-org--drain-queue` and `agent-org--queue-enqueue` tell it (chat → editor
-  through `agent-org-queue--editor`, read with `agent-org-queue--editor-for`,
-  which checks `buffer-live-p` so a killed editor needs no cleanup hook), and
-  `agent-org-queue-apply` reconciles: sent entries removed BY TEXT, first
-  occurrence only, then newly arrived ones appended in arrival order.
-  Removing by POSITION would be simpler and would be a corruption bug — the
-  drain takes the front of the SESSION's list, and the user may have moved that
-  entry anywhere in the editor, so positional dropping resends a prompt the
-  agent already answered while losing an edited one.  An entry edited AFTER it
-  went out is the one case that does go again: the agent never saw those words.
-* **`C-c C-c` is the only write; `C-c C-k` writes nothing.**  Applying still
-  writes ONE thing — the session's `:pending-prompts` — and
-  `agent-org--queue-refresh` (§14) mirrors it into the header count, the
-  chat's drawer and the transcript file, so those three cannot disagree.  The
-  editor stays open after apply and is repainted from the result: applying is a
-  SAVE in the middle of work, not a close.  Re-opening an open editor switches
-  to it instead of repainting, because a refresh would silently drop edits that
-  were never applied.
-* **Killing an entry is a KILL.**  `agent-org-queue-kill-entry` uses
-  `kill-region`, so a mis-press is `C-y` away — the one queue command with no
-  confirmation, and dropping a prompt the user meant to keep is the mistake
-  worth making recoverable.
-* **QUEUE has no line cap.**  `agent-org-buffer--metadata-drawer` takes CAP and
-  QUEUE passes `nil`, while COMMANDS/MODES/CONFIG pass
-  `agent-org-buffer--metadata-drawer-cap` (50).  Reference drawers are a
-  preview of something the agent can be asked for again, so truncation costs a
-  look; the queue is the record, the only copy of a prompt that survives a
-  crash — and its `… (+N more)` marker would then be read back as a phantom
-  prompt.  The reader is defensive about the same boundary:
-  `agent-org-buffer-transcript-queue` accepts only `- ` lines, so a marker left
-  by an older build, or a line a person typed while looking at the file, cannot
-  become a prompt on resume.
+* **Reconciliation is by TEXT, never by position.**  `agent-org--queue-note`
+  records what the agent SENT and what arrived QUEUED while the user was
+  editing, and `agent-org-queue-apply` drops the first and appends the second.
+  By position it is wrong twice over: the drain takes the front of the
+  SESSION's list while the user may have moved that entry anywhere, so an
+  entry moved up would be dropped from the wrong place and an edited prompt
+  would be lost.  An entry the user edited AFTER it went out is the one case
+  that does get sent again — the agent never saw those words.
 
-Tests: 22 in `tests/test-agent-org.el` (`test-agent-org-queue-*`,
-`…-transcript-queue-reads-its-own-lines-only`),
-all seen failing before the implementation.  The reconciliation is pinned by
-`-drops-what-the-agent-already-sent` (a real drain through the real
-`agent-org--drain-queue`) and `-keeps-prompts-queued-while-open` (a real
-enqueue), and the escape round trip by `-round-trips-every-entry`, whose
-fixtures are a multi-line prompt with an indented line and a `*` at column 0,
-and one that starts `:END:` with a blank line inside it.
+* **Apply is the only writer.**  A queue a person is rearranging must not
+  change under his hands, and a transcript must never claim a prompt the agent
+  was not sent.  So the drawer in the metadata block and the file's copy are
+  regenerated from the SESSION (§20), never from the region, and an unapplied
+  edit is invisible to both until it is applied.
 
----
+* **Entry grammar.**  Headline `* NEXT <first line>` / `* WAIT <first line>`,
+  with the rest of the prompt on the lines below, EVERY line indented by one
+  space (`agent-org-buffer--queue-entry` with `--queue-text`'s dedent as its
+  exact inverse).  The indent is not decoration: a prompt is the user's own
+  words, those words can be an Org document, and a `*` at column 0 is a
+  headline — which would cut one prompt into two entries and send half of each.
+  Blank lines are kept (they are the user's), which is why the split keeps the
+  empty strings.
+
+* **A blank entry is a slot, and is dropped.**  `C-c C-a` appends one
+  `* WAIT` slot and lands point in it: "add a prompt" and "write down the next
+  thing to ask" are the same gesture here.  `agent-org-buffer-queue-parse`
+  drops an entry whose text is blank, because `agent-org-send` refuses an empty
+  draft and the queue must not smuggle one through by leaving a heading bare.
+
+* **The header count, the entries, the drawer and the file are one list.**
+  `agent-org--queue-refresh` drives all four from
+  `(plist-get session :pending-prompts)`, and the mirror is written THERE rather
+  than left for a turn boundary: a queued prompt that never reaches a boundary
+  — the user quits Emacs, the agent dies, the machine loses power — is exactly
+  the text they would most want back, and no other writer has ever seen it.
+
+* **The queue survives a failed turn.**  `agent-org--drain-queue` is reached
+  only from a successful turn end (`agent-org--send-turn`'s failure callback
+  never drains), so a broken agent is not hammered and the queue survives for
+  the user to inspect — as does `agent-org-cancel-turn`'s.
+
+* **Resume restores the queue and sends the first prompt.**  A queued prompt
+  was never sent, so it is in no `session/load` replay, in no `* User` heading
+  and in no agent memory: the transcript's `:QUEUE:` drawer is its only
+  surviving copy.  `agent-org--finish-replay` reads it BEFORE the replay paints
+  (the paint mirrors the buffer, and a replayed buffer carries no queue) and
+  applies it AFTER `agent-org--session-ready` (a drained prompt needs an
+  interactive session: id set, box open, `:loading` gone).  An empty queue
+  restores nothing, which is what stops a drained prompt being sent twice.
 
 ## 18. What the client tells the agent about the connection
 
@@ -1171,6 +1156,161 @@ the append fails 7, substituting the truncating flattener fails 3, and printing
 `model: nil` instead of omitting the line fails 4.
 
 ---
+
+## 19. Lite mode: three gates, and the three things it must not touch
+
+The user's order: "a lite mode which will use absolute minimum resources
+with per-session/global scoping".  Minimum resources, so every saving is a
+cost somebody pays on purpose and every non-saving is a decision.
+
+**The scope is `agent-org-lite-mode` globally and `agent-org-buffer--lite`
+per buffer, and the buffer's value is a SCOPE, not a setting** — `inherit`
+follows the global, `on` and `off` pin one session against it.  A chat buffer
+*is* a session, so there is no third thing to key the scope on, and the buffer
+dies with it.  Three states and not two because "follow the global setting"
+has to be reachable again after an override; `agent-org-lite-mode-toggle`
+cycles them and says which one it landed on, because a session that quietly
+stopped recording its transcript is the kind of thing a person notices a week
+later.  `agent-org-lite-p` is the ONE reader: everything that acts on lite goes
+through it, so a second place that read the variable would be a second rule.
+
+**The three gates**, each measurable, none of them a rendering change:
+
+1. **No transcript write — while a queued prompt is not waiting.**
+   `agent-org-lite-mode` says the whole of it; the rule is
+   `agent-org-buffer-transcribe`.  A whole-file write of 3–15 ms at every turn
+   boundary buys a MIRROR of history the agent can replay by itself.  A queued
+   prompt is *not* in any replay, in no `* User` heading and in no agent
+   memory (§17), so a lite session writes its file exactly while `:queued` is
+   non-nil and stops the moment the queue drains.  "Never" would have been the
+   cheaper rule and would have thrown away the one piece of the queue that
+   exists nowhere else.
+2. **No undo records.**  `agent-org-buffer--record-undo-p` is the one gate,
+   read by `agent-org-mode` (which seeds `buffer-undo-list`), by
+   `agent-org-lite-mode-toggle` (which moves it) and by the two bulk insertion
+   paths (`agent-org--render-replay`, `agent-org-queue--repaint`'s successor).
+   Programmatic inserts are not undoable anyway, so what this really saves is
+   the user's own typing at the prompt box.
+3. **No whole-buffer Org reparse per metadata rebuild.**
+   `agent-org-buffer-refresh-metadata` re-reads the buffer through
+   `org-set-regexps-and-options` on every usage update, and the only reason is
+   the `#+TODO:` line, which is the same bytes every time.
+   `agent-org-buffer--todo-parsed` is our own flag rather than Org's
+   `org-todo-keywords-1` (which lives in org-agenda.el, a package this one does
+   not require for one read) and it is set by the same call that runs the
+   parse.  `test-agent-org-lite-skipping-the-reparse-keeps-the-keywords-live`
+   is the test that says the skip is safe: ONGOING is still a keyword after it.
+
+**What lite mode does NOT do**, each because it is a fact about the
+conversation rather than a decoration: **font-lock** — switching it off is the
+one-way door of §16 and the display-time hook would switch it straight back on,
+so a lite chat would pay the memory and lose the colours; **the `:thinking:`
+and `:tool:` drawers** — the agent's reasoning and its calls are the
+transcript; **Markdown conversion** — it is ~110 µs per markup-dense line
+against a network fetch measured in seconds, and it is what makes a reply
+readable Org at all.
+
+**The `:Lite: yes` property line** is the one place the mode is visible: a
+transcript is a record, and how it was being recorded is a fact about it.  The
+renderer takes the scope as an ARGUMENT because it is a pure function of the
+status plist, the same rule `agent-org-buffer--chat-label` follows.
+
+## 20. The queue is a region of the chat, and the words on it are derived
+
+The user's order: "queued prompts should be shown in the Org buffer at the
+bottom with TODO headings with WAIT keywords with the next in-line prompt as
+NEXT. User can edit them, and add his own at the bottom."
+
+**The entries are `* NEXT`/`* WAIT` headings between the last exchange and the
+live `* User` box.**  They are not in a drawer at the top, because a drawer is
+part of the metadata block and that block is deleted and reinserted on every
+usage update — which is exactly why the queue needed a second buffer while it
+lived there.  They are not *after* the box either: `--render-end` answers with
+`--queue-start` when a region exists, so a turn rendered while a queue waits
+lands ABOVE the queue and the box stays the last thing in the buffer.
+
+**`NEXT` and `WAIT` are per-file keywords in front of the done bar**
+(`agent-org-buffer--todo-setup`), so `#+TODO: NEXT WAIT TODO ONGOING |
+COMPLETE FAILED`: unlike a tool call, an entry IS a headline, so on it the
+keyword is a real Org state and `NEXT`/`WAIT` join the vocabulary the file
+declares.  **The word is DERIVED from position on every render**, never read
+back from the buffer: a keyword that drifted from the queue's order would be a
+lie about which prompt leaves next, and a `M-UP` must be able to move a
+heading without anyone restating what it means.
+
+**The region's preamble is comment lines and they are ABOVE the first entry.**
+That placement is load-bearing, not cosmetic: an entry's text is everything
+from its headline to the next one, so a note *after* the last entry parses as
+part of that prompt and is sent to the agent.  (Measured while this was
+written: the queue parsed back as one prompt ending in "M-x
+agent-org-queue-apply".)  Above the first headline it is outside every entry's
+body, and `agent-org-buffer--queue-headline-text` recovers a prompt's first
+line from its headline with `string-prefix-p` rather than a regexp — the one
+place that has to, and a pattern with a group in it is a pattern that can lose
+its closing paren (which it did, once, and every entry came back with its
+first line swallowed).
+
+**The repaint never lands over an edit.**  `agent-org-buffer-refresh-queue`
+repaints only when the session's queue and `--queue-shown` differ AND the
+region still reads as `--queue-shown`; a region the user has changed is left
+alone and `agent-org-queue-apply` reconciles instead.  That is the contract
+the queue editor had, for the same reason, and it is what makes the region safe
+to type in: a queue a person is rearranging must not change under his hands,
+and a transcript must never claim a prompt the agent was not sent.
+
+**`:QUEUE:` drawer and the entries are two projections of ONE list**, both
+rendered from `:pending-prompts`, and the drawer is regenerated from the
+SESSION and never from the entries — which is right, because an unapplied edit
+must not reach the file.
+
+**The box is inserted at `point-max` and the region's END marker is re-armed
+afterwards.**  Both markers are rear-advancing, so inserting the box *at* the
+end marker would push the marker down past the box and swallow the box into the
+region (measured: the queue parsed as one prompt whose text ended with the
+words `* User'`).  Re-arming after the insert is true in every case, including
+the one that bit here — a region sitting at the very end has no line after it
+to insert into.
+
+**`M-UP`/`M-DOWN` are narrowed, not lifted.**  `agent-org-buffer--queue-only`
+moves an entry when point is in the region and refuses (`agent-org-buffer--blocked`)
+everywhere else: a chat refuses Org's structure commands because they would cut
+the CONVERSATION's heading boundaries apart, and the region is the one place
+where a structural act is the user's own business.
+
+## 21. The resource monitor is a buffer, and its timer follows display
+
+**A buffer of Org tables, never a header-line segment.**  §6 gives the bar
+exactly one status string; a monitor is a number that changes while nobody is
+doing anything; and a bar that redrew on a timer in every open chat would be
+the load the monitor exists to report.  §6's other half applies too — nothing
+periodic is ever written into a transcript — while the buffer stays a real
+document: fold it, align it, `TAB` between cells.
+
+**The one repeating timer in the package is armed by display and disarmed by
+hiding** (`agent-org--resource-displayed-p`, which asks for the WINDOW LIST
+across all frames: `get-buffer-window` answers for one frame, so a monitor in a
+background frame would read as hidden).  A batch Emacs has a frame and windows
+(measured), so "displayed" there is real and the test shows and hides a window
+for real rather than stubbing the check.
+
+**The region it owns is `point-max`, and its title is written once.**
+`agent-org--resource-paint` deletes from the first HEADING to `point-max`, which
+is the mirror image of `agent-org-buffer-refresh-metadata` (`point-min` up to
+the first heading): there the conversation owns everything below the first
+heading, here the headings belong to the generated block.
+
+**A CPU column is a rate from two samples, and `/proc` is parsed by a pure
+function.**  A total would be a fact about the session's age; "140%" is the
+fact that one agent is spinning the machine.  `agent-org--stat-cpu-ticks`
+counts from AFTER the `comm` field, because `(Web Content)` is a real process
+name and a naive split reads the wrong two numbers while reporting no error at
+all — and the parsers are separated from the file reads so the `/proc` format
+can be pinned by a test on a machine whose processes are not ours to inspect.
+
+**`agent-org-clock-ticks-per-second` is a `defcustom`, not a constant,
+because nothing in Emacs can answer it.**  `sysconf' is void in the Emacs this
+was built against (measured), and asking the kernel by spawning `getconf` from a
+monitor is the one cost the feature exists to avoid.
 
 ## Manual nodes referenced
 

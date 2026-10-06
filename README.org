@@ -153,15 +153,24 @@ NonGNU ELPA.
    Sending while the agent is still responding /queues/ the draft
    (~agent-org-queue-when-busy~, on by default — agent-shell's type-ahead
    model): queued prompts go out FIFO as each turn ends successfully.
-   ~C-c C-q~ (~agent-org-queue-edit~) is the one command that manages what
-   is waiting: it opens the queue in its own buffer, where every waiting
-   prompt is one Org subtree — edit its body, ~M-UP~ / ~M-DOWN~ to
-   re-order, ~C-c C-a~ to add, ~C-c C-d~ to drop, ~C-c C-c~ to apply,
-   ~C-c C-k~ to abandon.  The same list is shown in the chat: ~:QUEUE:~ is
-   one drawer of the auto-managed block at the top, and it is the one
-   drawer that arrives open.  What is waiting is
-   also on disk, in the transcript's ~:QUEUE:~ drawer, so quitting Emacs
-   mid-turn does not swallow it (see [[#transcript-file][Transcript file]]).
+   What is waiting is shown /in the chat/, at the bottom: each waiting
+   prompt is a ~* NEXT~ or ~* WAIT~ heading above the live ~* User~ box, the
+   first one NEXT because it goes out when this turn ends and the rest WAIT
+   behind it.  ~C-c C-q~ (~agent-org-queue-edit~) takes you there; edit a
+   prompt in place, ~C-c C-a~ adds a blank one at the bottom to type into,
+   ~C-c C-d~ kills one, ~M-UP~ / ~M-DOWN~ re-order (the order in the region
+   /is/ the send order), and ~M-x agent-org-queue-apply~ (~agent-org-queue-apply~)
+   is what puts the result on the wire.  Nothing is sent until you apply:
+   a queue you are rearranging must not change under your hands, and the
+   same list is in the ~:QUEUE:~ drawer of the auto-managed block and on
+   disk in the transcript, so quitting Emacs mid-turn does not swallow a
+   prompt (see [[#transcript-file][Transcript file]]).
+   ~C-c C-r~ (~agent-org-queue-resume~) sends the next one now, which is
+   the escape hatch after ~C-c C-k~ cancelled the turn they were queued
+   behind.
+
+   ~C-c C-l~ (~agent-org-lite-mode-toggle~) is the minimum-resources mode
+   for one session (see the Resource monitor and lite mode section below).
 
 If the agent asks for permission, the header line shows
 ~… ➤ Awaiting permission~ and the minibuffer lists the agent's own
@@ -310,6 +319,48 @@ agent renames later would otherwise rename the buffer mid-read.
 and ~C-x b~ says the same thing, because a chat has one display name wherever
 it is listed.  There is no key binding: ~C-x b~ already reaches every chat,
 and this is the short list of the ones with an agent behind them.
+
+* Resource monitor and lite mode
+
+A machine running agents is a machine under load: every chat holds an agent
+process of its own (~100 MB for ~qoder --acp~, measured), and a long chat
+holds a large buffer.  Two commands are about that, and neither of them costs
+anything when you do not use them.
+
+~M-x agent-org-resource-monitor~ opens ~*agent-org resources*~: an Org
+buffer of tables, one row per open session, plus a machine row.  Each row
+carries the session's label, its state, its lite scope, the agent's process,
+its CPU since the last refresh, the agent's resident memory, the chat's
+characters, and the transcript's size on disk.
+
+| Emacs | Agents | Agent RSS | Sessions | Load 1/5/15 |
+
+| Session | State | Mode | Agent | CPU | RSS | Buffer | Transcript |
+
+~C-c C-c~ redraws it, ~q~ closes it, and a prefix argument
+(~agent-org-resource-monitor~ with ~C-u~) narrows it to the session you call
+it from --- the reading you want when you suspect one chat.  It refreshes
+itself every ~agent-org-resource-refresh-interval~ seconds (5) *while it is
+on display*, and stops the moment you leave the buffer: it is the only
+repeating timer this package runs, and it exists to report load rather than
+add to it.  Everything is read from ~/proc~, so the numbers are the kernel's.
+
+~C-c C-l~ cycles one session's /lite/ scope:
+=inherit= (the default) follows the global setting, =on= and =off= pin this
+session against it, and ~C-u C-c C-l~ flips the global
+(~agent-org-lite-mode~) for every session that does not have a scope of its
+own.  Lite mode spends nothing on machinery nobody is reading:
+
+- no transcript write — /except/ while a prompt is queued, because a queued
+  prompt exists in no replay and no agent memory (see
+  [[#transcript-file][Transcript file]]);
+- no undo records, so the chat's buffer is not shadowed by an undo list
+  for a text nobody edits;
+- no whole-buffer Org reparse on every metadata rebuild, which is what a
+  long chat pays for a ~#+TODO:~ line that never changes.
+
+What it does not do is turn off colours, drop the agent's reasoning, or stop
+converting Markdown to Org: those are the conversation, not the machinery.
 
 * Seeing the raw wire
 
@@ -481,7 +532,13 @@ length cap, because a queue is the one list you cannot afford to hear
 about — and ~agent-org-resume-session~
 reads them from there — reloading them and sending the first, the way the
 end of a turn would have.  An empty queue writes no drawer, which is what
-stops a prompt being sent twice.
+stops a prompt being sent twice.  The same prompts are in the transcript as
+the ~* NEXT~ / ~* WAIT~ headings of the chat's queue region, so a transcript
+read years later still shows what was waiting; the drawer is what the
+loader reads, and both are written from the session's one list.
+
+In lite mode this is the ONE write lite mode does not skip: see
+the Resource monitor and lite mode section.
 
 Turn it off with ~agent-org-transcribe~ nil — a chat whose transcript is
 a real org file under version control does not want a second copy
@@ -571,6 +628,14 @@ what this package did before the option existed.
 - ~agent-org-replay-settle-delay~ / ~agent-org-replay-settle-cap~ — how
   long a resume waits for the agent to stop streaming history before it
   paints it, and the hard upper bound on that wait.
+- ~agent-org-lite-mode~ — when non-nil, every chat runs in lite mode; a
+  session with its own scope overrides it.  See
+  the Resource monitor and lite mode section.
+- ~agent-org-resource-refresh-interval~ — seconds between refreshes of the
+  resource monitor, and only while it is displayed; nil or 0 turns
+  auto-refresh off and ~C-c C-c~ in the monitor redraws on demand.
+- ~agent-org-clock-ticks-per-second~ — Linux ~USER_HZ~, which is what the
+  monitor's CPU column divides by.  100 everywhere it was measured.
 - ~agent-org-progress-min-time~ — seconds between redraws of the loading
   line in the echo area (0.2, Emacs's own default).  Raise it to 0.5 or
   1.0 on a machine that is struggling; the line then updates less often

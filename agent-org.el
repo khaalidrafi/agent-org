@@ -1750,7 +1750,7 @@ to count down to some stride."
     (setf (plist-get session :replay) nil)
     (agent-org--progress-start session "Restoring session history" :total total)
     (with-current-buffer buffer
-      (let ((buffer-undo-list t))
+      (let ((buffer-undo-list (agent-org-buffer--record-undo-p)))
         ;; Font-lock is NOT suppressed for this pass, whatever the bulk-paint
         ;; intuition says: `font-lock-mode' cannot be RE-enabled in a buffer no
         ;; window is showing, so the old off-then-restore lost the chat's
@@ -2107,19 +2107,25 @@ repeated enqueue/remove passes cannot stack suffixes on one message."
       base)))
 
 (defun agent-org--queue-refresh (session buffer)
-  "Re-render BUFFER for SESSION's queue: its header count and its file.
-Only a busy header carries the count: once the state is ready the
-message is someone else's business again.
+  "Re-render BUFFER for SESSION's queue: entries, header count, transcript.
+Two projections of ONE list, and they cannot disagree because both are rendered
+from `(plist-get session :pending-prompts)': the `* NEXT'/`* WAIT' entries at
+the bottom of the chat are what the user edits, and the `:QUEUE:' drawer in
+the metadata block is the FILE's machine-readable copy.  The drawer is
+regenerated from the session and never from the entries, which is exactly
+right: an edit the user has not applied is invisible to the transcript, so a
+transcript never claims a prompt the agent was not actually sent.
 
-The prompts themselves go one per line into the =:QUEUE:= drawer of the
-metadata block, which is the part of the buffer the transcript mirrors,
-and the mirror is written HERE rather than left for a turn boundary.  A
-queued prompt that never reaches a boundary — the user quits Emacs, the
-agent dies, the machine loses power — is precisely the text they would
-most want back, and no other writer has ever seen it."
+The mirror is written HERE rather than left for a turn boundary: a queued
+prompt that never reaches a boundary -- the user quits Emacs, the agent dies,
+the machine loses power -- is precisely the text they would most want back, and
+no other writer has ever seen it.  In lite mode the mirror is written only
+while the queue is non-empty, the one write lite mode does not skip (see
+`agent-org-lite-mode')."
   (agent-org-buffer-set-status
    buffer :queued (plist-get session :pending-prompts))
   (agent-org-buffer-refresh-metadata buffer)
+  (agent-org-buffer-refresh-queue buffer (plist-get session :pending-prompts))
   (agent-org-buffer-transcribe buffer)
   (let ((status (buffer-local-value 'agent-org-buffer--status buffer)))
     (when (memq (plist-get status :state) '(streaming loading))
@@ -2129,15 +2135,39 @@ most want back, and no other writer has ever seen it."
                                      "Streaming")
                                  session)))))
 
+(defun agent-org--queue-note (buffer key text)
+  "Record TEXT in BUFFER's pending-change log under KEY, newest first.
+The reconciliation the editor used to keep in its own buffer
+(`agent-org-buffer--queue-sent', `agent-org-buffer--queue-added'), kept here
+instead because
+the chat buffer is now the editing surface.  A queue that changes under the
+user's hands -- the turn ends and the head goes out, a prompt typed into the
+box joins the back -- must not be lost to a repaint, and must not be re-sent
+either: apply reads these and drops the sent one by text, then puts the added
+one back at the end."
+  (with-current-buffer buffer
+    ;; `make-local-variable' FIRST: the log's two variables are `defvar-local'
+    ;; in agent-org-buffer.el and start out unbound per buffer, so a plain
+    ;; `(push text (symbol-value key))' would read the GLOBAL value (nil),
+    ;; cons onto it and throw the result away -- the note would silently not
+    ;; stick, and the prompt it records would go missing on the next apply.
+    (set (make-local-variable key) (cons text (symbol-value key)))))
+
+(defun agent-org--queue-forget (buffer)
+  "Clear BUFFER's pending-change log: nothing was reconciled, so nothing to keep."
+  (with-current-buffer buffer
+    (setq-local agent-org-buffer--queue-sent nil
+                agent-org-buffer--queue-added nil)))
+
 (defun agent-org--queue-enqueue (session buffer text)
   "Append TEXT to SESSION's pending queue and show the depth in BUFFER.
 The editor, if one is open, is told too: it cannot see this prompt, and an
 editor that overwrites the session's queue with its own contents would
-silently drop it (see `agent-org-queue--note-added')."
+silently drop it (see `agent-org-buffer--queue-added')."
   (setf (plist-get session :pending-prompts)
         (append (plist-get session :pending-prompts) (list text)))
   (agent-org--queue-refresh session buffer)
-  (agent-org-queue--note-added buffer text)
+  (agent-org--queue-note buffer 'agent-org-buffer--queue-added text)
   (message "[agent-org] queued prompt (%d waiting)"
            (length (plist-get session :pending-prompts))))
 
@@ -2159,10 +2189,14 @@ whatever draft it holds stay untouched."
       ;; that puts it in the conversation, so no mirror on disk is ever
       ;; without it.  Getting this backwards makes a crash between the two
       ;; lose a prompt the user already paid for.
+      ;;
+      ;; The prompt is ALSO noted before the refresh, so that a region the
+      ;; user has already edited keeps the line while the session has
+      ;; dropped it: `agent-org-queue-apply' then removes it by text.  By
+      ;; POSITION it would be wrong -- the user may have moved that entry
+      ;; anywhere while the agent was answering.
+      (agent-org--queue-note buffer 'agent-org-buffer--queue-sent (car prompts))
       (agent-org--queue-refresh session buffer)
-      ;; The editor is told the SAME text the agent took, and not by
-      ;; position: an entry it moved is still the same prompt.
-      (agent-org-queue--note-sent buffer (car prompts))
       (agent-org--send-turn session buffer (car prompts)))))
 
 (defun agent-org--sync-title (session)
@@ -2310,335 +2344,113 @@ turn and preparing the next message happen in the same window."
         (agent-org-buffer-begin-exchange buffer text)
         (agent-org--send-turn session buffer text)))))
 
-;;;; Queue editor: show, edit and re-order the waiting prompts
+;;;; The queue, edited where it is read
 ;;
-;; One buffer, one action.  The first cut had three commands for the queue
-;; — `agent-org-queue-view' printed a read-only list in a hidden buffer,
-;; `agent-org-queue-remove' picked a number in the minibuffer, and
-;; `agent-org-queue-edit' re-read the LAST entry only.  All three are the
-;; same list seen three ways, and none of them could re-order it, which is
-;; the one thing a queue of prompts needs: type the follow-up first, then
-;; the question it answers.  The editor replaces them, and shows the queue
-;; in the chat buffer itself (the `:QUEUE:' drawer) as well as in here.
+;; The waiting prompts live at the BOTTOM of the chat buffer as `* NEXT' and
+;; `* WAIT' headings, and the user edits them there.  That replaces a second
+;; buffer: the queue editor existed because the queue used to be a `:QUEUE:'
+;; drawer inside the metadata block, which is deleted and reinserted on every
+;; usage update and would have eaten a cursor and a half-typed word.  The
+;; entries are real headline text the chat owns and nobody regenerates while
+;; the user is in it (`agent-org-buffer-refresh-queue'), so the working surface
+;; and the reading surface are the same region and there is nothing to keep in
+;; step.
+;;
+;; Three states, in the user's words: the head of the queue is NEXT because it
+;; goes out when the turn ends, and everything behind it is WAIT.  The word is
+;; DERIVED from position on every render, so moving an entry moves its state
+;; with it.
 
-(defvar agent-org-queue--editor nil
-  "Buffer-local in a CHAT buffer: its live queue editor, or nil.
-The link runs chat -> editor because the two things that change the queue
-WITHOUT the user working in the editor — `agent-org--drain-queue' taking a
-prompt off the front, `agent-org--queue-enqueue' adding one to the back —
-both have the CHAT buffer in hand and must be able to find the editor to
-tell it what happened.  The reverse pointer is
-`agent-org-queue--chat'.
-No `kill-buffer-hook' unsets this: `agent-org-queue--editor-for' checks
-`buffer-live-p', so a killed editor stops answering on its own.")
+(defvar-local agent-org-buffer--queue-sent nil
+  "Prompts the agent SENT from this buffer's queue while it was being edited.
+Newest first; `agent-org-queue-apply' reads it reversed.  Recorded by
+`agent-org--queue-note' at the drain, and matched BY TEXT on apply: the drain
+takes the front of the SESSION's list, and the user may have moved that entry
+anywhere in the region, so dropping by position would resend a prompt the agent
+already answered and lose an edited one.")
 
-(defvar agent-org-queue--chat nil
-  "Buffer-local in a queue EDITOR: the chat buffer it belongs to, or nil.")
+(defvar-local agent-org-buffer--queue-added nil
+  "Prompts QUEUED into this buffer while its queue was being edited.
+Newest first, for the same reason as `agent-org-buffer--queue-sent'.  These go
+BACK at the end on apply, in arrival order: the region does not show them, so
+it must not be allowed to overwrite them away.")
 
-(defvar agent-org-queue--sent nil
-  "Buffer-local in a queue editor: prompts the agent sent while it was open.
-Newest first (`push' order); `agent-org-queue-apply' reads it reversed.
-Recorded rather than applied, because the editor is a snapshot and the
-session is the record: dropping the entry by POSITION would resend a prompt
-the agent already answered — the drain takes the front of the SESSION's
-list, and the user may have moved that entry anywhere in this buffer.")
-
-(defvar agent-org-queue--added nil
-  "Buffer-local in a queue editor: prompts queued while it was open.
-Newest first, for the same reason as `agent-org-queue--sent'.  These go
-BACK at the end on apply, in arrival order: the editor never showed them,
-so it must not be allowed to overwrite them away.")
-
-(defconst agent-org-queue--headline-re "^\\* [0-9]+[ \t]*$"
-  "One queue entry's headline: a number and nothing else.
-The number is the send order, printed by `agent-org-queue--renumber'.  An
-entry's TEXT always starts on the line below, indented one space
-(`agent-org-queue--indent'), so a prompt that begins with `*' cannot be
-read as a headline here, and a headline this pattern does not match — the
-preamble, or a `* note' a user typed — is not an entry and cannot be sent
-by accident.")
-
-(defun agent-org-queue--entry-positions ()
-  "Buffer positions starting each entry headline in this buffer, top to bottom.
-`match-beginning', never what `re-search-forward' returns: that is the
-match's END, one line into the entry's body."
-  (save-excursion
-    (goto-char (point-min))
-    (let (spots)
-      (while (re-search-forward agent-org-queue--headline-re nil t)
-        (push (match-beginning 0) spots))
-      (nreverse spots))))
-
-(defun agent-org-queue--entry-bounds ()
-  "Start and end of the entry containing point, as a cons.
-The end is the next headline, or `point-max' for the last entry.
-`user-error' in the preamble above the entries: there is no entry there to
-act on, and moving or killing from it would silently take the first one."
-  (let* ((line-start (save-excursion (beginning-of-line) (point)))
-         (spots (agent-org-queue--entry-positions))
-         (here (car (last (seq-take-while (lambda (s) (<= s line-start))
-                                          spots)))))
-    (unless here (user-error "Not on a queue entry"))
-    (cons here (or (seq-find (lambda (s) (> s here)) spots) (point-max)))))
-
-(defun agent-org-queue--indent (text)
-  "TEXT with ONE space in front of every non-blank line, no trailing newline.
-A prompt is the user's own words, and those words can be an Org document:
-a `*' at column 0 is a headline and would cut this buffer into two entries,
-sending half of one prompt as another.  One space is all a headline needs
-to stop being one (info \"(org) Headlines\"), and
-`agent-org-queue--dedent' removes exactly that much, so an entry reads back
-byte for byte — blank lines included, which is why the split keeps the
-empty strings."
-  (mapconcat (lambda (line)
-               (if (string-empty-p line) line (concat " " line)))
-             (split-string text "\n")
-             "\n"))
-
-(defun agent-org-queue--dedent (line)
-  "LINE with the renderer's one leading space removed, if it has one.
-Text typed straight into an entry — a new one, an appended word — never got
-that space, so this is a no-op for it rather than a truncation."
-  (if (string-prefix-p " " line) (substring line 1) line))
-
-(defun agent-org-queue--entry-text (beg end)
-  "The prompt stored between BEG (the headline's end) and END.
-Inverse of `agent-org-queue--indent'.  The whole entry is trimmed at the
-outside, so an entry the user left blank reads as blank and
-`agent-org-queue--parse' can drop it; a prompt's internal blank lines and
-indentation are kept exactly."
-  (string-trim
-   (mapconcat #'agent-org-queue--dedent
-              (split-string (buffer-substring-no-properties beg end) "\n")
-              "\n")))
-
-(defun agent-org-queue--parse ()
-  "The entries in this buffer, as a list of prompts, top to bottom.
-An entry is everything from its headline to the next one, so a multi-line
-prompt stays ONE prompt.  An entry whose text is blank is dropped:
-`agent-org-send' refuses an empty draft, and the queue must not be able to
-smuggle one through by leaving a headline bare."
-  (save-excursion
-    (let* ((spots (agent-org-queue--entry-positions))
-           (ends (append (cdr spots) (list (point-max)))))
-      (delq nil
-            (cl-loop for spot in spots
-                     for end in ends
-                     for text = (agent-org-queue--entry-text
-                                 (save-excursion (goto-char spot)
-                                                 (line-end-position))
-                                 end)
-                     unless (string-blank-p text)
-                     collect text)))))
-
-(defun agent-org-queue--drop-sent (entries sent)
+(defun agent-org--queue-drop-sent (entries sent)
   "ENTRIES with one occurrence removed for each text in SENT.
-Matched by TEXT, and only the first occurrence of each: two entries with
-the same words are two prompts, and the agent taking one leaves the other
-waiting.  Position would be easier and would be wrong — see
-`agent-org-queue--sent'."
+Matched by TEXT, and only the first occurrence of each: two entries with the
+same words are two prompts, and the agent taking one leaves the other waiting.
+Position would be easier and would be wrong -- see
+`agent-org-buffer--queue-sent'."
   (let ((out (copy-sequence entries)))
     (dolist (text sent out)
       (let ((at (seq-position out text #'equal)))
         (when at (setq out (seq-remove-at-position out at)))))))
 
-(defun agent-org-queue--header ()
-  "The editor's preamble: what this buffer is and how to work it.
-No headline and no drawer, because a line matching
-`agent-org-queue--headline-re' WOULD be an entry: the preamble is the only
-text in here that is not a prompt, and it must never look like one."
-  (let* ((chat (and (buffer-live-p agent-org-queue--chat) agent-org-queue--chat))
-         (status (and chat (buffer-local-value 'agent-org-buffer--status chat)))
-         (label (if status (agent-org-buffer--chat-label status) "agent-org")))
-    (format (concat "#+TITLE: Prompt queue — %s\n\n"
-                    "Sent in this order — entry 1 goes out when the current turn ends.\n"
-                    "C-c C-c apply, C-c C-k abandon, C-c C-a new entry, C-c C-d kill entry.\n"
-                    "M-UP / M-DOWN move the entry at point.\n\n")
-            label)))
-
-(defun agent-org-queue--repaint (prompts)
-  "Draw PROMPTS as this buffer's entries, replacing everything.
-An empty PROMPTS still gets one bare entry: this buffer is also the place
-to compose the next prompt, and an entry with no text is dropped on apply,
-so leaving it untouched cannot send anything.
-Point's LINE survives, because applying is a save in the middle of work —
-a cursor thrown to the top of the buffer is a cursor in the wrong entry.
-`buffer-undo-list' is bound only here: undoing across a save would let `C-/'
-put back entries the session's queue has already forgotten, which is a
-buffer that lies."
-  (let ((line (line-number-at-pos))
-        (column (current-column))
-        (buffer-undo-list t)
-        (inhibit-read-only t))
-    (erase-buffer)
-    (insert (agent-org-queue--header))
-    (cl-loop for text in (or prompts (list "")) for i from 1
-             do (insert (format "* %d\n%s\n" i (agent-org-queue--indent text))))
-    (goto-char (point-min))
-    (forward-line (max 0 (1- line)))
-    (move-to-column column)))
-
-(defun agent-org-queue--renumber ()
-  "Rewrite every entry headline to its position in the buffer.
-The printed number is the send order, so after a move, an insert or a kill
-it has to be recomputed — an entry numbered 3 that now sits first would
-otherwise promise a place it no longer has."
-  (save-excursion
-    (let ((i 0))
-      (goto-char (point-min))
-      (while (re-search-forward agent-org-queue--headline-re nil t)
-        (cl-incf i)
-        (let ((head (match-beginning 0)))
-          (delete-region head (line-end-position))
-          (goto-char head)
-          (insert (format "* %d" i)))))))
-
-(defun agent-org-queue--buffer-name (chat)
-  "The editor's buffer name for CHAT: one per session.
-The chat label is the same `<agent>:<project>' the chat buffer wears, so
-`C-x b' shows the pair together instead of two unrelated names."
-  (format "*agent-org queue: %s*"
-          (let ((status (buffer-local-value 'agent-org-buffer--status chat)))
-            (if status (agent-org-buffer--chat-label status) "agent-org"))))
-
-(defun agent-org-queue--editor-for (buffer)
-  "BUFFER's live queue editor, or nil.
-The liveness check IS the cleanup: a killed editor leaves a dead reference
-in the chat buffer, and answering nil for it means the next
-`agent-org-queue-edit' builds a fresh one rather than switching to a
-buffer that no longer exists."
-  (let ((buf (buffer-local-value 'agent-org-queue--editor buffer)))
-    (and (buffer-live-p buf) buf)))
-
-(defun agent-org-queue--note-sent (buffer text)
-  "Tell BUFFER's editor, if one is open, that TEXT has gone out.
-Called from the drain, which runs on a turn boundary and so can land in
-the middle of an edit."
-  (let ((editor (agent-org-queue--editor-for buffer)))
-    (when editor
-      (with-current-buffer editor
-        (push text agent-org-queue--sent)))))
-
-(defun agent-org-queue--note-added (buffer text)
-  "Tell BUFFER's editor, if one is open, that TEXT was queued behind it.
-The mirror of `agent-org-queue--note-sent': the prompt arrived while the
-editor was open, so the editor cannot have shown it, and must not be able
-to remove it by being the last writer."
-  (let ((editor (agent-org-queue--editor-for buffer)))
-    (when editor
-      (with-current-buffer editor
-        (push text agent-org-queue--added)))))
-
-(defun agent-org-queue--check-editor ()
-  "Fail unless this is a queue editor buffer.
-Every command here works on entries, and a stray `C-c C-c' in an ordinary
-Org file must say so rather than reach some session's queue."
-  (unless (derived-mode-p 'agent-org-queue-mode)
-    (user-error "Not an agent-org queue buffer")))
-
-(defun agent-org-queue--chat-or-error ()
-  "The chat buffer this editor belongs to, or a clean failure.
-An error and not a silent nil: applying to a session that has gone would
-report success while changing nothing."
-  (let ((chat (and (buffer-live-p agent-org-queue--chat) agent-org-queue--chat)))
-    (or chat (user-error "That session's chat buffer is gone"))))
-
-(define-derived-mode agent-org-queue-mode org-mode "AO-Queue"
-  "Major mode for editing one session's queued prompts.
-An entry is a prompt: its headline is its place in the send order and the
-indented lines under it are its text.  `C-c C-c' makes the entries the
-session's queue; nothing else in this buffer can reach the agent, so
-editing is safe until then.
-Keys:
-  C-c C-c  Apply — the entries become the session's queue
-  C-c C-k  Abandon — close without writing anything
-  C-c C-a  New empty entry at the end, ready to type
-  C-c C-d  Kill the entry at point (it goes to the kill ring)
-  M-UP     Move the entry at point one place nearer the front
-  M-DOWN   Move it one place further back"
-  :group 'agent-org
-  ;; The entries are the whole document and there are never many of them,
-  ;; so nothing here should be hidden: an entry the user cannot see is an
-  ;; entry they cannot reorder.  Wrapping is what delivers that — and it is
-  ;; `org-startup-truncated' that decides it, because `org-mode' applies its
-  ;; own startup visibility AFTER a derived mode's body has run (measured
-  ;; live: a `(setq-local truncate-lines t)' here was still nil by the time
-  ;; the buffer was displayed).
-  (setq-local org-startup-folded nil)
-  (setq-local org-startup-truncated nil))
-
-;; `define-derived-mode' gives this mode a sparse keymap and does NOT parent
-;; it on `org-mode-map' (measured: `keymap-parent' answers nil), so the
-;; subtree commands Org's own moves are reached through, and every other Org
-;; binding, come from this line.  The keys are set here rather than in a
-;; `defvar' because `define-derived-mode' defines the variable itself, and a
-;; second `defvar' for it would be ignored — the mode's map object is the one
-;; buffer-local value, so mutating it is the only way in.
-(set-keymap-parent agent-org-queue-mode-map org-mode-map)
-(define-key agent-org-queue-mode-map (kbd "C-c C-c") #'agent-org-queue-apply)
-(define-key agent-org-queue-mode-map (kbd "C-c C-k") #'agent-org-queue-cancel)
-(define-key agent-org-queue-mode-map (kbd "C-c C-a") #'agent-org-queue-insert-entry)
-(define-key agent-org-queue-mode-map (kbd "C-c C-d") #'agent-org-queue-kill-entry)
-(define-key agent-org-queue-mode-map [M-up] #'agent-org-queue-move-up)
-(define-key agent-org-queue-mode-map [M-down] #'agent-org-queue-move-down)
-
 ;;;###autoload
 (defun agent-org-queue-edit ()
-  "Edit the prompts waiting for this session, and put them in new order.
-Entry 1 is the prompt that goes out when the current turn ends.  The list
-is editable as Org text: `M-UP'/`M-DOWN' move an entry, `C-c C-d' kills
-one, `C-c C-a' adds one, `C-c C-c' applies the result and `C-c C-k'
-abandons the whole edit.  Applying writes ONE thing — the session's
-`:pending-prompts' — and the header count, the chat buffer's `:QUEUE:'
-drawer and the transcript file all read that, so they cannot disagree.
+  "Go to this session's queued prompts, at the bottom of the chat.
+The entries are `* NEXT'/`* WAIT' headings above the live `* User' box: type
+into them, add more with `C-c C-a', kill one with `C-c C-d', reorder with
+`M-UP'/`M-DOWN', and put the result on the wire with `M-x agent-org-queue-apply'
+(bound to `C-c C-a' nowhere on purpose: in a chat, `C-c C-a' is the user's own
+\"add one here\").
 
-A SEPARATE buffer rather than editing the chat's own `:QUEUE:' drawer in
-place, because that drawer is part of the metadata block and the block is
-deleted and reinserted on every usage update: a cursor and a half-typed
-word in it would be destroyed mid-turn.  The drawer is for reading, this is
-for working.
+Nothing is written to the session until the apply.  That is the whole contract
+and the reason the region is never repainted over an edit
+(`agent-org-buffer-refresh-queue'): a queue a person is rearranging must not
+change under his hands, and a transcript must never claim a prompt the agent
+was not sent.
 
-Called twice, this switches to the editor that is already open rather than
-redrawing it: a refresh would silently drop the edits that were never
-applied.  An empty queue is not an error either — the editor opens with one
-blank entry, which is also how to compose a prompt to send later."
+An EMPTY queue is not an error and not a no-op either: one blank `* WAIT' entry
+is created and point lands in it, because \"add a prompt to the queue\" and
+\"write down the next thing to ask\" are the same gesture here, and a blank
+entry is dropped on apply so composing one cannot send a blank."
   (interactive)
-  (let* ((chat (current-buffer))
-         (session (agent-org--session-for-buffer chat)))
+  (let* ((buffer (current-buffer))
+         (session (agent-org--session-for-buffer buffer)))
     (unless session
       (user-error "Not an agent-org chat buffer"))
-    (let ((existing (agent-org-queue--editor-for chat)))
-      (if existing
-          (progn
-            (pop-to-buffer existing)
-            (message "[agent-org] queue editor already open (C-c C-c applies, C-c C-k abandons)"))
-        (agent-org-queue--open chat (plist-get session :pending-prompts))))))
+    (unless (agent-org-buffer-queue-p buffer)
+      (agent-org-buffer-refresh-queue buffer (plist-get session :pending-prompts)))
+    (with-current-buffer buffer
+      (let ((head (or (car (agent-org-buffer--queue-headlines))
+                      (agent-org-buffer-queue-insert-entry buffer))))
+        (goto-char head)
+        (when (and (looking-at-p "\\* ")
+                   (string= (buffer-substring-no-properties
+                             (point) (line-end-position))
+                            (format "* %s " (cadr agent-org-buffer--queue-keywords))))
+          ;; a blank slot is a place to type, not a place to sit on the heading
+          (end-of-line))
+        (message "[agent-org] %d prompt(s) waiting; edit them here, then M-x agent-org-queue-apply"
+                 (length (plist-get session :pending-prompts)))))))
 
-(defun agent-org-queue--open (chat prompts)
-  "Create CHAT's queue editor showing PROMPTS, and display it.
-The mode and the paint run with the buffer current BEFORE it is shown:
-`agent-org-queue-mode' is `org-mode', whose startup wants to set buffer
-locals, and a buffer displayed by `pop-to-buffer' is not necessarily
-current — the same trap that cost a chat its colors (see
-`agent-org-buffer--ensure-font-lock').  Displaying it afterwards is the
-part that needs a window, so the order is mode, paint, show."
-  (let ((buf (generate-new-buffer (agent-org-queue--buffer-name chat))))
-    (with-current-buffer buf
-      (agent-org-queue-mode)
-      (setq-local agent-org-queue--chat chat
-                  agent-org-queue--sent nil
-                  agent-org-queue--added nil)
-      (agent-org-queue--repaint prompts))
-    (with-current-buffer chat
-      (setq-local agent-org-queue--editor buf))
-    (pop-to-buffer buf)
-    (with-current-buffer buf
-      ;; Now that a window shows it: batch Emacs cannot enable font-lock in
-      ;; any buffer, hidden or not, so this is for the live session only and
-      ;; no test can see it happen.
-      (unless font-lock-mode
-        (font-lock-mode 1)))
-    buf))
+;;;###autoload
+(defun agent-org-queue-apply ()
+  "Make the queue entries in this buffer the session's queue, everywhere.
+Reconciliation, in this order: prompts the agent sent while you were editing are
+removed BY TEXT (`agent-org--queue-drop-sent'), then prompts that arrived while
+you were editing go back on the end, in arrival order.  So the region is never
+the sole writer of a list it has not seen -- and an entry you edited AFTER it
+went out is the one case that does get sent again, because the agent never saw
+those words.
+
+The order in the region IS the send order, so an `M-UP'/`M-DOWN' in here
+re-orders the queue: that is the feature the separate editor existed for, and
+it is now the region's own property."
+  (interactive)
+  (let* ((buffer (current-buffer))
+         (session (agent-org--session-for-buffer buffer)))
+    (unless session
+      (user-error "Not an agent-org chat buffer"))
+    (let ((result (append (agent-org--queue-drop-sent
+                           (agent-org-buffer-queue-parse buffer)
+                           (reverse agent-org-buffer--queue-sent))
+                          (reverse agent-org-buffer--queue-added))))
+      (agent-org--queue-forget buffer)
+      (setf (plist-get session :pending-prompts) result)
+      (agent-org--queue-refresh session buffer)
+      (message "[agent-org] queue applied: %d waiting" (length result)))))
 
 ;;;###autoload
 (defun agent-org-queue-resume ()
@@ -2664,109 +2476,494 @@ though: the person calling this believes there is a prompt in it."
         (message "[agent-org] agent is busy — the queue goes out when this turn ends")
       (agent-org--drain-queue session buffer))))
 
-;;;###autoload
-(defun agent-org-queue-apply ()
-  "Make this buffer's entries the session's queue, everywhere at once.
-Reconciliation, in this order: entries the agent sent while the editor was
-open are removed BY TEXT (`agent-org-queue--drop-sent'), then prompts that
-arrived while the editor was open go back on the end, in arrival order.
-So the editor is never the sole writer of a list it has not seen — and an
-entry the user edited after it went out is the one case that does get sent
-again, because the agent never saw those words.
-The buffer stays open and is repainted from the result, which is what makes
-an apply a save rather than a close: keep editing, apply again."
-  (interactive)
-  (agent-org-queue--check-editor)
-  (let* ((chat (agent-org-queue--chat-or-error))
-         (session (agent-org--session-for-buffer chat)))
-    (unless session
-      (user-error "That session is gone"))
-    (let ((result (append (agent-org-queue--drop-sent
-                           (agent-org-queue--parse)
-                           (reverse agent-org-queue--sent))
-                          (reverse agent-org-queue--added))))
-      (setq agent-org-queue--sent nil
-            agent-org-queue--added nil)
-      (setf (plist-get session :pending-prompts) result)
-      (agent-org--queue-refresh session chat)
-      (agent-org-queue--repaint result)
-      (message "[agent-org] queue applied: %d waiting" (length result)))))
+
+;;;; Resource monitor
+
+(defcustom agent-org-clock-ticks-per-second 100
+  "Clock ticks per second in `/proc/<pid>/stat', i.e. Linux's USER_HZ.
+Only the CPU column needs it: the kernel counts a process' CPU time in
+ticks and nothing in Emacs says how many make a second -- `sysconf' is not
+available in the Emacs this was built against (measured: `sysconf' is void
+in 30.2), and asking the kernel by spawning `getconf' from a monitor is the
+one cost this feature exists to avoid.  USER_HZ is 100 on every
+distribution measured here; a wrong value shows up as the CPU column being
+off by a constant factor and nothing else."
+  :type 'integer
+  :group 'agent-org)
+
+(defcustom agent-org-resource-refresh-interval 5.0
+  "Seconds between refreshes of the resource monitor, while it is displayed.
+Five seconds by default because the question this answers -- which agent
+is holding the machine, and how much of it -- does not change in between,
+and because a monitor that wakes Emacs ten times a second to redraw the
+same four numbers is the load it is supposed to be reporting.  Nil or zero
+turns auto-refresh off; `agent-org-resource-refresh' (C-c C-c in the
+monitor) still redraws on demand.
+
+The timer only fires while the buffer is on display: an undisplayed monitor
+skips the sampling and arms nothing new, so a forgotten window costs
+nothing.  Every other timer in this package is either an event's own clock
+or short-lived (`agent-org--progress-start'), which is why this one says so
+in its own docstring."
+  :type 'number
+  :group 'agent-org)
+
+(defvar agent-org--resource-timer nil
+  "The monitor's repeating refresh timer, or nil when none is armed.
+One buffer, one timer: the monitor is a singleton
+(`agent-org-resource-monitor' reuses the buffer it finds), so there is
+nothing to have two of.")
+
+(defun agent-org--status-kb (text field)
+  "KIB that FIELD reports in the `/proc' status TEXT, or nil.
+Pure: TEXT is a whole `status' file as a string and FIELD is a `/proc' label
+such as \"VmRSS\".  The parsing is separated from the file read so that the
+shape of a `/proc' file can be pinned by a test on a machine whose
+processes are not ours to inspect -- a monitor whose column cannot be
+tested is a decoration (see `agent-org--stat-cpu-ticks')."
+  (when (string-match (format "^%s:[ \t]+\\([0-9]+\\)" field) text)
+    (string-to-number (match-string 1 text))))
+
+(defun agent-org--proc-status-kb (pid field)
+  "KIB that FIELD reports for PID, or nil.
+Reads `/proc/PID/status' and pulls one line, a few hundred bytes; two
+sessions' worth of that is not a cost worth optimising further.  A process
+that died between the registry walk and this read answers nil, and nil is
+displayed as a dash rather than as zero."
+  (let ((file (format "/proc/%s/status" pid)))
+    (when (file-readable-p file)
+      (condition-case nil
+          (with-temp-buffer
+            (insert-file-contents file)
+            (goto-char (point-min))
+            (agent-org--status-kb (buffer-string) field))
+        (error nil)))))
+
+(defun agent-org--proc-rss (pid)
+  "Resident bytes of PID, or nil when the kernel will not say.
+`/proc/PID/status' reports `VmRSS' in KIB, which is the one memory number
+that needs no arithmetic on our side: `statm' would have to be multiplied
+by the page size, and `sysconf' is void here (see
+`agent-org-clock-ticks-per-second')."
+  (when-let* ((kb (agent-org--proc-status-kb pid "VmRSS")))
+    (* kb 1024)))
+
+(defun agent-org--stat-cpu-ticks (text)
+  "Total CPU ticks in the `/proc' `stat' TEXT, user plus system, or nil.
+Fields 14 and 15, counted from AFTER the `comm' field.  This is the part
+that is easy to get wrong and impossible to notice: the process name is
+parenthesised and may itself contain spaces and parentheses -- `(Web
+Content)' is a real process name -- so splitting the whole line reads the
+wrong numbers for some agents and reports no error at all.  A CPU column
+that is silently off by two positions is worse than no column, so the
+counting starts after the last `) ' of the comm field.
+
+Pure, for the same reason as `agent-org--status-kb': the `/proc' format is
+the part a test can pin on any machine."
+  (when (string-match ") " text)
+    (let* ((fields (split-string (substring text (1+ (match-beginning 0))
+                                          nil)
+                                 "[ \t\n\r]+" t))
+           (user (nth 11 fields))
+           (sys (nth 12 fields)))
+      (and user sys (+ (string-to-number user)
+                       (string-to-number sys))))))
+
+(defun agent-org--proc-cpu-ticks (pid)
+  "Total CPU ticks PID has consumed, user plus system, or nil."
+  (let ((file (format "/proc/%s/stat" pid)))
+    (when (file-readable-p file)
+      (condition-case nil
+          (with-temp-buffer
+            (insert-file-contents file)
+            (goto-char (point-min))
+            (agent-org--stat-cpu-ticks (buffer-string)))
+        (error nil)))))
+
+(defun agent-org--parse-load (text)
+  "The first three numbers of a `/proc/loadavg' TEXT, as a list, or nil.
+Pure; `agent-org--load-average' is the read.  Three and not five: the fourth
+field is the running/total process split and the fifth is the last pid, and
+neither is a load average.
+
+A character class, and not the obvious separator string: `split-string' treats
+SEPARATORS as a REGEXP whenever it is longer than one character (info \"(elisp)
+String Splitting\"), so a two-character SEPARATORS string asks for that
+SEQUENCE -- space then tab -- never splits at all, and leaves a whole
+`/proc/loadavg' line as one field.  Measured here: it answered nil."
+  (let ((fields (split-string (or text "") "[ \t\n\r]+" t)))
+    (when (>= (length fields) 3)
+      (mapcar #'string-to-number (take 3 fields)))))
+
+(defun agent-org--load-average ()
+  "The 1, 5 and 15 minute load averages as three numbers, or nil.
+`/proc/loadavg' only.  Load is here because it is the number the monitor was
+asked for: a machine at 8 with one 100 MB agent and a dozen chats' worth of
+buffer is a different problem from the same machine at 0.2, and an agent RSS
+column alone cannot tell them apart.  nil off GNU/Linux is a missing COLUMN,
+not a failed monitor."
+  (let ((file "/proc/loadavg"))
+    (when (file-readable-p file)
+      (condition-case nil
+          (with-temp-buffer
+            (insert-file-contents file)
+            (goto-char (point-min))
+            (agent-org--parse-load (buffer-string)))
+        (error nil)))))
+
+(defun agent-org--bytes (bytes)
+  "BYTES as a short human string, or an em-dash when there is nothing to say.
+One unit at a time, one decimal: \"512 B\", \"98.0 MB\", \"1.4 GB\" -- never
+\"1024.0 kB\" and never \"0.1 GB\" for what a person would call 98 MB.  An
+em-dash and not \"0\" for an absent measurement: zero is a claim and nil is an
+absence, and a dead agent process is not a small one."
+  (cond ((null bytes) "—")
+        ((< bytes 1024) (format "%d B" bytes))
+        ((< bytes 1048576) (format "%.0f kB" (/ bytes 1024.0)))
+        ((< bytes 1073741824) (format "%.1f MB" (/ bytes 1048576.0)))
+        (t (format "%.1f GB" (/ bytes 1073741824.0)))))
+
+(defun agent-org--compact (number)
+  "NUMBER in the k/m/b style the chat's own usage indicators use, as a string.
+`agent-org-buffer--format-number-compact' is the reference; a CHAT COUNT and a
+BUFFER SIZE are the same kind of number and should read the same way."
+  (cond ((< number 1000) (format "%d" number))
+        ((< number 1000000) (format "%.0fk" (/ number 1000.0)))
+        ((< number 1000000000) (format "%.0fm" (/ number 1000000.0)))
+        (t (format "%.1fb" (/ number 1000000.0)))))
+
+(defun agent-org--session-sample (session)
+  "Take one resource SAMPLE of SESSION and return it as a plist.
+`:pid', `:rss', `:ticks' (CPU consumed so far), `:at' (absolute time),
+`:chars', `:undo' and `:lite'.  Nothing is rendered here: a sample is cheap
+and taking it twice must cost the same, so the CPU RATE is derived
+afterwards from two samples (`agent-org--cpu-rate').
+
+`:chars' is characters and not bytes -- Emacs buffers are text, and a byte
+figure would need the multibyte ratio of a conversation nobody has measured.
+`:undo' is the buffer's `buffer-undo-list' as a boolean, reported because it
+is the resource lite mode actually removes: an em-dash there would hide the
+one thing the MODE column claims."
+  (let* ((proc (agent-org--agent-process session))
+         (pid (and proc (process-id proc)))
+         (buffer (plist-get session :buffer)))
+    (when (buffer-live-p buffer)
+      (list :pid pid
+            :rss (and pid (agent-org--proc-rss pid))
+            :ticks (and pid (agent-org--proc-cpu-ticks pid))
+            :at (float-time)
+            :chars (with-current-buffer buffer (buffer-size))
+            :undo (buffer-local-value 'buffer-undo-list buffer)
+            :lite (agent-org-lite-p buffer)))))
+
+(defun agent-org--cpu-rate (previous sample)
+  "Percent of one core SAMPLE used since PREVIOUS, or nil.
+PREVIOUS is `(cons TICKS TIME)' -- the previous sample's `:ticks' and `:at',
+which is what `agent-org--resource-row' stores on the session.  A rate and
+not a total is the point of the column: \"12 minutes of CPU since it
+started\" is a fact about the session's age, while \"140%\" is the fact that
+one agent is spinning the machine.  nil for a session's first sample, so
+resolution is whatever `agent-org-resource-refresh-interval' is.
+
+Above 100% is ordinary and correct: it means the agent runs on more than one
+core.  A negative delta -- a pid REUSED by a new agent between two samples --
+is reported as nil rather than as negative CPU."
+  (when (and previous
+             (plist-get sample :ticks)
+             (> (- (plist-get sample :at) (cdr previous)) 0))
+    (let ((ticks (- (plist-get sample :ticks) (car previous))))
+      (and (> ticks 0)
+           (min 999.0 (* 100.0 (/ (/ ticks (float agent-org-clock-ticks-per-second))
+                                  (- (plist-get sample :at) (cdr previous)))))))))
+
+(defun agent-org--session-status (session)
+  "The status plist of SESSION's chat, or a minimal one when its buffer died.
+The registry holds a buffer, not a status, and a chat can be killed between
+two samples.  Reading the plist WITH the chat current is the only way to get
+it -- there is no session-level copy, and copying one would be a second
+record of the same facts (CONVENTIONS.md 6)."
+  (let ((buffer (plist-get session :buffer)))
+    (if (buffer-live-p buffer)
+        (with-current-buffer buffer agent-org-buffer--status)
+      (list :provider (plist-get session :name)))))
+
+(defun agent-org--resource-row (session sample)
+  "The monitor row for SESSION given its SAMPLE: eight column strings.
+SESSION, STATE, MODE, AGENT, CPU, RSS, BUFFER, TRANSCRIPT -- the facts a
+person compares between two chats to decide which one to close.
+
+The label is `agent-org-buffer--chat-label' over the session's own status
+plist, never a buffer name read later: an agent renames its own chat, so a
+name looked up after the fact can match nothing.
+
+BUFFER carries \" no-undo\" when the session records no undo history, which
+is what lite mode does (`agent-org-lite-mode'): the monitor showing the
+effect of the toggle is why the two features were built together.  The
+transcript column is the file's size on disk, an em-dash when there is none
+-- and a lite session that has drained its queue stops writing, so this
+column going quiet is the queue rule working, not a bug."
+  (let* ((buffer (plist-get session :buffer))
+         (status (agent-org--session-status session))
+         (previous (plist-get session :resource-ticks)))
+    (when sample
+      (setf (plist-get session :resource-ticks)
+            (cons (plist-get sample :ticks) (plist-get sample :at))))
+    (list (agent-org-buffer--chat-label status)
+          (agent-org-buffer--state-label (plist-get status :state))
+          (agent-org-buffer--lite-word buffer)
+          (if-let* ((proc (agent-org--agent-process session)))
+              (file-name-nondirectory
+               (car (split-string (or (process-name proc) "") "/")))
+            "—")
+          (let ((rate (agent-org--cpu-rate previous sample)))
+            (if rate (format "%.0f%%" rate) "—"))
+          (agent-org--bytes (plist-get sample :rss))
+          (concat (agent-org--compact (plist-get sample :chars))
+                  (if (plist-get sample :undo) "" " no-undo"))
+          (let ((file (and (plist-get status :session-id)
+                           (file-name-nondirectory
+                            (agent-org-buffer--transcript-file
+                             (plist-get status :session-id))))))
+            (if (and file (file-exists-p file))
+                (agent-org--compact (or (nth 7 (file-attributes file)) 0))
+              "—")))))
+
+(defun agent-org--table-cell (text)
+  "TEXT as one Org table cell: no raw bar, no line break.
+`|' ends a cell and a newline ends a row, so a value carrying either has to
+be flattened first.  Every column here is a short string this file builds,
+so this is a guard rather than a hope -- and the file NAME of a transcript
+is the one value that came off the wire."
+  (replace-regexp-in-string "[|\n]" " " (or text "")))
+
+(defun agent-org--resource-table (headers rows)
+  "An Org table with HEADERS over ROWS, as text.
+A real table and not pre-aligned text, because the monitor is read as a
+document: Org folds it, aligns it, `TAB' moves between cells and
+`org-table-align' re-fits it after a hand edit.  The separator row is
+written out (`|---+---|') because in an Org table the second line IS the
+separator, and a table without one is not a table to the parser."
+  (concat
+   "| " (mapconcat #'agent-org--table-cell headers " | ") " |\n"
+   "| " (mapconcat (lambda (_) "---") headers " + ") " |\n"
+   (mapconcat (lambda (row)
+                (concat "| " (mapconcat #'agent-org--table-cell row " | ")
+                        " |\n"))
+              rows)
+   "\n"))
+
+(defun agent-org--resource-block (sessions)
+  "The whole monitor body for SESSIONS: two tables under their own headings.
+Machine first, because the question the monitor is asked is about the
+machine; the per-session table answers the follow-up of which chat is
+responsible for it.  Two tables and not one, because their columns carry
+different units -- bytes and percentages for the machine, the sessions
+themselves for the rest -- and one table would have to invent a header that
+fits both.
+
+SAMPLES are taken here, once per session, and the rows and the machine totals
+are both built from them: sampling inside the row renderer would make the
+machine table's totals disagree with the rows beside them."
+  (let* ((samples (mapcar #'agent-org--session-sample sessions))
+         (taken (seq-filter #'identity samples))
+         (live (seq-filter (lambda (sample) (plist-get sample :pid)) taken))
+         (rss (mapcar (lambda (sample) (or (plist-get sample :rss) 0)) taken))
+         (rows (cl-loop for session in sessions
+                        for sample in samples
+                        collect (agent-org--resource-row session sample))))
+    (concat
+     "* Machine\n"
+     (agent-org--resource-table
+      (list "Emacs" "Agents" "Agent RSS" "Sessions" "Load 1/5/15")
+      (list (list (agent-org--bytes
+                   (if-let* ((pid (emacs-pid)))
+                       (agent-org--proc-rss pid)
+                     ;; `emacs-pid' is nil where /proc cannot name the
+                     ;; process, which is one dash in a column, not an error
+                     ))
+                  (format "%d" (length live))
+                  (agent-org--bytes (seq-reduce #'+ rss 0))
+                  (format "%d" (length sessions))
+                  (or (mapconcat (lambda (n) (format "%.2f" n))
+                                 (agent-org--load-average) "/")
+                      "—"))))
+     "\n"
+     "* Sessions\n"
+     (agent-org--resource-table
+      '("Session" "State" "Mode" "Agent" "CPU" "RSS" "Buffer" "Transcript")
+      rows)
+     "\n")))
+
+(defvar agent-org-resource-monitor-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-c") #'agent-org-resource-refresh)
+    (define-key map (kbd "q") #'quit-window)
+    map)
+  "Keymap for the resource monitor.
+`C-c C-c' refreshes, as `C-c C-c' sends in a chat: it is the act of this
+buffer.  `q' closes it, because a monitor left open behind a real
+conversation is a window somebody has to remember to close.")
+
+(defvar-local agent-org--resource-scope nil
+  "The sessions this monitor buffer is showing.
+Recorded on the monitor rather than re-derived on each refresh, because
+`agent-org-resource-refresh' runs from a TIMER with no idea what the reader
+scoped the monitor to: a refresh that read the current buffer would turn a
+one-chat monitor into the whole machine the moment a chat was selected.  The
+registry LIST is kept rather than a copy of the entries, so a chat that
+opens or dies shows up on the next refresh.")
+
+(define-minor-mode agent-org-resource-monitor-mode
+  "Minor mode for the `agent-org' resource monitor buffer.
+Keys:
+  C-c C-c  Redraw the tables now
+  q        Close the monitor
+A MINOR mode over Org rather than a major one, because the monitor is an Org
+document and folding, alignment and `TAB' must keep working in it: a major
+mode would have to re-bind all of Org to add two keys, and the two keys are
+the whole addition.  Its other job is the kill hook -- the monitor is the one
+buffer here with a repeating timer, and the timer must not outlive the buffer
+that justifies it."
+  :init-value nil
+  :lighter nil
+  :keymap agent-org-resource-monitor-map
+  (if agent-org-resource-monitor-mode
+      (add-hook 'kill-buffer-hook #'agent-org--forget-monitor nil t)
+    (remove-hook 'kill-buffer-hook #'agent-org--forget-monitor t)))
 
 ;;;###autoload
-(defun agent-org-queue-cancel ()
-  "Abandon this editor: the session's queue never saw a byte of the edit.
-That is the whole contract, and the reason apply is the only writer.  The
-chat is shown before the kill so no window is left pointing at a buffer
-that just went away."
-  (interactive)
-  (agent-org-queue--check-editor)
-  (let ((chat (agent-org-queue--chat-or-error))
-        (old (current-buffer)))
-    (switch-to-buffer chat)
-    (kill-buffer old)
-    (message "[agent-org] queue edits abandoned")))
+(defun agent-org-resource-monitor (&optional only-this)
+  "Show the resource monitor: what each open session costs this machine.
+ONLY-THIS non-nil -- a prefix argument -- scopes the sessions table to the
+current session, which is the reading a person wants when they suspect one
+chat and not when they are surveying.  Called from a non-chat buffer it is
+the global reading, because a monitor scoped to nothing would be an empty
+table, and an empty table answers nothing.
 
-(defun agent-org-queue--to-headline ()
-  "Put point on the headline of the entry under point.
-These commands take an ENTRY as their object, so a cursor in the middle of
-a prompt's third line still means \"this prompt\" — and Org's own subtree
-moves insist on starting from a heading."
-  (goto-char (car (agent-org-queue--entry-bounds))))
+A BUFFER of its own rather than a header-line segment, and that is the whole
+design.  The bar has room for exactly one status string (CONVENTIONS.md 6);
+this is a number that changes while nobody is doing anything; and a bar that
+redrew on a timer in every open chat would be the load the monitor exists to
+report.  An Org buffer of tables keeps the same rule a chat body keeps --
+nothing periodic is ever written into a transcript -- while being a real
+document you can fold, align and re-read.
+
+The refresh timer runs only while this buffer is on display
+(`agent-org-resource-refresh-interval'); `agent-org-resource-refresh'
+redraws on demand, which is also how the monitor is read in a batch Emacs."
+  (interactive "P")
+  (let* ((session (agent-org--session-for-buffer (current-buffer)))
+         (only-buffer (and only-this (plist-get session :buffer)))
+         (sessions (if only-buffer
+                       (or (seq-filter
+                            (lambda (s) (eq (plist-get s :buffer) only-buffer))
+                            agent-org--sessions)
+                           agent-org--sessions)
+                     agent-org--sessions))
+         (buffer (get-buffer-create "*agent-org resources*")))
+    (with-current-buffer buffer
+      (unless (derived-mode-p 'org-mode) (org-mode))
+      (agent-org-resource-monitor-mode 1)
+      (setq-local agent-org--resource-scope sessions)
+      (agent-org--resource-paint sessions))
+    (display-buffer buffer)
+    (agent-org--resource-retimer)
+    buffer))
+
+(defun agent-org--forget-monitor ()
+  "Release this monitor buffer: cancel the timer, once.
+Buffer-local on `kill-buffer-hook', for the same reason
+`agent-org--forget-session' is: the monitor is the one buffer of this
+package with a repeating timer, and a timer whose buffer is gone is a
+wakeup that samples nothing."
+  (when agent-org--resource-timer
+    (cancel-timer agent-org--resource-timer)
+    (setq agent-org--resource-timer nil)))
+
+(defun agent-org--resource-paint (sessions)
+  "Redraw the monitor buffer with SESSIONS, called with it current.
+The generated region is everything from the first heading to `point-max', and
+it is deleted and reinserted whole: a redraw has to be idempotent, or a monitor
+left open appends a second copy of every table per refresh and is unreadable
+within a minute.
+
+That is the MIRROR IMAGE of `agent-org-buffer-refresh-metadata', which owns
+`point-min' up to the first heading and leaves the conversation alone, and the
+difference is worth stating because both are called \"delete up to the first
+heading\": here the headings BELONG to the generated block.  The `#+TITLE:' is
+written once, when there is no heading yet, so a redraw never owns it.
+
+`re-search-forward' returns a match's END, which for a heading line is inside
+the line -- hence `beginning-of-line' before the delete, the same trap
+`agent-org-buffer--redraw-drawer' documents."
+  (let ((inhibit-read-only t))
+    (save-excursion
+      (goto-char (point-min))
+      (if (re-search-forward "^\\* " nil t)
+          (progn (beginning-of-line)
+                 (delete-region (point) (point-max)))
+        (insert "#+TITLE: agent-org resources\n\n"))
+      (goto-char (point-max))
+      (insert (agent-org--resource-block sessions))
+      (org-set-regexps-and-options))))
 
 ;;;###autoload
-(defun agent-org-queue-move-up ()
-  "Move the entry at point one place nearer the front of the queue.
-Org's own subtree move, so the text travels with its headline.  At entry 1
-Org refuses and nothing moves — which is the right answer, since nothing is
-already in front of it."
+(defun agent-org-resource-refresh ()
+  "Redraw the resource monitor now.
+C-c C-c in the monitor, and the path `agent-org-resource-monitor' itself
+takes when it is displayed: a hidden monitor has nothing to show anybody, so
+the timer skips it and this command is how it catches up when it comes back.
+A no-op when there is no monitor buffer yet, because \"refresh\" on a monitor
+that was never opened should not open one."
   (interactive)
-  (agent-org-queue--check-editor)
-  (agent-org-queue--to-headline)
-  (org-move-subtree-up)
-  (agent-org-queue--renumber))
+  (when-let* ((buffer (get-buffer "*agent-org resources*")))
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (agent-org--resource-paint
+         (buffer-local-value 'agent-org--resource-scope buffer)))
+      (agent-org--resource-retimer))))
 
-;;;###autoload
-(defun agent-org-queue-move-down ()
-  "Move the entry at point one place further back in the queue."
-  (interactive)
-  (agent-org-queue--check-editor)
-  (agent-org-queue--to-headline)
-  (org-move-subtree-down)
-  (agent-org-queue--renumber))
+(defun agent-org--resource-retimer ()
+  "Arm the monitor's refresh timer, or disarm it if the monitor is hidden.
+Re-arming on every refresh rather than arming once keeps a monitor that was
+hidden and shown again honest, and cancels before arming so a burst of
+refreshes cannot stack timers.  The visibility test is the resource
+decision: an undisplayed monitor samples nothing and wakes nothing."
+  (when agent-org--resource-timer
+    (cancel-timer agent-org--resource-timer)
+    (setq agent-org--resource-timer nil))
+  (when (and agent-org-resource-refresh-interval
+             (agent-org--resource-displayed-p))
+    (setq agent-org--resource-timer
+          (run-at-time agent-org-resource-refresh-interval
+                       agent-org-resource-refresh-interval
+                       #'agent-org--resource-tick))))
 
-;;;###autoload
-(defun agent-org-queue-insert-entry ()
-  "Append an empty entry and leave point inside it, ready to type.
-AT THE END, because the queue is FIFO and a prompt typed now waits behind
-the ones already waiting — the same place `agent-org--queue-enqueue' puts
-a send from the type-ahead box, so the editor and the box agree.  `M-UP'
-takes it anywhere else.
-The number on the new headline is provisional: it is what position
-`agent-org-queue--renumber' would print, and the next move or kill
-recomputes every one anyway."
-  (interactive)
-  (agent-org-queue--check-editor)
-  (goto-char (point-max))
-  (unless (bolp)
-    (insert "\n"))
-  (insert (format "* %d\n" (1+ (length (agent-org-queue--entry-positions))))))
+(defun agent-org--resource-displayed-p ()
+  "Non-nil when the monitor buffer is on display in some window.
+`get-buffer-window' answers for ONE frame -- the selected one, or the frame
+named -- so a monitor sitting in a background frame would read as hidden and
+stop refreshing, which is a bug a second display would find.  The LIST,
+asked for across all frames, is the actual question: is any window showing
+it.  A buffer object is accepted as well as the name, so this reads the same
+from the timer and from a caller holding the buffer."
+  (let ((buffer (get-buffer "*agent-org resources*")))
+    (and (buffer-live-p buffer) (get-buffer-window-list buffer nil t))))
 
-;;;###autoload
-(defun agent-org-queue-kill-entry ()
-  "Kill the entry at point, headline and body, onto the kill ring.
-A KILL and not a delete, because this is the queue command with no
-confirmation and dropping a prompt you meant to keep is the mistake worth
-making recoverable: `C-y' puts the whole entry back.
-Killing entry 1 kills the prompt that was FIRST in the list you were shown,
-whatever its number says now — `agent-org-queue--renumber' follows so the
-remaining numbers stay contiguous with the order they describe."
-  (interactive)
-  (agent-org-queue--check-editor)
-  (agent-org-queue--to-headline)
-  (let ((bounds (agent-org-queue--entry-bounds)))
-    (kill-region (car bounds) (cdr bounds)))
-  (agent-org-queue--renumber)
-  (message "[agent-org] entry killed (C-y puts it back)"))
+(defun agent-org--resource-tick ()
+  "One timer tick: paint the monitor if it is still on display, else stop.
+This is the callback the timer runs, so that the decision is made where the
+timer lives: a buffer that was on display when the tick was armed may not be
+any more, and re-arming from here is what makes a hidden monitor cost
+nothing at all."
+  (if (agent-org--resource-displayed-p)
+      (progn
+        (agent-org-resource-refresh)
+        (setq agent-org--resource-timer
+              (run-at-time agent-org-resource-refresh-interval
+                           agent-org-resource-refresh-interval
+                           #'agent-org--resource-tick)))
+    (setq agent-org--resource-timer nil)))
 
 (provide 'agent-org)
 ;;; agent-org.el ends here

@@ -671,6 +671,96 @@ implementation was right (=org-move-subtree-down= is a one-place move, not a
 rotation; two tests prepended text they meant to append; one transcript
 fixture doubled its backslash and so tested a literal backslash).
 
+** DONE A resource monitor, and a lite mode with per-session/global scope
+User orders (two messages): "Add a resource monitor for each session", then
+"a lite mode which will use absolute minimum resources with per-session/
+global scoping" --- filed after a session reported the machine at load 8
+with an agent behind every chat.  Shipped as two features that share a
+purpose: the monitor is how a person SEES what lite mode does.
+
+*Resource monitor* = ~M-x agent-org-resource-monitor~ (prefix: this session
+only), an Org buffer of tables: one row per open session --- label, state,
+lite scope, the agent's process, its CPU since the last refresh, its
+resident memory, the chat's characters, the transcript's size --- over a
+machine row (Emacs RSS, how many agents are alive, their total RSS, the load
+average).  ~C-c C-c~ redraws, ~q~ closes.
+
+- *A buffer, not a bar segment.*  CONVENTIONS.md 6 gives the header line
+  exactly one status string, and a bar that redrew on a timer in every open
+  chat would be the load the monitor exists to report.  The one repeating
+  timer in the package is armed by DISPLAY and dropped by hiding
+  (=agent-org--resource-displayed-p=, which asks for the window list across
+  all frames --- ~get-buffer-window~ answers for one, so a monitor in a
+  background frame would read as hidden).
+- *Everything is ~/proc~, parsed by pure functions* (=--status-kb=,
+  =--stat-cpu-ticks=, =--parse-load=) so the file formats can be pinned by
+  tests on any machine.  CPU is a RATE from two samples, because "140%" is
+  the fact that one agent is spinning the machine and "12 minutes since it
+  started" is a fact about its age.  =--stat-cpu-ticks= counts from after
+  the ~comm~ field, because ~\(Web Content)~ is a real process name and a
+  naive split reads the wrong two numbers without saying so.
+
+*Lite mode* = ~C-c C-l~ on one session, ~C-u C-c C-l~ on the global
+(=agent-org-lite-mode=).  Three gates, none of them a rendering change:
+
+- no transcript write --- EXCEPT while a prompt is queued, which is the one
+  part of the queue that exists in no replay and no agent memory.  "Never"
+  was the cheaper rule and would have thrown that away;
+- no undo records (=agent-org-buffer--record-undo-p=, the one gate read by
+  the mode, the toggle and both bulk insertion paths);
+- no whole-buffer Org reparse per metadata rebuild: the rebuild happens on
+  every usage update and the ~#+TODO:~ line it exists to load is the same
+  bytes every time, so a lite session parses it once.
+
+It does NOT turn off font-lock (the one-way door of CONVENTIONS.md 16, which
+the display-time hook would undo anyway), drop the ~:thinking:~ or ~:tool:~
+drawers, or stop converting Markdown to Org: those are the conversation,
+not the machinery.  The ~:Lite: yes~ property line records the scope in the
+transcript, and the monitor's MODE column plus the " no-undo" suffix on
+BUFFER are how the effect is seen rather than believed.
+
+Suite: 316 green, byte-compile clean with =byte-compile-error-on-warn=,
+org-check clean.
+
+** DONE The queue lives in the chat: `* NEXT`/`* WAIT` at the bottom
+User order: "queued prompts should be shown in the Org buffer at the bottom
+with TODO headings with WAIT keywords with the next in-line prompt as NEXT.
+User can edit them, and add his own at the bottom."  The queue editor
+BUFFER is gone; the region in the chat is the surface.
+
+- *The region* sits between the last exchange and the live `* User` box,
+  between two markers, delete-then-insert like the metadata block.
+  `--render-end` answers with `--queue-start` when a region exists, so a turn
+  rendered while a queue waits lands ABOVE the queue and the box stays last.
+- *The words* are per-file keywords in front of the done bar
+  (`#+TODO: NEXT WAIT TODO ONGOING | COMPLETE FAILED`), and the word is
+  DERIVED from position on every render --- a keyword that drifted from the
+  queue's order would be a lie about which prompt leaves next.
+- *The preamble is comment lines ABOVE the first entry*, load-bearing rather
+  than cosmetic: an entry's text is everything from its headline to the next,
+  so a note after the last entry parses as part of that prompt and gets sent.
+  (Measured: the queue came back as one prompt ending in "M-x
+  agent-org-queue-apply".)  The first line is recovered from the headline
+  with `string-prefix-p` rather than a regexp, because a pattern with a group
+  in it can lose its closing paren --- which it did, once, and every entry
+  then came back with its first line swallowed.
+- *Editing in place* is the contract the editor had: `C-c C-a` adds a blank
+  `* WAIT` slot at the bottom (dropped by the parser if left empty), `C-c C-d`
+  kills one onto the kill ring, `M-UP`/`M-DOWN` reorder --- narrowed to the
+  region by `agent-org-buffer--queue-only`, because the conversation's
+  headings still have to be untouchable --- and `agent-org-queue-apply` is
+  the only writer.
+- *Reconciliation is by TEXT*: what the agent sent is dropped, what arrived
+  while the user was editing goes back at the end
+  (`--queue-note`).  By position it would resend an answered prompt and lose
+  an edited one.
+- *`:QUEUE:` drawer and the entries are two projections of ONE list*, both
+  written from `:pending-prompts`; the drawer is regenerated from the
+  SESSION and never from the region, so an unapplied edit never reaches the
+  transcript.
+
+Suite: 316 green.  CONVENTIONS.md 17 and 20.
+
 ** TODO Later --- still worth porting, not "basic"
 ** TODO Steer --- inject into the live turn
 agent-shell's =agent-shell-prompt-steer= sends a mid-turn message via
