@@ -459,6 +459,7 @@ the per-turn :thinking: drawer by `agent-org-buffer-append-thought'.")
 (declare-function agent-org-send "agent-org" ())
 (declare-function agent-org-set-session-model "agent-org" (model))
 (declare-function agent-org-queue-edit "agent-org" ())
+(declare-function agent-org-queue-resume "agent-org" ())
 (declare-function agent-org-cancel-turn "agent-org" ())
 
 ;;;; Status updates
@@ -571,6 +572,7 @@ and the name says which harness answers it."
     (define-key map (kbd "C-c C-c") #'agent-org-send)
     (define-key map (kbd "C-c C-m") #'agent-org-set-session-model)
     (define-key map (kbd "C-c C-q") #'agent-org-queue-edit)
+    (define-key map (kbd "C-c C-r") #'agent-org-queue-resume)
     (define-key map (kbd "C-c C-k") #'agent-org-cancel-turn)
     ;; Org structure commands bypass `read-only' text properties and would
     ;; corrupt heading boundaries; block them all.

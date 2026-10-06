@@ -1514,9 +1514,14 @@ state the user just tried to escape — so this closes the turn locally
 the moment the notification goes out, and the turn id in SESSION's
 `:turn' makes the late answer drop (`agent-org--send-turn').
 
-The session survives (unlike `agent-org-reload', which restarts the
-agent process); the prompt queue survives and is drained right away,
-because the turn that was holding it is gone."
+The session survives (unlike `agent-org-reload', which restarts the agent
+process).  The prompt queue survives and stays WAITING: a cancel is the user
+saying \"stop\", and the prompts behind the cancelled turn were queued to join
+the work being stopped.  Releasing them here put a turn on the wire nobody
+asked for, and each one that answered fired the next, so one cancel emptied
+the whole queue in seconds (live bug; the user's order: \"Cancelling turn
+should never resume queue\").  `agent-org-queue-resume' (C-c C-r) is the way
+back, and a later turn ending successfully drains FIFO as always."
   (interactive)
   (let* ((buffer (current-buffer))
          (session (agent-org--session-for-buffer buffer)))
@@ -1540,9 +1545,17 @@ because the turn that was holding it is gone."
     ;; The note rides the Ready label by design (`:note' is the fact
     ;; that outlives the message): "Ready (turn cancelled)".
     (agent-org-buffer-set-status buffer :state 'ready :note "turn cancelled")
-    (agent-org--drain-queue session buffer)
+    ;; The box comes back by hand, because draining used to do it: with an
+    ;; empty queue `agent-org--drain-queue' opens the prompt, and nothing
+    ;; else on this path does.
+    (agent-org-buffer-insert-prompt buffer)
+    (agent-org--queue-refresh session buffer)
     (agent-org-buffer-refresh-metadata buffer)
-    (agent-org-buffer-transcribe buffer)))
+    (agent-org-buffer-transcribe buffer)
+    (when-let* ((waiting (length (plist-get session :pending-prompts)))
+                ((> waiting 0)))
+      (message "[agent-org] turn cancelled — %d queued prompt(s) held back: M-x agent-org-queue-resume"
+               waiting))))
 
 ;;;; Reload
 
@@ -2626,6 +2639,30 @@ part that needs a window, so the order is mode, paint, show."
       (unless font-lock-mode
         (font-lock-mode 1)))
     buf))
+
+;;;###autoload
+(defun agent-org-queue-resume ()
+  "Send the next prompt waiting in this session's queue, now.
+Port of `agent-shell-prompt-queue-resume' (agent-shell-prompt-queue.el:370),
+and the escape hatch for the state `agent-org-cancel-turn' leaves behind: the
+turn is gone and the prompts that were queued behind it are still waiting.
+
+ONE prompt per call, because that is what a turn end does too
+(`agent-org--drain-queue') -- and once this one is answered, the rest follow
+FIFO on their own.  While a turn runs nothing goes out: the agent is busy and
+the queue already drains when it finishes, so agent-shell's own answer is a
+message rather than an error, and this copies it.  An empty queue is an error,
+though: the person calling this believes there is a prompt in it."
+  (interactive)
+  (let* ((buffer (current-buffer))
+         (session (agent-org--session-for-buffer buffer)))
+    (unless session
+      (user-error "Not an agent-org chat buffer"))
+    (unless (plist-get session :pending-prompts)
+      (user-error "No pending prompts"))
+    (if (plist-get session :streaming)
+        (message "[agent-org] agent is busy — the queue goes out when this turn ends")
+      (agent-org--drain-queue session buffer))))
 
 ;;;###autoload
 (defun agent-org-queue-apply ()

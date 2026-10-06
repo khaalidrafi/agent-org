@@ -1979,9 +1979,18 @@ without waiting for the agent to answer."
         (should (eq 'ready (plist-get agent-org-buffer--status :state)))))
     (kill-buffer buf)))
 
-(ert-deftest test-agent-org-cancel-turn-keeps-and-drains-queue ()
-  "The queue outlives the cancelled turn and goes out immediately: the
-turn that was holding it back is gone."
+(ert-deftest test-agent-org-cancel-turn-keeps-the-queue-waiting ()
+  "A cancelled turn releases NOTHING that was waiting behind it.
+The user's order, after a live cancel fired every queued prompt at once:
+\"Cancelling turn should never resume queue.\"  The prompts were queued to
+join a conversation the user has just stopped; sending the first of them is a
+turn the user never asked for, and each one that answers fires the next, so a
+single cancel emptied the whole queue in seconds.
+
+So cancel closes the cancelled turn and leaves `:pending-prompts' exactly as
+it was: still in the session, still in the buffer's `:QUEUE:' drawer, still in
+the transcript file.  `agent-org-queue-resume' is the only way one goes out,
+besides a later turn ending successfully."
   (let* ((pair (ao--make-test-session "cancel-q"))
          (buf (car pair))
          (session (cdr pair))
@@ -1994,16 +2003,87 @@ turn that was holding it back is gone."
       (with-current-buffer buf
         (agent-org-buffer-insert-prompt buf)
         (ao--type "running")
-        (agent-org-send)
+        (agent-org-send)                      ; goes on the wire
         (ao--type "next")
-        (agent-org-send))                  ; queues "next"
-      (with-current-buffer buf
-        (agent-org-cancel-turn)
-        (should (equal '("running" "next") (ao--sent-texts sent)))
-        (should-not (plist-get session :pending-prompts))
-        (should (plist-get session :streaming)) ; the drained turn is live
-        (should (string-match-p "^\\* next$" (buffer-string)))))
+        (agent-org-send)                      ; queues "next"
+        (ao--type "last")
+        (agent-org-send))                     ; queues "last"
+      (let ((before (length sent)))
+        (with-current-buffer buf
+          (agent-org-cancel-turn)
+          ;; no new request: the cancel is a notification, and the only one
+          (should (= before (length sent)))
+          (should-not (plist-get session :streaming))
+          (should (equal '("next" "last") (plist-get session :pending-prompts)))
+          ;; the buffer is usable again, and says so in the body: no heading
+          ;; for a prompt that was never sent
+          (should (agent-org-buffer--open-prompt-p))
+          (should-not (string-match-p "^\\* next$" (buffer-string)))
+          ;; and the waiting prompts are still where the user can read them
+          (should (string-match-p "^:QUEUE:$" (buffer-string)))
+          (should (string-match-p "\n- next\n" (buffer-string)))
+          (should (string-match-p "\n- last\n" (buffer-string))))
+        ;; the cancelled turn's late answer must not drain it either
+        (funcall (plist-get (car sent) :on-success) nil)
+        (should (= before (length sent)))
+        (should (equal '("next" "last") (plist-get session :pending-prompts)))))
     (kill-buffer buf)))
+
+(ert-deftest test-agent-org-queue-resume-sends-one-and-leaves-the-rest ()
+  "`agent-org-queue-resume' is the way back after a cancel: ONE prompt goes
+out, FIFO, and the rest keep waiting — the queue then drains by itself at each
+successful turn end, as it always did.
+Port of `agent-shell-prompt-queue-resume' (agent-shell-prompt-queue.el:370)."
+  (let* ((pair (ao--make-test-session "q-resume"))
+         (buf (car pair))
+         (session (cdr pair))
+         (sent nil))
+    (cl-letf (((symbol-function 'acp-send-request)
+               (lambda (&rest kw) (push kw sent)))
+              ((symbol-function 'acp-make-session-prompt-request)
+               (lambda (&rest a) (plist-get a :prompt))))
+      (setf (plist-get session :pending-prompts) (list "one" "two"))
+      (with-current-buffer buf
+        (agent-org-queue-resume)
+        (should (equal '("one") (ao--sent-texts sent)))
+        (should (equal '("two") (plist-get session :pending-prompts)))
+        (should (string-match-p "^\\* one$" (buffer-string)))
+        (should (string-match-p "\n- two\n" (buffer-string)))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-queue-resume-while-busy-sends-nothing ()
+  "A turn already running owns the queue: resuming mid-turn would put a
+second prompt on the wire beside it.  agent-shell says so in the echo area
+rather than erroring, because the user's own prompts drain the queue the
+moment the turn ends.  (`agent-shell-prompt-queue-resume':381.)"
+  (let* ((pair (ao--make-test-session "q-busy"))
+         (buf (car pair))
+         (session (cdr pair))
+         (sent nil))
+    (cl-letf (((symbol-function 'acp-send-request)
+               (lambda (&rest kw) (push kw sent))))
+      (setf (plist-get session :pending-prompts) (list "one"))
+      (setf (plist-get session :streaming) t)
+      (with-current-buffer buf
+        (agent-org-queue-resume)
+        (should-not sent)
+        (should (equal '("one") (plist-get session :pending-prompts)))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-queue-resume-on-an-empty-queue-rejects ()
+  "Nothing waiting is a `user-error', not a silent success: the command is
+how a person gets a prompt they thought was queued, and an empty queue is the
+answer they need to see."
+  (let ((buf (car (ao--make-test-session "q-empty"))))
+    (with-current-buffer buf
+      (should-error (agent-org-queue-resume) :type 'user-error))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-queue-resume-is-bound ()
+  "Every queue command is reachable by a key as well as by `M-x': the queue
+is read in the middle of a turn, when typing `M-x' costs the thread of it."
+  (should (equal #'agent-org-queue-resume
+                 (lookup-key agent-org-mode-map (kbd "C-c C-r")))))
 
 (ert-deftest test-agent-org-cancel-turn-rejects-when-idle ()
   "Nothing streaming, nothing to cancel."
@@ -6628,6 +6708,62 @@ the turn one heading."
         (should (equal 1 (length (ao--quote-blocks))))
         (agent-org-buffer-end-agent-turn buf))
       (kill-buffer buf))))
+
+(ert-deftest test-agent-org-activity-lands-in-arrival-order-under-an-exchange ()
+  "Position in the exchange is NOTIFICATION ORDER, exactly like agent-shell.
+The user's order: \"Keep the activity order just like agent-shell.\"  In
+agent-shell every `session/update' branch calls the same fragment placer
+(`agent-shell-ui--update-fragment', agent-shell-ui.el:327), which appends at
+`point-max' or after the group's last child -- so the buffer order IS arrival
+order and an answer can never move above the reasoning that preceded it.
+Measured here: a thought and a tool call arriving BEFORE the first answer
+chunk used to be pushed BELOW the quote, because opening a turn wrote its
+furniture at that instant.  That is a kind grouping (answer, then thinking,
+then tools), not an activity record, and the agent's reasoning is the thing
+that came first.
+
+So the quote block opens when the first TEXT arrives and not before, and each
+drawer keeps the position it was first given.  The reply is still one block
+(§1), and no drawer can land inside it: every body line of the answer is
+indented one space by `agent-org-buffer--block-safe-lines', so a `:thinking:'
+or `:tool:' at column 0 is never the reply's own text -- which is what makes
+searching the whole turn region for a drawer safe again."
+  (ao--capture-wire
+    (let ((buf (ao--chat-on-model "qmodel" "QModel")))
+      (with-current-buffer buf
+        (let ((session (agent-org-buffer--session)))
+          (agent-org-buffer-begin-exchange buf "Do it")
+          (agent-org-buffer-append-thought buf "hmm\n")
+          (agent-org-buffer-insert-tool buf '((title . "read_file")
+                                             (toolCallId . "t1")
+                                             (status . "pending")))
+          (agent-org-buffer-append-chunk buf "the answer\n" session)
+          ;; and the activity KEEPS going after the answer started
+          (agent-org-buffer-append-thought buf " then more\n")
+          (agent-org-buffer-insert-tool buf '((title . "shell")
+                                             (toolCallId . "t2")
+                                             (status . "completed")))
+          (agent-org-buffer-end-agent-turn buf)
+          (let ((text (buffer-string)))
+            ;; heading, then answer in quote, then drawers below
+            (should (apply #'ao--ordered text
+                           (list "^\\* Do it$"
+                                 "^#\\+begin_quote$" "the answer"
+                                 "^#\\+end_quote$"
+                                 "^:thinking:$" "hmm" "then more"
+                                 "^:tool:$" "  - TODO read_file" "  - COMPLETE shell")))
+            ;; ONE drawer of each kind for the whole exchange, repainted in
+            ;; place, never a second one below the answer
+            (should (equal 1 (ao--count-occurrences text "^:thinking:$")))
+            (should (equal 1 (ao--count-occurrences text "^:tool:$")))
+            (should (equal 1 (ao--count-occurrences text "^  - COMPLETE shell$")))
+            ;; the answer is one intact block, and it holds no drawer marker
+            (should (equal 1 (length (ao--quote-blocks))))
+            (let ((block (nth 2 (car (ao--quote-blocks)))))
+              (should (string-match-p "the answer" block))
+              (should-not (string-match-p "^:thinking:$" block))
+              (should-not (string-match-p "^:tool:$" block)))))
+        (kill-buffer buf)))))
 
 (ert-deftest test-agent-org-drawers-land-below-the-quote ()
   "The turn's furniture keeps one order: answer, then thinking, then tools.
