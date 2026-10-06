@@ -450,6 +450,31 @@ say the same thing -- an update that changes one keyword rewrites every
 byte of a shared drawer anyway, so the guard has to be on the DRAWER.
 Reset with `agent-org-buffer--tools' at each new turn.")
 
+(defvar-local agent-org-buffer--tool-group-start 0
+  "Index into `agent-org-buffer--tools' where the LIVE `:tool:' drawer begins.
+Activity order is the user's rule -- \"Activity order MUST be kept.  New :tool:
+calls should always appear at the end of response, not a previous drawer.\" --
+and what separates two runs of calls is any NON-tool activity, from their own
+earlier order: \"The order of tool call and response/thinking separates them.
+Activity order gets precedence.\"
+
+So the RECORD is one list for the whole turn (`agent-org-buffer--tools', in call
+order) and each `:tool:' drawer is a WINDOW on it, starting at this index.
+`agent-org-buffer--seal-tool-board' advances the window past the calls that ran
+so far when the agent says or thinks something, and the next call opens a fresh
+drawer below everything written since.  Before this the board was created once
+per turn and every later call was repainted into it, so a call made after the
+agent had moved on was displayed ABOVE the words and thoughts that preceded it
+and the transcript read the turn backwards.")
+
+(defvar-local agent-org-buffer--tool-drawer-live-p nil
+  "Non-nil when this turn's live `:tool:' drawer is still at the turn's end.
+It is what makes the next tool call REUSE the open drawer instead of opening a
+second one: `agent-org-buffer-insert-tool' passes FRESH to
+`agent-org-buffer--redraw-drawer' exactly when this is nil.  A drawer sealed by
+`agent-org-buffer--seal-tool-board' is closed for business -- it keeps its text
+and its fold, but it is no longer where new calls go.")
+
 (defvar-local agent-org-buffer--thought nil
   "Thinking text accumulated for the current Agent turn, rendered into
 the per-turn :thinking: drawer by `agent-org-buffer-append-thought'.")
@@ -1445,11 +1470,14 @@ across pairs."
                                      (make-marker))
                          beg))
           (setq agent-org-buffer--awaiting-answer-p t
-                ;; turn-local: the drawer is rebuilt from scratch under the new
-                ;; heading, so the previous exchange's entries (and any reused
-                ;; toolCallId arriving after `resume') start fresh
                 agent-org-buffer--tools nil
                 agent-org-buffer--tools-shown nil
+                ;; the tool board is a window on the record, so a new turn
+                ;; starts at its first entry with no drawer open: the previous
+                ;; turn's drawer is its text now, and a call here must not be
+                ;; painted into it
+                agent-org-buffer--tool-group-start 0
+                agent-org-buffer--tool-drawer-live-p nil
                 agent-org-buffer--thought nil
                 ;; markdown->org is turn-local too: a held half line from the
                 ;; previous answer must not open this one, and a fence left
@@ -1522,6 +1550,8 @@ branch never runs, so the board is never cleared a second time mid-turn."
   (setq agent-org-buffer--awaiting-answer-p t
         agent-org-buffer--tools nil
         agent-org-buffer--tools-shown nil
+        agent-org-buffer--tool-group-start 0
+        agent-org-buffer--tool-drawer-live-p nil
         agent-org-buffer--thought nil
         agent-org-buffer--md-fragment nil
         agent-org-buffer--md-src-p nil
@@ -1642,6 +1672,11 @@ sentence, not a licence to let a `*' bullet end the answer's own quote block."
   (when (and text (not (string-empty-p text)))
     (agent-org-buffer-start-agent-turn buffer session)
     (with-current-buffer buffer
+      ;; a reply chunk is non-tool activity too, and the commoner of the two:
+      ;; text streams, a tool runs, more text streams.  Sealing here is what
+      ;; makes the next call's drawer land below what the agent says from here
+      ;; on rather than inside the board opened before it
+      (agent-org-buffer--seal-tool-board)
       (if agent-org-convert-markdown
           (agent-org-buffer--markdown-receive text)
         (let ((inhibit-read-only t))
@@ -1687,7 +1722,7 @@ middle is worse than a long one."
                (t (concat " " line))))
             (split-string (string-trim-right text) "\n"))))
 
-(defun agent-org-buffer--redraw-drawer (buffer name lines &optional fold)
+(defun agent-org-buffer--redraw-drawer (buffer name lines &optional fold fresh)
   "Replace the current turn's :NAME: drawer in BUFFER with LINES (list of strings).
 Creates the drawer at the end of the turn region when absent -- folded
 when FOLD is non-nil, open when it is nil -- and, when the drawer is
@@ -1708,7 +1743,16 @@ redraw the reply instead of the drawer.  Fold
 state is driven with `org-fold-region' directly:
 `org-fold-hide-drawer-toggle' validates the org-element cache, which
 is stale for the just-streamed region until it is re-fontified, and
-raises \"Not at a drawer\"."
+raises \"Not at a drawer\".
+
+FRESH is how the caller says there is NO drawer to reuse: the search is
+skipped and a new one is opened at the end of the turn, leaving the previous
+drawer's text and fold where they are.  It is the difference between one
+`:tool:' board per turn and one per run of consecutive calls -- see
+`agent-org-buffer--tool-drawer-live-p' and the user's \"New :tool: calls should
+always appear at the end of response, not a previous drawer\".  A `:thinking:'
+drawer never passes it, because thought and tools are never interleaved into
+one drawer's body."
   (with-current-buffer buffer
     (let ((inhibit-read-only t)
           (body (mapconcat #'identity lines "\n")))
@@ -1724,10 +1768,11 @@ raises \"Not at a drawer\"."
                ;; search stops at the box rather than at `point-max'.
                ;; Without a box (a replay) `turn-end' IS `point-max'.
                (drawer-beg
-                (save-excursion
-                  (goto-char region-start)
-                  (when (re-search-forward (format "^:%s:$" name) turn-end t)
-                    (match-beginning 0)))))
+                (and (not fresh)
+                     (save-excursion
+                       (goto-char region-start)
+                       (when (re-search-forward (format "^:%s:$" name) turn-end t)
+                         (match-beginning 0))))))
           (if (not drawer-beg)
               (progn
                 (goto-char turn-end)
@@ -1787,6 +1832,10 @@ own drawer."
     (with-current-buffer buffer
       (unless agent-org-buffer--streaming-p
         (agent-org-buffer-start-agent-turn buffer nil))
+      ;; a thought is non-tool activity: the run of calls it interrupts gets a
+      ;; drawer of its own, and the next call opens a new one BELOW the thought
+      ;; instead of joining the board above it
+      (agent-org-buffer--seal-tool-board)
       ;; the drawer lands below the turn's text, so freeze the line the
       ;; converter still owns first: a provisional tail must not outlive this
       ;; boundary or the next chunk would rewrite the drawer
@@ -1876,6 +1925,60 @@ responses.\""
           ((stringp raw) raw)
           (t ""))))
 
+(defun agent-org-buffer--tool-entry-final-p (entry)
+  "Non-nil when tool call ENTRY has reached a state it will not leave.
+ACP's statuses are `pending', `in_progress', `completed' and `failed' (see
+`agent-org-buffer--tool-keyword'); the last two are terminal.  A call that is
+still `pending' or `in_progress' can report again, and that report has to land
+WHERE THE USER SAW IT START -- which is the rule that keeps an unfinished call
+in the live drawer (see `agent-org-buffer--seal-tool-board').
+
+`member', not `memq': the status arrives from `json-parse-string' as a fresh
+string, and `memq' against a literal string is both wrong and a byte-compile
+error (\"called with literal string that may never match\")."
+  (and (plist-get (cdr entry) :status)
+       (member (plist-get (cdr entry) :status) '("completed" "failed"))))
+
+(defun agent-org-buffer--seal-tool-board ()
+  "End the live `:tool:' drawer so the next tool call opens a NEW one.
+Called from the two places where the agent does something that is not a tool
+call -- `agent-org-buffer-append-thought' and `agent-org-buffer-append-chunk' --
+because either one is evidence that the agent moved on, and a call made after it
+belongs BELOW what the agent has said since, not inside the drawer that was
+opened before.  That is the user's order: \"Activity order MUST be kept.  New
+:tool: calls should always appear at the end of response, not a previous
+drawer.\", after \"The order of tool call and response/thinking separates them.
+Activity order gets precedence.\"
+
+AN UNFINISHED CALL BLOCKS THE SEAL, and that is the whole subtlety.  The board
+is a window on the record, so advancing the window is what takes entries out of
+the drawer's body -- and a call the agent is still running WILL report again
+(`in_progress' then `completed'), often after it has said something in between.
+Sealing past it would move it out of the drawer the user is looking at, and the
+completion would have nowhere to render: the call would sit at TODO for the rest
+of the turn, or, worse, vanish from the board when the window next repaints.  So
+the drawer is only closed once every call in it is terminal, and until then it
+keeps taking new calls.  A live agent's tools finish, so this is a short wait;
+a stalled one keeps its board, which is what a user watching a stall wants.
+
+Sealing an EMPTY window is a no-op, and that is the common case rather than a
+detail: an agent usually thinks before its first call, so sealing on that first
+thought must not manufacture an empty drawer above the real one
+(`test-agent-org-activity-before-any-call-opens-no-empty-drawer').
+
+`agent-org-buffer--tools-shown' is cleared with it, and has to be: the
+redraw guard compares the body the next window would paint against the one
+last painted, so a new window whose first call renders to the same text as
+the sealed board's last call -- same title, same keyword, no output, which
+is exactly what two calls to the same tool look like -- would be skipped and
+the call would never appear."
+  (let ((live (nthcdr agent-org-buffer--tool-group-start
+                      agent-org-buffer--tools)))
+    (when (and live (cl-every #'agent-org-buffer--tool-entry-final-p live))
+      (setq agent-org-buffer--tool-group-start (length agent-org-buffer--tools)
+            agent-org-buffer--tool-drawer-live-p nil
+            agent-org-buffer--tools-shown nil))))
+
 (defun agent-org-buffer--tool-board-body ()
   "This turn's `:tool:' drawer body: one item per call, its output under it.
 Built from `agent-org-buffer--tools', so the drawer cannot drift from the
@@ -1884,6 +1987,13 @@ text is the item's body at four columns.  A call is named by its TITLE and
 needs no number to point at a second drawer, because there is no second
 drawer -- the user's order: \"Tool call outputs belong to the same TODO
 headings\", after \"Consecutive tool calls belong to a single drawer\".
+
+THE BOARD IS A WINDOW, not the whole turn: only the calls from
+`agent-org-buffer--tool-group-start' onward are drawn, because the ones before
+it already own a drawer further up the turn -- the one that was live when they
+ran (`agent-org-buffer--seal-tool-board').  Drawing them again would put the
+same call in two drawers, and the copy written here would sit at the END of the
+response while the record says it ran at the top of it.
 
 WHY THE LIST IS INDENTED TWO COLUMNS, not flush at the left margin like an
 ordinary Org list: nothing in a drawer body may sit at column 0, which is
@@ -1900,7 +2010,8 @@ dissolving the drawer), and a non-blank line then takes three further
 spaces to reach the item's content column.  The title is flattened by
 `agent-org-buffer--label': agent titles are whole shell commands."
   (let (lines)
-    (dolist (entry agent-org-buffer--tools)
+    (dolist (entry (nthcdr agent-org-buffer--tool-group-start
+                          agent-org-buffer--tools))
       (push (format "  - %s %s"
                     (agent-org-buffer--tool-keyword
                      (plist-get (cdr entry) :status))
@@ -1965,11 +2076,18 @@ body lines."
           (let ((output (agent-org-buffer--tool-output content)))
             (unless (string-empty-p output) (plist-put entry :output output))))
         ;; render-time fallbacks live in the builder, never in the record, so
-        ;; a title-less update cannot downgrade the title
-        (let ((body (agent-org-buffer--tool-board-body)))
+        ;; a title-less update cannot downgrade the title.  FRESH is read BEFORE
+        ;; the flag is set: it asks whether a drawer was open when this call
+        ;; arrived, which is the one thing the flag is about to stop being.
+        (let* ((fresh (not agent-org-buffer--tool-drawer-live-p))
+               (body (agent-org-buffer--tool-board-body)))
           (unless (equal body agent-org-buffer--tools-shown)
-            (setq agent-org-buffer--tools-shown body)
-            (agent-org-buffer--redraw-drawer buffer "tool" body)))))))
+            (setq agent-org-buffer--tools-shown body
+                  ;; the drawer this body was painted into is now the live one,
+                  ;; so the NEXT call reuses it -- unless a thought or a reply
+                  ;; has sealed it since, which is what FRESH asked about
+                  agent-org-buffer--tool-drawer-live-p t)
+            (agent-org-buffer--redraw-drawer buffer "tool" body nil fresh)))))))
 
 ;;;; Transcript file
 

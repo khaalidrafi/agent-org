@@ -626,7 +626,13 @@ can fold a turn's board behind the user.  The next tool update expands it:
 the board is the live activity view, so a fold that is not the user's own
 TAB on the heading does not survive new activity.  A `:thinking:' drawer
 keeps the fold it has, because the package never re-folds what the user
-opened."
+opened.
+
+WHICH board is opened is the newer half of the rule: the thought between the
+two calls seals the first one (`agent-org-buffer--seal-tool-board'), so the
+second call opens a NEW drawer at the end of the turn and the sealed one stays
+folded.  Expanding live activity and preserving history are both wanted, and
+with two boards they are no longer the same board."
   (let ((buf (agent-org-buffer-create "reopen")))
     (agent-org-buffer-start-agent-turn buf nil)
     (agent-org-buffer-insert-tool buf '((toolCallId . "tc1") (title . "shell")
@@ -641,12 +647,16 @@ opened."
                                            (point))))
       (agent-org-buffer-insert-tool buf '((toolCallId . "tc2") (title . "tree")
                                           (status . "pending")))
+      ;; the live board is open again: this call is what the agent is doing now
       (should-not (invisible-p (save-excursion (goto-char (point-min))
                                                (re-search-forward "^  - TODO tree$")
                                                (point))))
-      (should-not (invisible-p (save-excursion (goto-char (point-min))
-                                               (re-search-forward "^  - COMPLETE shell$")
-                                               (point))))
+      ;; the sealed board keeps the fold it was given -- it is history now, and
+      ;; a user who wants it back presses TAB on it like any other drawer
+      (should (invisible-p (save-excursion (goto-char (point-min))
+                                           (re-search-forward "^  - COMPLETE shell$")
+                                           (point))))
+      (should (= 2 (ao--count-occurrences (buffer-string) "^:tool:$")))
       ;; thinking is not the activity view: the fold it was given stays
       (should (invisible-p (save-excursion (goto-char (point-min))
                                            (re-search-forward "^ a long thought$")
@@ -1024,6 +1034,158 @@ survives `org-element-parse-buffer', and the turn keeps its ONE heading."
         (should (= 2 items))))
     (kill-buffer buf)))
 
+(defun ao--tool-drawer-bodies (text)
+  "The body of every `:tool:' drawer in TEXT, in buffer order.
+A drawer is the region between a `:tool:' line and the next `:end:' line, which
+is how Org itself delimits one (info \"(org) Drawers\").  Reading the bodies out
+of TEXT rather than off the buffer is what lets a test ask WHICH drawer a call
+landed in -- the question `test-agent-org-tool-output-is-this-turns-only' asks
+by counting markers, which cannot tell two same-worded calls apart."
+  (let ((rest text) (bodies '()))
+    (while (string-match "^:tool:$" rest)
+      (let ((body-start (match-end 0)))
+        (if (string-match "^:end:$" rest body-start)
+            (progn
+              (push (substring rest body-start (match-beginning 0)) bodies)
+              (setq rest (substring rest (match-end 0))))
+          (setq rest nil))))
+    (nreverse bodies)))
+
+(ert-deftest test-agent-org-tool-board-opens-a-new-drawer-after-activity ()
+  "A tool call after the agent has spoken or thought opens a NEW `:tool:' drawer.
+The user's order: \"Activity order MUST be kept.  New :tool: calls should always
+appear at the end of response, not a previous drawer.\"  Before this the board
+was created once per turn and every later call was repainted into it, so a call
+made after the agent had moved on was displayed ABOVE the words and thoughts
+that came before it -- the transcript read the turn backwards.  What separates
+two runs of calls is any NON-tool activity, which is the user's own earlier
+rule: \"The order of tool call and response/thinking separates them.  Activity
+order gets precedence.\"
+
+So the turn keeps ONE record (`agent-org-buffer--tools', in call order) and the
+drawer is a WINDOW on it: thinking or a reply seals the open drawer, and the
+next call starts a fresh one below everything written since.  Each drawer holds
+only the calls that ran while it was the live one."
+  (let ((buf (agent-org-buffer-create "act1")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool
+     buf `((toolCallId . "tc1") (title . "first") (status . "completed")
+           ,@(ao--tool-text-block "first body")))
+    (agent-org-buffer-append-thought buf "weighing the options")
+    (agent-org-buffer-insert-tool
+     buf `((toolCallId . "tc2") (title . "second") (status . "completed")
+           ,@(ao--tool-text-block "second body")))
+    (let* ((text (with-current-buffer buf (buffer-string)))
+           (bodies (ao--tool-drawer-bodies text)))
+      (should (= 2 (length bodies)))
+      ;; each drawer holds exactly its own call, body included
+      (should (string-match-p "COMPLETE first" (car bodies)))
+      (should (string-match-p "first body" (car bodies)))
+      (should-not (string-match-p "second" (car bodies)))
+      (should (string-match-p "COMPLETE second" (cadr bodies)))
+      (should (string-match-p "second body" (cadr bodies)))
+      (should-not (string-match-p "first" (cadr bodies)))
+      ;; and the new drawer sits at the END of the turn, below the thought
+      (should (apply #'ao--ordered text
+                     (list "COMPLETE first" "weighing the options"
+                           "COMPLETE second"))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-tool-board-reply-also-starts-a-new-drawer ()
+  "Reply text separates two runs of calls exactly as thinking does.
+`agent-org-buffer-append-thought' is not the only thing that closes the open
+board: an answer chunk is the same kind of evidence that the agent moved on, and
+it is the commoner -- text streams, a tool runs, more text streams.  Pinned
+separately because the two call sites are two lines of code in two functions,
+and a fix that sealed on thinking alone would leave this case still repainting
+backwards.
+
+The order asserted is the order this architecture can actually hold, and the
+difference from the thinking case is worth stating rather than papering over: a
+turn's whole reply is ONE quote block, opened before anything else and closed at
+`#+end_quote', and the drawers live BELOW that line.  So reply text can never sit
+between two drawers -- it is always above them -- and the rule the user asked
+for still holds in the only direction that matters: the new drawer is at the END
+of the response, after the drawer of the calls that ran before it."
+  (let ((buf (agent-org-buffer-create "act2")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool
+     buf `((toolCallId . "tc1") (title . "ls") (status . "completed")
+           ,@(ao--tool-text-block "a.org")))
+    (agent-org-buffer-append-chunk buf "now I will check the tests" nil)
+    (agent-org-buffer-insert-tool
+     buf `((toolCallId . "tc2") (title . "grep") (status . "completed")
+           ,@(ao--tool-text-block "b.org")))
+    (let* ((text (with-current-buffer buf (buffer-string)))
+           (bodies (ao--tool-drawer-bodies text)))
+      (should (= 2 (length bodies)))
+      (should-not (string-match-p "grep" (car bodies)))
+      (should-not (string-match-p "ls" (cadr bodies)))
+      (should (apply #'ao--ordered text
+                     (list "now I will check the tests" "COMPLETE ls"
+                           "COMPLETE grep"))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-unfinished-call-is-not-sealed-away ()
+  "A call that is still running keeps the live drawer, so its completion is seen.
+This is the trap the window has to avoid: `in_progress' and `pending' calls WILL
+report again, usually after the agent has said or thought something in between.
+Sealing past one would take it out of the drawer the reader is watching, and the
+`completed' update that follows would have no drawer to render in -- the call
+would stay TODO for the rest of the turn.  So the seal waits for the whole live
+run to be terminal, which is also why this turn keeps ONE drawer despite three
+interleaved thoughts."
+  (let ((buf (agent-org-buffer-create "act5")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool
+     buf '((toolCallId . "tc1") (title . "one") (status . "in_progress")))
+    (agent-org-buffer-append-thought buf "hmm")
+    (agent-org-buffer-insert-tool
+     buf '((toolCallId . "tc1") (title . "one") (status . "completed")))
+    (let* ((text (with-current-buffer buf (buffer-string)))
+           (bodies (ao--tool-drawer-bodies text)))
+      (should (= 1 (length bodies)))
+      (should (string-match-p "COMPLETE one" (car bodies)))
+      ;; the completion was painted in the SAME drawer the call started in
+      (should-not (string-match-p "TODO one" text)))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-consecutive-tool-calls-share-one-drawer ()
+  "Consecutive calls keep ONE drawer -- activity order must not overshoot.
+The user's other order: \"Consecutive tool calls belong to a single drawer.\"  A
+fix that opened a drawer per CALL would satisfy the previous test and break
+this one, and the transcript would grow a drawer per tool call: the exact noise
+\"Consecutive tool calls belong to a single drawer\" was given to stop."
+  (let ((buf (agent-org-buffer-create "act3")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (dolist (id '("tc1" "tc2" "tc3"))
+      (agent-org-buffer-insert-tool
+       buf `((toolCallId . ,id) (title . ,id) (status . "completed"))))
+    (let ((bodies (ao--tool-drawer-bodies (with-current-buffer buf (buffer-string)))))
+      (should (= 1 (length bodies)))
+      (should (string-match-p "COMPLETE tc1" (car bodies)))
+      (should (string-match-p "COMPLETE tc2" (car bodies)))
+      (should (string-match-p "COMPLETE tc3" (car bodies))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-activity-before-any-call-opens-no-empty-drawer ()
+  "Thinking before the first call must not leave an empty `:tool:' drawer behind.
+Sealing an EMPTY window is a no-op, and this is where that rule is visible: the
+agent usually thinks before its first tool call, so sealing on thought and then
+opening on the next call must produce ONE drawer -- the call's -- at the end of
+the turn.  A seal that started a new group unconditionally would put an empty
+`:tool:'/`\\n:END:' pair above it."
+  (let ((buf (agent-org-buffer-create "act4")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-append-thought buf "planning the first command")
+    (agent-org-buffer-insert-tool
+     buf `((toolCallId . "tc1") (title . "only") (status . "completed")))
+    (let ((bodies (ao--tool-drawer-bodies (with-current-buffer buf (buffer-string)))))
+      (should (= 1 (length bodies)))
+      (should (string-match-p "COMPLETE only" (car bodies)))
+      (should-not (string-match-p "^\\s-*$\\s-*" (car bodies))))
+    (kill-buffer buf)))
+
 (ert-deftest test-agent-org-tool-keywords-are-ongoing-complete-failed ()
   "The board's vocabulary is the user's: ONGOING, COMPLETE, FAILED.
 `pending' keeps Org's own TODO, the state before the call runs, and the word
@@ -1071,9 +1233,9 @@ what it must not do twice."
      buf `((toolCallId . "tc1") (title . "shell") (status . "completed")
            ,@(ao--tool-text-block "total 42")))
     (cl-letf (((symbol-function 'agent-org-buffer--redraw-drawer)
-               (lambda (buffer name lines &optional fold)
+               (lambda (buffer name lines &optional fold fresh)
                  (cl-incf paints)
-                 (funcall orig buffer name lines fold))))
+                 (funcall orig buffer name lines fold fresh))))
       ;; identical re-delivery: same title, same status, same output
       (agent-org-buffer-insert-tool
        buf `((toolCallId . "tc1") (title . "shell") (status . "completed")
