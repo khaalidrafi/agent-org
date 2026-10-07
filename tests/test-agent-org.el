@@ -5592,6 +5592,48 @@ being measured here is what the transcript writer does."
                     (cl-incf ao--writes)))))
        ,@body)))
 
+(ert-deftest test-agent-org-transcript-opens-read-only ()
+  "Visiting a transcript comes up read-only; a sibling Org file does not.
+The transcript is a MIRROR the package rewrites at every turn, so a hand edit
+is lost -- `buffer-read-only' says that at open time (C-x C-q overrides).  The
+signal is the containing `.agent-org' directory, not the file name, which is a
+bare sanitized id and carries no marker.  The transcriber is unaffected: it
+writes the FILE with VISIT nil, not through this buffer, so a mirror still
+catches up while it sits on screen read-only.  Turning
+`agent-org-transcripts-read-only' off leaves a transcript editable like any
+other file.
+
+Driven by calling the hook directly with `buffer-file-name' set, not through
+`find-file': the real thing would load `org-mode' and the VC/EPA find-file
+hooks, whose interaction with a first `.org' visit in batch is nothing this
+test is about.  What is pinned is the predicate and the hook's own effect."
+  (ert-with-temp-directory temp-dir
+    (let ((agent-org-transcript-directory (expand-file-name ".agent-org" temp-dir)))
+      (make-directory (expand-file-name ".agent-org" temp-dir) t)
+      (let ((tf (expand-file-name ".agent-org/sid-ro.org" temp-dir))
+            (nf (expand-file-name "plain-note.org" temp-dir)))
+        ;; the predicate is path-only: right dir yes, any other dir no
+        (should (agent-org-buffer--transcript-file-p tf))
+        (should-not (agent-org-buffer--transcript-file-p nf))
+        ;; hook, transcript path, custom ON -> read-only
+        (with-temp-buffer
+          (setq-local buffer-file-name tf)
+          (let ((agent-org-transcripts-read-only t))
+            (agent-org-buffer--find-file-read-only)
+            (should buffer-read-only)))
+        ;; hook, non-transcript path -> left editable
+        (with-temp-buffer
+          (setq-local buffer-file-name nf)
+          (let ((agent-org-transcripts-read-only t))
+            (agent-org-buffer--find-file-read-only)
+            (should-not buffer-read-only)))
+        ;; hook, transcript path, custom OFF -> left editable
+        (with-temp-buffer
+          (setq-local buffer-file-name tf)
+          (let ((agent-org-transcripts-read-only nil))
+            (agent-org-buffer--find-file-read-only)
+            (should-not buffer-read-only)))))))
+
 (ert-deftest test-agent-org-transcript-file-is-named-for-the-session-id ()
   "A session's transcript is one file, named by its ACP id.
 The id is the only fact that survives a rename, a title change and a

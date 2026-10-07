@@ -2864,6 +2864,36 @@ path-traversal primitive handed to whatever agent the user connects to."
   (concat (replace-regexp-in-string "[^A-Za-z0-9._-]" "-" session-id t t)
           ".org"))
 
+(defcustom agent-org-transcripts-read-only t
+  "Open an agent-org transcript read-only when a buffer visits one.
+A transcript is the MIRROR the package rewrites at every turn boundary
+(`agent-org-buffer-transcribe'): a source of truth to READ, not edit.  Any
+hand edit to it is thrown away by the next write, so `find-file' on one sets
+`buffer-read-only' and says so, and `C-x C-q' still unlocks the buffer when
+editing the file really is intended.  nil turns this off and leaves a
+transcript editable like any other Org file."
+  :type 'boolean
+  :group 'agent-org-buffer)
+
+(defun agent-org-buffer--transcript-file-p (file)
+  "Non-nil when FILE is an agent-org transcript, judged by its directory.
+The transcript's NAME is a sanitized session id and carries no marker of its
+own, so the containing DIRECTORY is the signal: transcripts sit directly
+inside a directory named like `agent-org-transcript-directory' (`.agent-org'
+by default, or whatever basename an absolute setting ends in).  A relative
+setting is reduced to its basename here, so the answer is the same whatever
+`default-directory' happens to resolve it against.
+
+Judged on the path alone, so it works for a file no session has open -- that
+is exactly when a person `find-file's a transcript to read it."
+  (when-let* ((dir (file-name-directory file))
+              (parent (file-name-nondirectory (directory-file-name dir)))
+              (wanted (file-name-nondirectory
+                        (directory-file-name
+                         (expand-file-name agent-org-transcript-directory)))))
+    (and (> (length parent) 0)
+         (string-equal parent wanted))))
+
 (defvar-local agent-org-buffer--transcript-cache nil
   "The exact text last written to this buffer's transcript file.
 A boundary can fire with nothing new — a repeated title push, a second
@@ -2991,6 +3021,23 @@ is left untouched, so the next boundary tries again."
       (file-error
        (message "agent-org: transcript not written (%s): %s"
                 file (error-message-string err))))))
+
+(defun agent-org-buffer--find-file-read-only ()
+  "Open the current buffer read-only if it is visiting a transcript.
+Installed on `find-file-hook' below.  A no-op for anything that is not a
+transcript (see `agent-org-buffer--transcript-file-p') or when
+`agent-org-transcripts-read-only' is nil, so a global hook costs one string
+comparison per file visit and changes no other buffer.  `write-region' from
+the transcriber is unaffected: it writes the FILE with VISIT nil and does not
+go through this buffer's `buffer-read-only', so a mirror still updates while
+it is on screen read-only."
+  (when (and agent-org-transcripts-read-only
+             (buffer-file-name)
+             (agent-org-buffer--transcript-file-p (buffer-file-name)))
+    (setq-local buffer-read-only t)
+    (message "agent-org: transcript is a mirror, opened read-only (C-x C-q to edit)")))
+
+(add-hook 'find-file-hook #'agent-org-buffer--find-file-read-only)
 
 (provide 'agent-org-buffer)
 ;;; agent-org-buffer.el ends here
