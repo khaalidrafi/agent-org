@@ -43,12 +43,18 @@ clock rather than a fabricated one (see CONVENTIONS.md §22).
 - The ~acp~ package (e.g. from NonGNU ELPA)
 - An ACP agent binary on ~exec-path~: ~qoder --acp~ (1.1.58 tested),
   ~goose acp~ (1.50+ tested), ~opencode acp~ (1.18.29 tested) or
-  ~mcode acp~ (MiniMax Code 0.4.5).  Qoder reads its credential from
-  ~QODER_PERSONAL_ACCESS_TOKEN~ in the environment Emacs was started
-  with, so export it before launching Emacs or the daemon.  OpenCode and
-  MiniMax Code keep their own credential stores, so ~opencode auth
-  login~ / ~mcode login~ once is enough; no environment variable is
-  required.
+  ~mcode acp~ (MiniMax Code 0.4.5); plus three wired from ~agent-shell~
+  but not yet run against a live agent here — ~copilot --acp~ (GitHub
+  Copilot CLI, whose ACP server is in public preview), ~agent acp~ (Cursor;
+  the CLI binary is ~agent~, not ~cursor~) and ~codebuddy --acp~ (CodeBuddy).
+  Qoder reads its credential from ~QODER_PERSONAL_ACCESS_TOKEN~ in the
+  environment Emacs was started with, so export it before launching Emacs or
+  the daemon.  OpenCode, MiniMax Code, Copilot and CodeBuddy keep their own
+  credential stores, so ~opencode auth login~ / ~mcode login~ / a signed-in
+  ~copilot~ or ~codebuddy~ once is enough; no environment variable is
+  required.  Cursor authenticates via ~agent login~ (or export
+  ~CURSOR_API_KEY~ / ~CURSOR_AUTH_TOKEN~), and Copilot also honours
+  ~COPILOT_GITHUB_TOKEN~ for headless use.
 
 * Install
 
@@ -70,7 +76,9 @@ The checkout ships ~agent-org-autoloads.el~, so lazy loading via
   :commands (agent-org-start agent-org-resume-session agent-org-send
              agent-org-set-session-model
              agent-org-goose-start-agent agent-org-qoder-start-agent
-             agent-org-opencode-start-agent agent-org-minimax-start-agent))
+             agent-org-opencode-start-agent agent-org-minimax-start-agent
+             agent-org-copilot-start-agent agent-org-cursor-start-agent
+             agent-org-codebuddy-start-agent))
 #+end_src
 
 ** As a ~package.el~ package (tarball)

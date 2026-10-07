@@ -966,6 +966,35 @@ is shown before it goes out (it must be visible — an unexplained prompt
 appearing in the exchange reads as the agent talking to itself), and the loop
 guard (N automatic follow-ups max per human prompt).
 
+** DONE Copilot, Cursor and CodeBuddy providers (ported from agent-shell)
+User order: "Add copilot, cursor and codebuddy support with #1 priority."
+The three commands come straight from agent-shell's own defaults, which the
+provider list exists to mirror: =agent-shell-github-acp-command= is
+='("copilot" "--acp")=, =agent-shell-cursor-acp-command= is
+='("agent" "acp")= — note the Cursor CLI binary is =agent=, not =cursor= —
+and =agent-shell-codebuddy-acp-command= is ='("codebuddy" "--acp")=.  Each is
+one new =agent-org-providers= entry (=:id :name :command :environment=), a
+thin =agent-org-<id>-start-agent= command, and an =agent-org-<id>-environment=
+that keeps the standing rule: the agent's own login is primary and an
+environment secret is only passed through when the caller already has one.
+
+- Copilot pins no model (its own default is right, exactly like MiniMax Code)
+  and passes =COPILOT_GITHUB_TOKEN= through for headless use; its ACP server
+  is public preview (https://github.com/github/copilot-cli).
+- Cursor is external-login first: agent-org's handshake sends no ACP
+  =authenticate= request, so =agent login= (or =CURSOR_API_KEY= /
+  =CURSOR_AUTH_TOKEN=) is the path.  agent-shell can additionally drive a
+  =cursor_login= authenticate request; that in-Emacs login is the one gap vs
+  agent-shell here, and would need an authenticate step to close.
+- CodeBuddy exports nothing — the CLI keeps its own login.
+
+Testing: the existing drift test auto-flags any registered id missing its
+=*-start-agent=, and four new tests pin each command line, the no-pin choice
+and the env function (plus that all three =start-agent= commands open their
+OWN session).  /Honesty note for the README/: these three are wired and
+unit-tested but NOT run against a live agent in this change — unlike the four
+tested binaries.  Exercise them live before claiming parity.
+
 * Brainstorm from worg — feature ideas (read =/home/khalid/docs/worg/=, 2026-10-07)
 User order: "Read ~/docs/worg/ and brainstorm feature ideas for this package and
 add them to TODOs.org."  What follows are ideas mined by actually reading the

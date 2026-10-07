@@ -81,6 +81,58 @@ model is already a MiniMax model."
     (should (equal (plist-get minimax :environment)
                    #'agent-org-mcode-environment))))
 
+(ert-deftest test-agent-org-copilot-provider-present ()
+  "GitHub Copilot is its OWN ACP agent: `copilot --acp'.
+Copilot CLI speaks ACP (public preview) and keeps its own login, so — like
+MiniMax Code — it pins nothing (its default model is already the right one)
+and only passes a headless COPILOT_GITHUB_TOKEN through when present."
+  (let ((copilot (agent-org--provider-spec 'copilot)))
+    (should (equal (plist-get copilot :name) "Copilot"))
+    (should (equal (plist-get copilot :command) '("copilot" "--acp")))
+    (should-not (plist-get copilot :model))
+    (should (equal (plist-get copilot :environment)
+                   #'agent-org-copilot-environment))))
+
+(ert-deftest test-agent-org-cursor-provider-present ()
+  "Cursor's CLI binary is `agent', with ACP a subcommand: `agent acp'.
+A reader would guess `cursor acp'; it is not — the command mirrors
+agent-shell's `agent-shell-cursor-acp-command'.  Auth defaults to an
+external `agent login' (no ACP authenticate request, unlike agent-shell's
+optional cursor_login flow, which agent-org does not drive), so the entry
+pins no model."
+  (let ((cursor (agent-org--provider-spec 'cursor)))
+    (should (equal (plist-get cursor :name) "Cursor"))
+    (should (equal (plist-get cursor :command) '("agent" "acp")))
+    (should-not (plist-get cursor :model))
+    (should (equal (plist-get cursor :environment)
+                   #'agent-org-cursor-environment))))
+
+(ert-deftest test-agent-org-codebuddy-provider-present ()
+  "CodeBuddy is its own CLI agent: `codebuddy --acp'.
+Login is kept by the CLI itself, so nothing is exported by default."
+  (let ((codebuddy (agent-org--provider-spec 'codebuddy)))
+    (should (equal (plist-get codebuddy :name) "CodeBuddy"))
+    (should (equal (plist-get codebuddy :command) '("codebuddy" "--acp")))
+    (should-not (plist-get codebuddy :model))
+    (should (equal (plist-get codebuddy :environment)
+                   #'agent-org-codebuddy-environment))))
+
+(ert-deftest test-agent-org-copilot-cursor-codebuddy-start-open-themselves ()
+  "Each new per-provider command is the same thin call with its id baked in.
+The drift test already proves one `agent-org-<id>-start-agent' exists for
+every registered id; this proves each actually opens ITS OWN session, so a
+copy-pasted command that starts the wrong agent is caught.  Under the mock
+there is no live process, so the kill hook stays silent."
+  (ao--capture-wire
+    (dolist (pair '((copilot . agent-org-copilot-start-agent)
+                    (cursor . agent-org-cursor-start-agent)
+                    (codebuddy . agent-org-codebuddy-start-agent)))
+      (let ((buf (funcall (cdr pair))))
+        (should (buffer-live-p buf))
+        (should (eq (car pair)
+                    (plist-get (agent-org--session-for-buffer buf) :name)))
+        (kill-buffer buf)))))
+
 ;;;; Buffer creation
 
 (defconst ao--name-dir "/tmp/ao-proj/"

@@ -166,9 +166,31 @@ should =agent-org= watch the client process (=:sentinel= or
 =process-exit-without-children=) and set ~:state 'error~ with the stderr tail,
 so a broken binary says so instead of hanging in the header line?
 
+* Copilot, Cursor and CodeBuddy providers (added 2026-10-07)
+
+** TODO Read the three new =agent-org-providers= entries and env functions
+A mirror of agent-shell's command defaults — confirm each against a live
+=--acp= / =acp= server before trusting the shape:
+- =copilot= → ='("copilot" "--acp")=; =agent-org-copilot-environment= passes
+  =COPILOT_GITHUB_TOKEN= only, else nil (the CLI's own login).
+- =cursor= → ='("agent" "acp")= (the binary is =agent=, not =cursor=);
+  =agent-org-cursor-environment= passes =CURSOR_API_KEY= or
+  =CURSOR_AUTH_TOKEN=.  agent-org sends /no/ ACP =authenticate= request, so
+  =agent login= has to happen outside Emacs.
+- =codebuddy= → ='("codebuddy" "--acp")=; env returns nil.
+Review question: do you want an in-Emacs =cursor_login= / Copilot device
+authenticate flow?  That needs a new =authenticate= step in the start
+handshake, which agent-org does not have today.
+
+** DONE Record the live-verification state (2026-10-07)
+=copilot= and =agent= (Cursor) binaries /are/ on this machine's exec-path;
+=codebuddy= is absent.  None of the three was driven through a live ACP turn
+in this change — the four new tests exercise them only through
+~tests/acp-mock.el~.  A live smoke (each behind its own login) is still open.
+
 * Command names, borrowed from agent-shell
 
-** TODO Read the four =agent-org-<id>-start-agent= commands (agent-org-providers.el)
+** TODO Read the =agent-org-<id>-start-agent= commands (agent-org-providers.el)
 
 They are deliberately /explicit/ defuns, not one macro mapped over
 ~agent-org-providers~: ~loaddefs-generate~ only scrapes forms it recognises, so a

@@ -73,7 +73,31 @@
    (list :id 'minimax
          :name "MiniMax"
          :command '("mcode" "acp")
-         :environment #'agent-org-mcode-environment))
+         :environment #'agent-org-mcode-environment)
+   ;; GitHub Copilot is its OWN ACP agent — the `copilot' CLI exposes an ACP
+   ;; server with `--acp' (public preview).  It fronts several models but its
+   ;; own default is the right starting point, so pin nothing (like MiniMax);
+   ;; a headless COPILOT_GITHUB_TOKEN is passed through when the environment
+   ;; already carries one, otherwise the CLI's own login is used.
+   (list :id 'copilot
+         :name "Copilot"
+         :command '("copilot" "--acp")
+         :environment #'agent-org-copilot-environment)
+   ;; Cursor's terminal agent binary is `agent' (NOT `cursor'), and ACP is a
+   ;; subcommand — mirroring agent-shell's `agent-shell-cursor-acp-command'.
+   ;; Auth defaults to an external `agent login'; CURSOR_API_KEY /
+   ;; CURSOR_AUTH_TOKEN are passed through when present.  (agent-shell can also
+   ;; drive an ACP `cursor_login' authenticate request; agent-org has no
+   ;; authenticate step in its handshake, so we rely on the out-of-band path.)
+   (list :id 'cursor
+         :name "Cursor"
+         :command '("agent" "acp")
+         :environment #'agent-org-cursor-environment)
+   ;; CodeBuddy (`codebuddy --acp') is its own CLI agent, login kept by the CLI.
+   (list :id 'codebuddy
+         :name "CodeBuddy"
+         :command '("codebuddy" "--acp")
+         :environment #'agent-org-codebuddy-environment))
   "List of supported ACP providers.
 Each entry is a plist; see `agent-org-providers.el' commentary."
   :type '(repeat sexp)
@@ -89,6 +113,9 @@ its `session/list' does not answer in practice."
                  (const :tag "Goose" goose)
                  (const :tag "OpenCode" opencode)
                  (const :tag "MiniMax" minimax)
+                 (const :tag "Copilot" copilot)
+                 (const :tag "Cursor" cursor)
+                 (const :tag "CodeBuddy" codebuddy)
                  (symbol :tag "Other provider id"))
   :group 'agent-org)
 
@@ -120,6 +147,32 @@ MiniMax Code is `mcode', its own agent — not MiniMax models served
 through OpenCode."
   (interactive)
   (agent-org-start 'minimax))
+
+;;;###autoload
+(defun agent-org-copilot-start-agent ()
+  "Start an interactive GitHub Copilot agent-org chat.
+The `copilot' CLI serves ACP over `--acp' (public preview); authenticate
+with the CLI's own login once outside Emacs, or export
+COPILOT_GITHUB_TOKEN for headless use."
+  (interactive)
+  (agent-org-start 'copilot))
+
+;;;###autoload
+(defun agent-org-cursor-start-agent ()
+  "Start an interactive Cursor agent-org chat.
+Cursor's terminal agent is the `agent' binary and ACP is its subcommand
+(`agent acp'); log in once outside Emacs with `agent login', or export
+CURSOR_API_KEY / CURSOR_AUTH_TOKEN."
+  (interactive)
+  (agent-org-start 'cursor))
+
+;;;###autoload
+(defun agent-org-codebuddy-start-agent ()
+  "Start an interactive CodeBuddy agent-org chat.
+CodeBuddy keeps its own login, so run `codebuddy' once outside Emacs to
+authenticate before starting (`codebuddy --acp')."
+  (interactive)
+  (agent-org-start 'codebuddy))
 
 (defun agent-org-goose-environment ()
   "Return environment variables for the Goose ACP client.
@@ -157,6 +210,33 @@ it; otherwise the CLI's own stored login (`qoder login') is used."
     (if token
         (list (format "QODER_PERSONAL_ACCESS_TOKEN=%s" token))
       nil)))
+
+(defun agent-org-copilot-environment ()
+  "Return environment variables for the GitHub Copilot ACP client.
+Copilot keeps its own login (the device flow), so nothing is exported by
+default; COPILOT_GITHUB_TOKEN is passed through when the environment has
+it, which is the CLI's documented non-interactive credential."
+  (let ((token (getenv "COPILOT_GITHUB_TOKEN")))
+    (when token
+      (list (format "COPILOT_GITHUB_TOKEN=%s" token)))))
+
+(defun agent-org-cursor-environment ()
+  "Return environment variables for the Cursor agent ACP client.
+Authentication defaults to an external `agent login', so nil is returned;
+CURSOR_API_KEY (preferred) or CURSOR_AUTH_TOKEN is passed through when the
+environment carries one.  These are the same two secrets agent-shell's
+`agent-shell-cursor-authentication' accepts, minus its optional ACP
+`cursor_login' handshake, which agent-org does not drive."
+  (cond ((getenv "CURSOR_API_KEY")
+         (list (format "CURSOR_API_KEY=%s" (getenv "CURSOR_API_KEY"))))
+        ((getenv "CURSOR_AUTH_TOKEN")
+         (list (format "CURSOR_AUTH_TOKEN=%s" (getenv "CURSOR_AUTH_TOKEN"))))))
+
+(defun agent-org-codebuddy-environment ()
+  "Return environment variables for the CodeBuddy ACP client.
+CodeBuddy keeps its own login (`codebuddy' signed in outside Emacs), so
+nothing has to be exported and this returns nil by default."
+  nil)
 
 (provide 'agent-org-providers)
 ;;; agent-org-providers.el ends here
