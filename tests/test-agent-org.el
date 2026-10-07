@@ -5844,6 +5844,104 @@ honest: an untouched transcript must not look like it was edited."
           (should (= 2 ao--writes)))
         (kill-buffer buf)))))
 
+(ert-deftest test-agent-org-transcript-force-rewrites-an-unchanged-body ()
+  "FORCE ignores the two skips an ordinary boundary honours.
+They exist to save a whole-file write — the unchanged-body cache and lite
+mode — but a SYNC is not a boundary, it is the user asking the file to catch
+up NOW, so both are bypassed.  The file is deleted under a warm cache to show
+the cache check is skipped, then lite mode is set to show its gate is too.
+`agent-org-transcribe' nil is NOT overridden (see the off test): FORCE asks
+the mirror to catch up, not to override the decision to keep no files."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in temp-dir
+      (let* ((pair (ao--make-test-session "force"))
+             (buf (car pair))
+             (file (expand-file-name "sid-force.org" temp-dir)))
+        (agent-org-buffer-set-status buf :session-id "sid-force" :state 'ready)
+        (agent-org-buffer-refresh-metadata buf)
+        (agent-org-buffer-transcribe buf)        ; writes and warms the cache
+        (should (file-exists-p file))
+        ;; unchanged body, warm cache: an ordinary call skips the rewrite
+        (delete-file file)
+        (agent-org-buffer-transcribe buf)
+        (should-not (file-exists-p file))
+        ;; FORCE rewrites it even though nothing changed
+        (agent-org-buffer-transcribe buf t)
+        (should (file-exists-p file))
+        ;; lite with an empty queue: an ordinary call writes nothing at all
+        (delete-file file)
+        (with-current-buffer buf (setq agent-org-buffer--lite 'on))
+        (agent-org-buffer-transcribe buf)
+        (should-not (file-exists-p file))
+        ;; FORCE writes even in lite mode
+        (agent-org-buffer-transcribe buf t)
+        (should (file-exists-p file))
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-transcript-sync-rewrites-the-file-with-the-current-rendering ()
+  "`agent-org-transcript-sync' re-mirrors NOW, no turn required.
+This is the feature's reason to exist: a status the CURRENT build renders but
+that the file predates.  Change `:title' without touching a boundary, then
+run the command — it refreshes the metadata and force-writes, so the file
+carries the new title.  The metadata is NOT refreshed by hand first: that is
+what proves the command itself does it."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in temp-dir
+      (let* ((pair (ao--make-test-session "sync"))
+             (buf (car pair)))
+        (agent-org-buffer-set-status buf :session-id "sid-sync" :state 'ready
+                                     :title "First")
+        (agent-org-buffer-refresh-metadata buf)
+        (agent-org-buffer-transcribe buf)
+        (should (string-match-p "^#\\+TITLE: First$"
+                                (ao--transcript-text temp-dir "sid-sync")))
+        ;; the title changes with no turn and no boundary call
+        (agent-org-buffer-set-status buf :title "Second")
+        (with-current-buffer buf (agent-org-transcript-sync))
+        (let ((text (ao--transcript-text temp-dir "sid-sync")))
+          (should (string-match-p "^#\\+TITLE: Second$" text))
+          (should-not (string-match-p "^#\\+TITLE: First$" text)))
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-transcript-sync-prefix-covers-every-open-chat ()
+  "A prefix arg makes sync iterate every live chat, not just this buffer.
+Two sessions, both files deleted, ONE prefixed call from a buffer that is not
+a chat at all, both files back — which also proves the `C-u' form reads the
+registry rather than the current buffer."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in temp-dir
+      (let (bufs)
+        (dolist (sid '("sid-all-1" "sid-all-2"))
+          (let* ((pair (ao--make-test-session sid))
+                 (buf (car pair))
+                 (file (expand-file-name (concat sid ".org") temp-dir)))
+            (agent-org-buffer-set-status buf :session-id sid :state 'ready)
+            (agent-org-buffer-refresh-metadata buf)
+            (agent-org-buffer-transcribe buf)
+            (should (file-exists-p file))
+            (delete-file file)
+            (push buf bufs)))
+        (with-temp-buffer (agent-org-transcript-sync t))
+        (dolist (sid '("sid-all-1" "sid-all-2"))
+          (should (file-exists-p (expand-file-name (concat sid ".org") temp-dir))))
+        (dolist (b bufs) (kill-buffer b))))))
+
+(ert-deftest test-agent-org-transcript-sync-refuses-when-transcription-is-off ()
+  "Sync says so instead of silently doing nothing when files are off.
+`agent-org-transcribe' nil is the opt-out; FORCE overrides the cache and lite
+skips, never this.  A silent success would read as \"the transcript updated\"
+when no transcript exists to update."
+  (ert-with-temp-directory temp-dir
+    (let ((agent-org-transcribe nil)
+          (agent-org-transcript-directory temp-dir))
+      (let* ((pair (ao--make-test-session "off-sync"))
+             (buf (car pair)))
+        (agent-org-buffer-set-status buf :session-id "sid-nooff" :state 'ready)
+        (should-error (with-current-buffer buf (agent-org-transcript-sync))
+                      :type 'user-error)
+        (should (null (ao--transcript-files temp-dir)))
+        (kill-buffer buf)))))
+
 (ert-deftest test-agent-org-transcript-sanitizes-an-id-that-looks-like-a-path ()
   "A session id is agent text, and it never gets to choose where a file lands.
 Qoder issues UUIDs and Goose issues timestamps, but the id arrives over the

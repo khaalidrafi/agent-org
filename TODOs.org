@@ -375,6 +375,44 @@ for the per-chunk append model, spent inside the stream.  Twelve tests
 suite's first to touch a filesystem, so =tests/test-agent-org.el= now
 requires =ert-x= for =ert-with-temp-directory=.
 
+** DONE Sync the transcript file on demand, with the current rendering
+User order: "Add option to sync transcript files based on latest features."
+The transcript is a mirror refreshed only at turn boundaries, so a chat left
+idle since an upgrade keeps the /file/ in the shape it was written, even though
+the running /buffer/ now renders newer features (a rebuilt header, a changed
+drawer, a new keyword set).  The option is one command that forces that mirror
+to catch up NOW, no new prompt:
+
+- =agent-org-transcript-sync= (interactive, autoloaded): rebuild the metadata
+  block with =agent-org-buffer-refresh-metadata=, then write the whole frozen
+  body through the new FORCE path.  With =C-u= it iterates every live chat in
+  =agent-org--sessions= rather than just the current buffer; from a non-chat
+  buffer the unprefixed form =user-error=s ("Not an agent-org chat buffer").
+- FORCE is a new =(optional force)= arg on =agent-org-buffer-transcribe=.  It
+  ignores the two guards that only ever SAVE a write — the
+  =agent-org-buffer--transcript-cache= equality and the lite-mode skip — so the
+  file is rewritten even when the text is byte-identical and even in lite mode.
+  It does NOT override =agent-org-transcribe= nil or a session with no id yet:
+  FORCE asks the mirror to catch up, never to keep a file the user turned off,
+  so the command says so rather than writing silently anyway.  The arg defaults
+  nil, so all nine existing boundary call sites are unchanged.
+- Honest scope: this re-/mirrors/ the buffer, it does not re-/render/ it.  An
+  exchange the running build never painted keeps the shape it arrived in.  To
+  rebuild an old conversation's /body/ from the wire you RESUME the session
+  (=agent-org-resume-session= replays and repaints every turn with the current
+  primitives, §9) and then sync.  The docstrings and README say so instead of
+  implying the command upgrades old turns.
+
+Testing: four new ERT tests — FORCE rewrites an unchanged body under a warm
+cache AND overrides lite mode (file deleted out from under the cache, then
+reappears only on the force call); the command rewrites the file with the
+current =#+TITLE:= without any boundary firing (metadata NOT refreshed by hand,
+so it proves the command does it); the =C-u= form covers every open chat from a
+non-chat current buffer; and it =user-error=s with nothing written when
+transcription is off.  Byte-compile clean, full suite green (330), hot-loaded
+into the running Emacs.  =agent-org-autoloads.el= regenerated (it also picked up
+a stale =agent-org-cancel-turn= docstring already present in the source).
+
 ** DONE =latest= is reachable per call, and means /modified/
 User order: "Add session strategy to always open the latest modified
 session."  The strategy already existed and already sorted on

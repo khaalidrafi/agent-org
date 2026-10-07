@@ -8,6 +8,42 @@ Every unit of AI-written code that is hard to review or easy to get wrong gets a
 TODO here, with the file, the function and the one question to answer.  Done
 means you read the code and agree it is right, not that the tests passed.
 
+* Sync the transcript file on demand (added 2026-10-07)
+
+User order: "Add option to sync transcript files based on latest features."
+A mirror written only at turn boundaries goes stale when you upgrade: the buffer
+shows the newest rendering but the file keeps the shape it was written in.  The
+new command forces that mirror to catch up without a new prompt.
+
+** TODO Read the =force= arg on =agent-org-buffer-transcribe= (agent-org-buffer.el)
+
+The one design decision worth a second pair of eyes: FORCE skips exactly the two
+guards that exist to /save a write/ (the =--transcript-cache= equality and the
+lite-mode gate) and NOTHING else — it still honours =agent-org-transcribe= nil
+and a session with no id.  Check the two =when= conditions read as intended, and
+that the default =nil= leaves all nine existing boundary call sites on the old
+behaviour.  Is overriding lite mode here right, or should a lite session's sync
+still defer until the queue drains (the §14 rule)?  I chose to override it: a
+deliberate "catch up now" is not a hot path, and the lite gate only ever exists
+to save the 3–15 ms write a boundary was about to make anyway.
+
+** TODO Confirm the re-mirror / re-render distinction holds in the docs
+
+The command regenerates the metadata block and re-mirrors the body; it does NOT
+re-render an exchange the running build never painted.  Read the command
+docstring, README.org §"Transcript file" and CONVENTIONS §14 and confirm none of
+them implies that syncing an old chat upgrades its old turns — the honest path
+for that is resume-then-sync.  This is where a future reader could be misled, so
+it is the line to police.
+
+** TODO Live check (cheap, but not done here)
+
+Unit-tested only.  In a live session: edit something the header renders but the
+file lacks (or =git checkout= an older transcript), run =M-x
+agent-org-transcript-sync=, then diff the file against the buffer (point-min to
+the render end) — they should match.  Then =C-u M-x agent-org-transcript-sync=
+with two chats open and confirm both files update.
+
 * MiniMax models through OpenCode (the pinned-model path)
 
 ** TODO Read the response-clock recorder (=agent-org-buffer--close-response-clock=, agent-org-buffer.el)

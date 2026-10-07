@@ -2872,7 +2872,7 @@ and the write is a whole-file `write-region'.  Comparing against what was
 last put there skips those, and keeps the file's mtime honest: an
 untouched transcript does not look like it was edited.")
 
-(defun agent-org-buffer-transcribe (buffer)
+(defun agent-org-buffer-transcribe (buffer &optional force)
   "Mirror BUFFER's conversation to its transcript file, when it changed.
 The mirror is the frozen body — `point-min' to
 `agent-org-buffer--render-end' — which is exactly the conversation and
@@ -2895,17 +2895,25 @@ queue is the one piece of conversation text that exists NOWHERE ELSE — it was
 never sent, so it is in no `session/load' replay and in no `* User' heading
 (see `agent-org-buffer-transcript-queue') — so dropping it to save a 3–15 ms
 write trades the record of a prompt against the mirror of history the agent
-itself can replay.  The queue wins; the mirror waits for it."
+itself can replay.  The queue wins; the mirror waits for it.
+
+FORCE is the SYNC path (`agent-org-transcript-sync'), not a boundary: it
+ignores the two guards above that merely save a write — the
+`agent-org-buffer--transcript-cache' equality and the LITE gate — so the file
+catches up with the buffer NOW even when the rendered text is unchanged and
+even in lite mode.  It does not override `agent-org-transcribe' nil or a
+session with no id yet: FORCE asks the mirror to catch up, not to keep a file
+the user turned off."
   (when (and agent-org-transcribe (buffer-live-p buffer))
     (with-current-buffer buffer
       (let* ((status agent-org-buffer--status)
              (session-id (plist-get status :session-id))
              (queue (plist-get status :queued))
              (lite (agent-org-lite-p)))
-        (when (and session-id (or (not lite) queue))
+        (when (and session-id (or force (not lite) queue))
           (let ((text (buffer-substring-no-properties
                        (point-min) (agent-org-buffer--render-end))))
-            (unless (equal text agent-org-buffer--transcript-cache)
+            (when (or force (not (equal text agent-org-buffer--transcript-cache)))
               (agent-org-buffer--write-transcript session-id text))))))))
 
 (defun agent-org-buffer--transcript-file (session-id)

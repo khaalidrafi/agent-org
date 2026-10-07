@@ -110,6 +110,32 @@ While a turn streams the same act merely queues the draft -- see
 turn ends successfully.  This type-ahead model is agent-shell's: the
 prompt is always in the buffer, never in the minibuffer, so watching a
 turn and preparing the next message happen in the same window." t)
+(autoload 'agent-org-transcript-sync "agent-org" "\
+Rewrite a chat's transcript file from the live buffer, now.
+The transcript is a MIRROR of the buffer, normally refreshed only at a turn
+boundary (see `agent-org-buffer-transcribe').  A chat that has sat idle since
+before a rendering change — a header field, a drawer shape, a keyword set that
+arrived in a later build — keeps a file written in the OLDER shape, so the
+newest features show in the buffer but not yet in its file.  This asks the
+mirror to catch up without waiting for the next prompt: the metadata block is
+rebuilt first (`agent-org-buffer-refresh-metadata'), then the whole frozen body
+is written even when it renders byte-identically to what is already on disk,
+and even in lite mode (the FORCE path of `agent-org-buffer-transcribe').
+
+With a prefix argument, do every open chat in the registry rather than this
+buffer: `C-u M-x agent-org-transcript-sync'.
+
+What is written is exactly what the buffer shows, so this is a RE-MIRROR, not
+a re-render: an exchange the running build never painted keeps the shape it
+arrived in.  To rebuild an old conversation's BODY from the wire, RESUME the
+session (`agent-org-resume-session') — that replays and repaints every turn
+with the current primitives — then sync here.
+
+No transcript files exist when `agent-org-transcribe' is nil; that is the one
+skip FORCE does not override, so the command says so rather than writing a
+file the user turned off.
+
+(fn &optional ALL)" t)
 (autoload 'agent-org-queue-edit "agent-org" "\
 Go to this session's queued prompts, at the bottom of the chat.
 The entries are `* NEXT'/`* WAIT' headings above the live `* User' box: type

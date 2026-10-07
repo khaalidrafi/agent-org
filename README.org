@@ -74,7 +74,7 @@ The checkout ships ~agent-org-autoloads.el~, so lazy loading via
 (use-package agent-org
   :load-path "~/agent-org"
   :commands (agent-org-start agent-org-resume-session agent-org-send
-             agent-org-set-session-model
+             agent-org-set-session-model agent-org-transcript-sync
              agent-org-goose-start-agent agent-org-qoder-start-agent
              agent-org-opencode-start-agent agent-org-minimax-start-agent
              agent-org-copilot-start-agent agent-org-cursor-start-agent
@@ -558,6 +558,18 @@ loader reads, and both are written from the session's one list.
 
 In lite mode this is the ONE write lite mode does not skip: see
 the Resource monitor and lite mode section.
+
+Because the file is refreshed only at boundaries, a chat you have left idle
+since an upgrade keeps the shape it was written in, even though the running
+buffer now renders newer features.  ~M-x agent-org-transcript-sync~ catches the
+file up /now/, with no new prompt: it rebuilds the metadata block and rewrites
+the whole mirror even when the text looks unchanged and even in lite mode.  With
+a prefix arg (~C-u M-x agent-org-transcript-sync~) it does every open chat at
+once.  It re-/mirrors/ the buffer; it does not re-/render/ an old conversation,
+so to rebuild an old chat body from the wire, ~agent-org-resume-session~ it
+first (that replays and repaints every turn) and then sync.  With
+~agent-org-transcribe~ nil there is nothing to sync, and the command says so
+rather than writing a file you turned off.
 
 Turn it off with ~agent-org-transcribe~ nil — a chat whose transcript is
 a real org file under version control does not want a second copy

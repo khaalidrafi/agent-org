@@ -872,6 +872,18 @@ is the chat buffer's frozen body — `point-min` to `agent-org-buffer--render-en
   twenty chunks of an answer cost zero writes and a slow disk cannot stall a
   stream.  `test-agent-org-transcript-costs-writes-per-turn-not-per-chunk`
   pins that count at exactly 2.
+* **`agent-org-transcript-sync` forces a boundary on demand.**  A mirror
+  refreshed only at boundaries means a chat idle since a rendering change keeps
+  a file in the OLDER shape — the newest features show in the buffer but not in
+  its file.  The command rebuilds the metadata block (`agent-org-buffer-refresh-metadata`)
+  then writes through the FORCE path of `agent-org-buffer-transcribe`, which
+  ignores the two guards that merely save a write — the unchanged-body cache and
+  lite mode — but NOT `agent-org-transcribe` nil or a session with no id yet:
+  FORCE asks the file to catch up, never to override the opt-out.  It is a
+  RE-MIRROR, not a re-render: an exchange the running build never painted keeps
+  the shape it arrived in, so rebuilding an old conversation's body is a
+  resume (§9), then a sync.  A prefix arg iterates every live chat in
+  `agent-org--sessions` rather than the current buffer.
 * **A kill is a boundary too.** A turn in flight has no end coming, so
   `agent-org--forget-session` writes before `acp-shutdown`: without it the last
   answer of every session — the one the user stopped reading — is the one

@@ -2351,6 +2351,57 @@ turn and preparing the next message happen in the same window."
         (agent-org-buffer-begin-exchange buffer text)
         (agent-org--send-turn session buffer text)))))
 
+;;;###autoload
+(defun agent-org-transcript-sync (&optional all)
+  "Rewrite a chat's transcript file from the live buffer, now.
+The transcript is a MIRROR of the buffer, normally refreshed only at a turn
+boundary (see `agent-org-buffer-transcribe').  A chat that has sat idle since
+before a rendering change — a header field, a drawer shape, a keyword set that
+arrived in a later build — keeps a file written in the OLDER shape, so the
+newest features show in the buffer but not yet in its file.  This asks the
+mirror to catch up without waiting for the next prompt: the metadata block is
+rebuilt first (`agent-org-buffer-refresh-metadata'), then the whole frozen body
+is written even when it renders byte-identically to what is already on disk,
+and even in lite mode (the FORCE path of `agent-org-buffer-transcribe').
+
+With a prefix argument, do every open chat in the registry rather than this
+buffer: `C-u M-x agent-org-transcript-sync'.
+
+What is written is exactly what the buffer shows, so this is a RE-MIRROR, not
+a re-render: an exchange the running build never painted keeps the shape it
+arrived in.  To rebuild an old conversation's BODY from the wire, RESUME the
+session (`agent-org-resume-session') — that replays and repaints every turn
+with the current primitives — then sync here.
+
+No transcript files exist when `agent-org-transcribe' is nil; that is the one
+skip FORCE does not override, so the command says so rather than writing a
+file the user turned off."
+  (interactive "P")
+  (unless agent-org-transcribe
+    (user-error "Transcript files are off (set `agent-org-transcribe' non-nil)"))
+  (let ((buffers
+         (if all
+             ;; the registry, not the buffer list: only a session the package
+             ;; still tracks has a transcript to catch up
+             (delq nil (mapcar (lambda (s)
+                                 (let ((b (plist-get s :buffer)))
+                                   (and (buffer-live-p b) b)))
+                               agent-org--sessions))
+           (let ((b (current-buffer)))
+             (unless (agent-org--session-for-buffer b)
+               (user-error "Not an agent-org chat buffer"))
+             (list b)))))
+    (let ((written 0))
+      (dolist (b buffers)
+        ;; a session that never got an id has no file to name; skip it
+        (when (plist-get (buffer-local-value 'agent-org-buffer--status b)
+                         :session-id)
+          (agent-org-buffer-refresh-metadata b)
+          (agent-org-buffer-transcribe b t)
+          (setq written (1+ written))))
+      (message "[agent-org] transcript synced for %d chat%s"
+               written (if (= written 1) "" "s")))))
+
 ;;;; The queue, edited where it is read
 ;;
 ;; The waiting prompts live at the BOTTOM of the chat buffer as `* NEXT' and
