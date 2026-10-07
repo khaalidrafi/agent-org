@@ -1376,9 +1376,12 @@ here, and applied once the session is ready.  Both halves of that order
 matter.  Read first because `agent-org--session-ready' mirrors the
 freshly replayed buffer over that file, and a replayed buffer carries no
 queue — the agent never saw a prompt that was never sent — so reading
-after the write would find an empty drawer.  Applied last because a
-drained prompt goes on the wire, and the wire needs an interactive
-session: id set, prompt box open, `:loading' gone."
+after the write would find an empty drawer.  Applied last because the
+reload writes the restored queue into the transcript, and
+`agent-org--session-ready' has just mirrored the replayed buffer over that
+file -- refreshing before the mirror would have its work overwritten.
+Nothing is sent here: a resumed queue is restored for the user to review
+and apply, never fired on the session's arrival."
   (agent-org--unschedule-replay session)
   (setf (plist-get session :loading) nil)
   (let ((queued (agent-org--recorded-queue session)))
@@ -1390,9 +1393,15 @@ session: id set, prompt box open, `:loading' gone."
       (setf (plist-get session :pending-prompts) queued)
       (message "[agent-org] %d queued prompt(s) reloaded from the transcript"
                (length queued))
-      ;; the same drain a turn end performs: the first prompt goes out, the
-      ;; rest keep waiting in the header count and in the drawer
-      (agent-org--drain-queue session (plist-get session :buffer)))))
+      ;; Paint, do not send.  A resumed queue is a set of prompts the user
+      ;; parked before Emacs closed; on reopen they belong in the region and
+      ;; the `:QUEUE:' drawer for review, not on the wire the instant the
+      ;; session opens -- firing them spends tokens the user has not, on
+      ;; seeing the restored list, chosen to re-approve.  Refresh renders
+      ;; both projections of :pending-prompts and mirrors them to the
+      ;; transcript; the user then drains by applying the region (or the
+      ;; first real turn end does).
+      (agent-org--queue-refresh session (plist-get session :buffer)))))
 
 (defun agent-org--load-session (session session-id)
   "Replay SESSION-ID into SESSION's buffer with a `session/load' request.

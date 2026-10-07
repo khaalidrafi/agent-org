@@ -6410,14 +6410,18 @@ all rather than an empty one."
                                         (ao--transcript-text temp-dir "sid-drain"))))
           (kill-buffer buf))))))
 
-(ert-deftest test-agent-org-resume-reloads-the-queued-prompts-and-sends ()
-  "Resume brings back what the last session had queued, in order.
-User order: \"Save queued prompts to transcripts and reload them on
-resume.\"  The prompts were never sent, so the agent's own replay cannot
-contain them — only our transcript can.  Restoring into an idle session
-and leaving them there would strand them: nothing else drains a queue on
-a session that is not busy, so the flush point drains, which puts the
-first one on the wire and keeps the rest waiting exactly as they were."
+(ert-deftest test-agent-org-resume-reloads-the-queued-prompts-without-sending ()
+  "Resume brings back what the last session had queued, in order, and
+sends NONE of it.
+User order: \"prompt queue should be saved to transcript and reloaded on
+resume, but not sent outright!\"  The prompts were never sent, so the
+agent's own replay cannot contain them — only our transcript can, and the
+reload restores them into the region and the `:QUEUE:' drawer in order.
+But a queue is a set of prompts the user parked before Emacs closed, not a
+backlog to fire the moment a session opens: putting one on the wire would
+spend tokens the user has not, on seeing the restored list, chosen to
+re-approve.  So the flush point refreshes (renders) rather than drains: the
+first real turn end, or the user applying the region, is what sends them."
   (ert-with-temp-directory temp-dir
     (with-temp-file
         (expand-file-name (agent-org-buffer--transcript-name "sid-rest")
@@ -6439,15 +6443,34 @@ first one on the wire and keeps the rest waiting exactly as they were."
           (ao--drive "session/load" '((sessionId . "sid-rest")))
           (ao--wire-prompt-texts
             (ao--settle))
-          ;; the first prompt is out on the wire as its own turn; the rest wait
-          (should (equal (list "finish the tests") (ao--sent-prompt-texts)))
-          (should (equal '("then run org-check")
+          ;; NOTHING goes on the wire -- the whole point of the change
+          (should (null (ao--sent-prompt-texts)))
+          ;; both prompts restored, oldest first, none consumed
+          (should (equal '("finish the tests" "then run org-check")
                          (plist-get session :pending-prompts)))
           (with-current-buffer buf
-            (should (string-match-p "^\\* finish the tests$"
+            ;; restored as the editable region (NEXT then WAIT), not as a
+            ;; conversation heading: a `* finish the tests$' with no keyword
+            ;; would mean the prompt had already been sent
+            (should (string-match-p "^\\* NEXT finish the tests$"
                                     (buffer-string)))
-            (should (string-match-p "1 queued"
-                                    (agent-org-buffer--render-header-line))))
+            (should (string-match-p "^\\* WAIT then run org-check$"
+                                    (buffer-string)))
+            (should-not (string-match-p "^\\* finish the tests$"
+                                        (buffer-string)))
+            ;; the queue's source of truth for every projection (region,
+            ;; drawer, and the streaming "(N queued)" count) is :queued;
+            ;; the header count itself only rides a streaming turn, so on
+            ;; an idle resumed session the bar shows Ready with no count
+            ;; and the region is where the restored prompts live
+            (should (equal '("finish the tests" "then run org-check")
+                           (plist-get agent-org-buffer--status :queued))))
+          ;; and preserved on disk: the reload writes the queue back into the
+          ;; transcript, so a second quit cannot lose what the first restored
+          (should (string-match-p "finish the tests"
+                                  (ao--transcript-text temp-dir "sid-rest")))
+          (should (string-match-p "then run org-check"
+                                  (ao--transcript-text temp-dir "sid-rest")))
           (kill-buffer buf))))))
 
 (ert-deftest test-agent-org-resume-without-a-queue-drawer-sends-nothing ()
