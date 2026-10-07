@@ -227,6 +227,10 @@ them, MiniMax included." t)
 Start an interactive MiniMax Code agent-org chat.
 MiniMax Code is `mcode', its own agent — not MiniMax models served
 through OpenCode." t)
+(autoload 'agent-org-cline-start-agent "agent-org-providers" "\
+Start an interactive Cline agent-org chat.
+Cline's CLI serves ACP over `--acp'; it keeps its own credential store, so
+sign in once outside Emacs (see https://cline.bot/cli) before starting." t)
 (register-definition-prefixes "agent-org-providers" '("agent-org-"))
 
 

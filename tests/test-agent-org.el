@@ -117,6 +117,32 @@ Login is kept by the CLI itself, so nothing is exported by default."
     (should (equal (plist-get codebuddy :environment)
                    #'agent-org-codebuddy-environment))))
 
+(ert-deftest test-agent-org-cline-provider-present ()
+  "Cline is its own CLI agent: `cline --acp', login kept by the CLI.
+Cline's terminal CLI speaks ACP over `--acp' — the command mirrors
+agent-shell's `agent-shell-cline-acp-command'.  It keeps its own credential
+store, so (like CodeBuddy) nothing is exported by default and no model is
+pinned: Cline is a single product, not a server fronting many models."
+  (let ((cline (agent-org--provider-spec 'cline)))
+    (should (equal (plist-get cline :name) "Cline"))
+    (should (equal (plist-get cline :command) '("cline" "--acp")))
+    (should-not (plist-get cline :model))
+    (should (equal (plist-get cline :environment)
+                   #'agent-org-cline-environment))))
+
+(ert-deftest test-agent-org-cline-start-opens-cline ()
+  "The per-provider command opens Cline, not another agent.
+`test-agent-org-every-provider-has-a-start-agent-command' only proves a
+`agent-org-cline-start-agent' exists; this proves it starts the Cline
+session, catching a copy-pasted command baked with the wrong id.  Mirrors
+`test-agent-org-goose-start-agent-opens-goose'.  Under the mock there is no
+live process, so the kill hook stays silent."
+  (ao--capture-wire
+    (let ((buf (agent-org-cline-start-agent)))
+      (should (buffer-live-p buf))
+      (should (eq 'cline (plist-get (agent-org--session-for-buffer buf) :name)))
+      (kill-buffer buf))))
+
 (ert-deftest test-agent-org-copilot-cursor-codebuddy-start-open-themselves ()
   "Each new per-provider command is the same thin call with its id baked in.
 The drift test already proves one `agent-org-<id>-start-agent' exists for

@@ -97,7 +97,16 @@
    (list :id 'codebuddy
          :name "CodeBuddy"
          :command '("codebuddy" "--acp")
-         :environment #'agent-org-codebuddy-environment))
+         :environment #'agent-org-codebuddy-environment)
+   ;; Cline is its own CLI agent whose ACP server is exposed with `--acp'
+   ;; (command mirrors agent-shell's `agent-shell-cline-acp-command').  Like
+   ;; CodeBuddy it keeps its own credential store, so nothing is exported and
+   ;; no model is pinned — Cline is a single product, not a server fronting
+   ;; many models.
+   (list :id 'cline
+         :name "Cline"
+         :command '("cline" "--acp")
+         :environment #'agent-org-cline-environment))
   "List of supported ACP providers.
 Each entry is a plist; see `agent-org-providers.el' commentary."
   :type '(repeat sexp)
@@ -116,6 +125,7 @@ its `session/list' does not answer in practice."
                  (const :tag "Copilot" copilot)
                  (const :tag "Cursor" cursor)
                  (const :tag "CodeBuddy" codebuddy)
+                 (const :tag "Cline" cline)
                  (symbol :tag "Other provider id"))
   :group 'agent-org)
 
@@ -173,6 +183,14 @@ CodeBuddy keeps its own login, so run `codebuddy' once outside Emacs to
 authenticate before starting (`codebuddy --acp')."
   (interactive)
   (agent-org-start 'codebuddy))
+
+;;;###autoload
+(defun agent-org-cline-start-agent ()
+  "Start an interactive Cline agent-org chat.
+Cline's CLI serves ACP over `--acp'; it keeps its own credential store, so
+sign in once outside Emacs (see https://cline.bot/cli) before starting."
+  (interactive)
+  (agent-org-start 'cline))
 
 (defun agent-org-goose-environment ()
   "Return environment variables for the Goose ACP client.
@@ -236,6 +254,13 @@ environment carries one.  These are the same two secrets agent-shell's
   "Return environment variables for the CodeBuddy ACP client.
 CodeBuddy keeps its own login (`codebuddy' signed in outside Emacs), so
 nothing has to be exported and this returns nil by default."
+  nil)
+
+(defun agent-org-cline-environment ()
+  "Return environment variables for the Cline ACP client.
+Cline keeps its own credential store (signed in through the CLI outside
+Emacs), so nothing has to be exported and this returns nil by default —
+the same out-of-band login CodeBuddy uses."
   nil)
 
 (provide 'agent-org-providers)

@@ -1033,6 +1033,31 @@ OWN session).  /Honesty note for the README/: these three are wired and
 unit-tested but NOT run against a live agent in this change — unlike the four
 tested binaries.  Exercise them live before claiming parity.
 
+** DONE Cline provider (ported from agent-shell)
+User order: "Add cline".  A fourth agent-shell port, following the exact same
+three lines as the others.  The command mirrors agent-shell's own default,
+=agent-shell-cline-acp-command= = '("cline" "--acp")= (agent-shell-cline.el:39),
+so agent-org adds one =agent-org-providers= entry (=:id 'cline :name "Cline"
+:command '("cline" "--acp") :environment=), a thin =agent-org-cline-start-agent=
+command and an =agent-org-cline-environment= that returns nil — Cline keeps its
+own credential store (signed in through the CLI, https://cline.bot/cli), so like
+CodeBuddy nothing is exported and no model is pinned (Cline is one product, not a
+server fronting many models).
+
+Testing: the drift test =test-agent-org-every-provider-has-a-start-agent-command=
+now also iterates =cline= (it fails if the command is missing), plus
+=test-agent-org-cline-provider-present= (command line, no pin, env function) and
+=test-agent-org-cline-start-opens-cline= (the command opens its OWN session,
+mirroring =test-agent-org-goose-start-agent-opens-goose=).  Same honesty note as
+above: wired and unit-tested, NOT run against a live =cline --acp= here.
+
+/Honesty note for the autoloads file/: =agent-org-autoloads.el= was regenerated
+only for =cline= in this change.  The committed tree still lacks autoload entries
+for =copilot=/=cursor=/=codebuddy= — a gap from their own provider commit, since
+those functions carry =;;;###autoload= but were never scraped into the generated
+file.  Left alone here to keep this unit non-conflicting with concurrent work; a
+dedicated "regenerate provider autoloads" pass should close it.
+
 * Brainstorm from worg — feature ideas (read =/home/khalid/docs/worg/=, 2026-10-07)
 User order: "Read ~/docs/worg/ and brainstorm feature ideas for this package and
 add them to TODOs.org."  What follows are ideas mined by actually reading the
