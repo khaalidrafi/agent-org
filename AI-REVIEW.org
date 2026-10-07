@@ -2329,3 +2329,83 @@ number, instead of a constant nobody can reproduce.
   earlier build replays as itself: =session/load= replays chunks, and
   =begin-exchange= rebuilds the exchange from those chunks, so a restored chat
   gets the new shape even when its mirrored file has the old one.
+
+* Three fixes from one order: goose models, queued-on-resume, read-only transcripts (added 2026-10-08)
+
+User order: "Goose model list erroneously shows providers.  And, prompt queue
+should be saved to transcript and reloaded on resume, but not sent outright!
+And, make transcripts read-only.  They are for internal use and reference, as a
+source of truth!"  Three independent units, each committed with its own test:
+=1d862c2= (goose), =39dbb67= (resume), =d5cce17= (read-only).
+
+** TODO Read =agent-org--model-option= (agent-org.el) — goose menu
+
+Goose advertises BOTH a ="provider"= select (what the user is really choosing
+between) and a ="model"= select, and can list the provider one first.  The old
+=seq-find= accepted either id, so a menu built from it listed providers.  The fix
+prefers ="model"= outright and falls back to ="provider"= only when there is no
+="model"= option at all (older goose, single-model agents).  Check the two-arm
+=or=: the winning value is the option's own =id=, and =--set-model-request= sends
+that id, so the fallback path still sets a model.  Test:
+=test-agent-org-model-option-prefers-model-over-provider= (both→model,
+provider-only→provider, neither→nil).
+
+** TODO Read the =when queued= arm of =agent-org--finish-replay= (agent-org.el) — resume
+
+A resumed session used to /drain/ the restored queue — fire every parked prompt
+onto the wire the instant the session opened.  The order says restore but do not
+send: the prompts land in the region and the transcript for review and go out
+only when the user applies them (or the next real turn end).  The change swaps
+the =--drain-queue= call for =--queue-refresh=, the non-sending render.  The
+reload happens BEFORE =--session-ready= mirrors the (queue-less) replayed buffer
+over the transcript — read the two docstrings together to see why the order
+matters.  Test: =test-agent-org-resume-reloads-the-queued-prompts-without-sending=
+asserts =(ao--sent-prompt-texts)= is nil AND both prompts come back pending, in
+order.
+
+** TODO Reconcile: that test pins the OLD =* NEXT= / =* WAIT= region (the HEAD shape)
+
+The working tree carries an uncommitted refactor that replaces the =:QUEUE:=
+drawer and the =NEXT= / =WAIT= keywords with an all =* TODO= region (position
+decides order, not the keyword).  My test asserts =^\* NEXT finish the tests$=
+and =^\* WAIT then run org-check$= because that is what HEAD renders.  When that
+refactor is committed, both regexes become =^\* TODO …$=.  Do not let the
+refactor's author and this test disagree about which shape is live — update the
+test in the same commit as the code.
+
+** TODO Read the read-only transcript hook (agent-org-buffer.el) — read-only
+
+A new =defcustom agent-org-transcripts-read-only= (default t), a
+=find-file-hook= entry =agent-org-buffer--find-file-read-only=, and its predicate
+=agent-org-buffer--transcript-file-p=.  A transcript is a MIRROR — the live
+buffer is the source of truth — so opening one by hand makes the buffer
+read-only and says so (=C-x C-q= to override).  What to check:
+- The predicate judges by the /containing directory/ basename, not the file
+  name: a transcript file is a sanitized session id with no marker of its own,
+  so the only reliable signal is that it sits under a =.agent-org/= directory.
+  Read =--transcript-name= and confirm the match holds for a relative, an
+  absolute, and a =~=-expanded =agent-org-transcript-directory=.
+- The hook is installed with one top-level =add-hook= at library load.  Confirm
+  that lifetime is right: it must cover a transcript opened before any chat
+  exists this session.
+- The transcriber is unaffected — =write-region= with VISIT nil bypasses
+  =buffer-read-only=, so a read-off transcript still refreshes at the boundary.
+  This is the invariant to re-check if anyone later "simplifies" the writer.
+Test: =test-agent-org-transcript-opens-read-only= unit-tests the predicate and
+the hook function DIRECTLY (via =setq-local buffer-file-name=) instead of
+through real =find-file=, because in batch the first =.org= open also loads
+org-mode, =epa-file-find-file-hook= and =vc-refresh-state=, whose read-only
+side-effects a test cannot tell apart from this hook's.  The end-to-end open is
+therefore a /manual/ check, not suite-pinned: open a =.agent-org/sid-*.org= and
+confirm it comes up read-only with the message.
+
+** TODO README / CONVENTIONS prose for these three — deferred, and why
+
+These shipped at HEAD in the NEXT/WAIT + =:QUEUE:= drawer model, but the whole
+doc surface (README.org, CONVENTIONS.md, TODOs.org) already carries an
+uncommitted foreign rewrite to the =* TODO= region model plus a new
+=slave-agent= provider.  Writing the user-facing notes now would edit lines that
+rewrite is about to change AND describe behaviour not yet in a commit, so the
+README §"Transcript file" / §resume and CONVENTIONS §14 / §18 notes for these
+three are left for one clean pass once that refactor lands.  This section is the
+interim record so the three units are reviewable today.
