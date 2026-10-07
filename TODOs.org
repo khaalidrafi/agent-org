@@ -965,3 +965,172 @@ cheap session avoids polluting the chat transcript), where the generated prompt
 is shown before it goes out (it must be visible — an unexplained prompt
 appearing in the exchange reads as the agent talking to itself), and the loop
 guard (N automatic follow-ups max per human prompt).
+
+* Brainstorm from worg — feature ideas (read =/home/khalid/docs/worg/=, 2026-10-07)
+User order: "Read ~/docs/worg/ and brainstorm feature ideas for this package and
+add them to TODOs.org."  What follows are ideas mined by actually reading the
+Org community docs (worg) and the generated =doc.org= reference, then mapping
+each capability onto machinery =agent-org= /already/ writes — its per-exchange
+=:RESPONSE:= property and closed =CLOCK:= line (§22), the session token/cost the
+header already accumulates (=:tokens= / =:cost-amount=, but /not/ yet filed
+per-exchange — the reporting ideas below are what would add that), the quote
+blocks that become =#+begin_src= on conversion (§15), the per-project
+=.agent-org/sid-<id>.org= transcript mirror (§14), the =* NEXT=/=* WAIT= queue
+(§17/§20), and the per-turn =<agent-org-context>= block (§18).  None is
+scheduled work yet; the point is the option set.
+
+** Design guardrails every idea below must respect
+- Never call =org-clock-in=/=-out=/=-load= or set an =org-clock-*= variable, and
+  only ever write a /closed/ =CLOCK:= range — reporting reads that data; nothing
+  here may occupy Org's one global running-clock slot (§22).
+- The transcript is a mirror of point-min..=--render-end= written at boundaries —
+  an archive/refile/export move must stay above the render end or be excluded,
+  and must not disturb the auto-managed metadata block or the turn markers.
+- Queue NEXT/WAIT are DERIVED from position and reconciled BY TEXT on apply — any
+  dependency/TODO-cycling idea drives =:pending-prompts=, never a TODO state-change
+  hook owning dispatch (§17, §20).
+- This is a 4 GB Celeron: prefer ON-DEMAND dynamic blocks, columns, agenda and
+  event-driven hooks over timers or whole-buffer repaints; none of these ideas
+  should add per-chunk cost.
+
+** Reporting over the clocks/cost we already write  (highest value, lowest cost)
+- =#+begin: clocktable :scope file :maxlevel 1= on a transcript, or a project-wide
+  one, sums every exchange's closed =CLOCK:= into response time per day and per
+  =:author:= model — a free read of data we already file.  Add =:properties
+  ("COST" ...)= for a seconds-AND-dollars-per-model table.
+  (doc.org §org-clock-report =C-c C-x C-r=, §org-clocktable-write-default;
+  orgcard.org "Clocking time")
+- A =#+COLUMNS:= line in the metadata block turns the buffer into an editable
+  spreadsheet of exchanges (ITEM/RESPONSE/COST/MODEL/PROVIDER), =org-columns-edit-value=
+  to stamp one value across many turns — quick triage of slow/expensive exchanges.
+  (doc.org §org-columns, §org-columns-edit-value)
+- A native propview-style roll-up (org-collector) filtering exchanges by arbitrary
+  elisp over their properties (e.g. =(string= MODEL "...")=), which clocktable
+  cannot do for non-time properties.  (org-collector.org :id/:conds/:cols)
+- Scope the current project's =.agent-org/= dir as =org-agenda-files= for a
+  clockreport across all a repo's sessions.  Ship it with =org-agenda-inhibit-startup t=
+  and capped file sets so it doesn't stall the Celeron.  (agenda-optimization.org;
+  doc.org §org-agenda-clockreport-parameter-plist)
+- An =:EFFORT:= budget on a prompt (org =C-c C-x e=) compared against the closed
+  =:RESPONSE:=, so an unexpectedly slow turn is flagged.  WARNING: wire the
+  overrun face off the CLOSED clock/property, never off running-clock state.
+  (doc.org §org-set-effort, §org-effort-durations)
+
+** Executing and applying the agent's code (babel)
+- =C-c C-c= on a =#+begin_src= inside a quote runs it with =org-babel-execute-src-block=
+  and writes =#+RESULTS:= between =--quote-end= and =--render-end= (never the User
+  box) — a "does this work?" loop on the spot.
+  (org-contrib/babel/intro.org "Executing Code Blocks"; org-eval-light.org)
+- Inject =:eval query= (or =:eval never=) at fence→src conversion so agent code is
+  UNTRUSTED by construction: the first run of each block prompts to confirm.  This
+  is the safety spine for every eval idea here.  (org-contrib/babel/header-args.org :eval row)
+- =agent-org-tangle-review=: an agent emits =:tangle path=, we run
+  =org-babel-tangle= on just that exchange into a TEMP path, show a diff, and ask
+  before touching the working tree — "here's the updated function" becomes an
+  apply-this-edit affordance, gated because it writes real files.
+  (org-contrib/babel/intro.org "Literate Programming"; header-args.org :tangle)
+- A per-chat named =:session= (seeded from the sid) so a variable defined in one
+  exchange's block is visible to the next — multi-turn prototyping keeps state.
+  (org-contrib/babel/intro.org "Session-based Evaluation")
+- Loop a block's =:results output= (test stdout, a file read) back into the NEXT
+  turn's =<agent-org-context>=, so the agent sees real command output without the
+  user pasting it — closes the run-tests-then-feed-back gap.
+  (intro.org "Using an Org Table as Input"; library-of-babel.org =read=/=extract-lines=)
+- Recognise =ditaa=/=dot= blocks and render inline (=org-display-inline-images=);
+  agents emit diagrams constantly.  (intro.org ditaa example — NOT org-exp-blocks,
+  which only fires at export)
+
+** Turning a chat into a shareable document (export/publish)
+- =C-c C-e= on the transcript to HTML/LaTeX/Markdown/PDF/ASCII/ODT — it is already
+  valid Org, so export is nearly free.  (exporters/ox-overview.org backend list)
+- A derived backend that exports ONE exchange subtree as a card: quote as the body,
+  model + =:RESPONSE:= + cost in the footer.  (ox-overview.org §4.4 Forking a
+  Back-End, §2.6 Cross Referencing for =<<targets>>= anchors on headings)
+- A "clean export" that strips the machinery before publishing — =* User= box, the
+  queue region, the metadata block, and (optionally) =:thinking:=/=:tool:=, which
+  otherwise leak by default.  (ox-overview.org §2.2 Drawer Handling, §4.2
+  =org-export-before-parsing-hook=)
+- Publish a project's =.agent-org/= dir as a small site (blorgit / ox-publish) with
+  an org-protocol "edit this source" return link, and an RSS/Atom of recent
+  exchanges (title=prompt, pubDate=clock end).
+  (blorgit.org §Features; org-contrib/org-feed.org; ox-overview.org ox-publish/ox-rss)
+
+** Getting work INTO the chat (capture/ingest)
+- An org-protocol handler so a browser bookmarklet sends url+title+selection into
+  the right project's session as a ready-to-send prompt (source line rides in the
+  context block).  (org-contrib/org-protocol.org §Setup Org protocol capture)
+- org-feed as INGEST, not just output: watch a CI/issue/error feed and auto-enqueue
+  new items as =* NEXT= prompts, using its =FEEDSTATUS= drawer for dedup — a
+  pattern that drops straight into agent-org's drawer vocabulary.
+  (org-contrib/org-feed.org :filter/:new-handler/FEEDSTATUS)
+- An Alfred/Raycast/emacsclient one-liner that resolves project→session and pushes
+  a snippet onto the queue without switching buffers.
+  (org-contrib/alfred-org-capture.org; org-protocol.org Terminal/Shell)
+- An org-mac-link-style per-app grabber to insert the current browser/PDF/mail
+  selection as a hyperlink at the prompt, so prompts cite specs instead of
+  paraphrasing.  (org-contrib/org-mac-link.org)
+
+** Links and navigation
+- Give each exchange a stable =org-id= and =org-store-link= so you can link from a
+  project heading to the exact exchange, and back.  (doc.org §org-store-link /
+  §org-id; orgcard.org "Links")
+- org-git-link so a tool call that touched =foo.c= records a =[[git:/path::rev]]=
+  link pinned to the tree — "the code as it was when the agent said X" stays
+  openable after edits (the transcript can't lie later).  (org-contrib/org-git-link.org)
+- wikinodes-style auto-links over model/session/project tokens scoped to one
+  =.agent-org/= directory, building a navigable graph across transcripts.
+  (org-contrib/org-wikinodes.org "Wiki links across files")
+- =org-use-speed-commands= single keys at an exchange: =r= re-ask (requeue the
+  prompt text), =c= copy prompt into the User box, =q= dequeue, =k= jump to its
+  FAILED tool item.  Navigation-only, cheap.  (org-hacks.org "Show next/prev
+  heading tidily")
+- A velocity-style finder over headings+body: one hit narrows to it, many you pick,
+  ZERO offers to send the query as a new prompt ("not found here? ask the agent").
+  (org-contrib/org-velocity.org "The interface")
+
+** Prompt and queue ergonomics
+- A prompt-template library (key + Org body with slots) completed into the queue,
+  optionally with =- [ ]= checklist steps the agent is told to tick off.
+  (org-faq.org capture-template backquote trick; org-checklist.org; org-hacks.org
+  "Integrate Org Capture with YASnippet")
+- Recurring checklist prompts that reset their boxes when the exchange is done, and
+  a statistics cookie =[3/5]= in a =* NEXT= heading auto-closing it via
+  =org-checkbox-statistics-hook= (event-driven, not a poll).
+  (org-checklist.org; org-syntax.org Statistics Cookies)
+- =C-c C-t= on a =* NEXT= to cycle NEXT→WAIT→(DONE = send now), with fast
+  tag-like selection — but it must drive =:pending-prompts= (guardrail above).
+  (orgcard.org TODO; org-faq.org fast todo selection)
+- org-choose marks (CHOSEN/MAYBE/REJECTED) when an agent presents sibling plan
+  options, kept scoped to a sub-region so it never rewrites the one-heading-per-
+  exchange prompt or the queue keywords.  (org-contrib/org-choose.org)
+- A dependency-gated queue (org-depend BLOCKER/TRIGGER as ADVISORY metadata we
+  evaluate ourselves) for multi-step agentic plans — explicitly NOT via
+  =org-trigger-hook= owning dispatch.  (org-depend.org §Blocking/§Triggering)
+
+** Reading the transcript
+- Named fold presets cycling with one key — =answers-only= (quotes folded, tools
+  hidden), =working= (tools open, thinking folded — the current defaults),
+  =everything= — buffer-local =org-startup-folded=-style, zero cost unless invoked.
+  (org-faq.org "hide blocks at startup"; orgcard.org Visibility Cycling)
+- Sparse-tree filters as an audit: show only FAILED tool calls, only exchanges over
+  a =:Cost:= threshold, only =:thinking:-heavy= turns.  (orgcard.org Filtering and
+  Sparse Trees; org-faq.org =org-fold-show-context-detail=)
+- drill-style spaced repetition over facts an agent taught: tag an exchange
+  =:drill:=, promote a quote line into a card with =:SOURCE:= back to the sid;
+  =leeches= pinpoints exactly the facts worth re-asking differently.
+  (org-contrib/org-drill.org "Writing the questions", "Leeches", "scope")
+- Archive answered exchanges beyond N into =.agent-org/archive-<date>.org= (a date
+  tree) to keep the live buffer cheap to font-lock and LOGBOOK drawers small.
+  (org-hacks.org "Archive in a date tree"; org-performance.org "too many
+  :LOGBOOK: entries")
+- Entity/symbol input (=\\alpha= → α) and =M-TAB= completion of provider ids, model
+  names and TODO keywords in the live box; full org-table editing inside an
+  answer's table (sort/sum a benchmark locally, no round-trip).
+  (org-symbols.org; orgcard.org Completion/Tables)
+
+** Stall detection (complements the planned hooks, not a timer)
+- A watchdoc-style checksum diff at existing event points (no answer chunk changed
+  since the last wire event → flag) as the STALL signal the response-boundary hooks
+  (#90) alone cannot fire, reported on the header line per the one-status rule.
+  (org-contrib/org-watchdoc.org Commentary/Usage)
+
