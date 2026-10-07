@@ -3898,6 +3898,33 @@ matters when lisp calls in."
   (with-temp-buffer
     (should-error (agent-org-set-session-model "m") :type 'user-error)))
 
+(ert-deftest test-agent-org-model-option-prefers-model-over-provider ()
+  "When an agent advertises both, the MODEL option is the one we drive.
+Goose names its provider choice \"provider\" and its model choice
+\"model\", and it has been observed to list the provider option first.
+`agent-org--model-option' that accepted either id by list order returned
+that provider option, so `agent-org-set-session-model' completed over
+providers instead of models.  The option with id \"model\" must win no
+matter its position; \"provider\" is only the fallback for an agent that
+offers no \"model\" option at all."
+  (let ((goose `(((id . "provider") (currentValue . "ollama")
+                 (options . [((value . "ollama") (name . "Ollama"))]))
+                ((id . "model") (currentValue . "gpt-4o")
+                 (options . [((value . "gpt-4o") (name . "GPT-4o"))
+                             ((value . "llama3") (name . "Llama 3"))])))))
+    (should (equal "model" (map-elt (agent-org--model-option goose) 'id)))
+    ;; the model menu is built from THIS option's values, so it lists
+    ;; models, never the provider names
+    (should (equal '("gpt-4o" "llama3") (agent-org--model-values goose)))
+    (should (equal "GPT-4o" (agent-org--model-name goose))))
+  ;; an agent that offers ONLY a provider option still resolves to it, so
+  ;; the older single-provider goose keeps working
+  (let ((provider-only `(((id . "provider") (currentValue . "ollama")
+                          (options . [((value . "ollama"))])))))
+    (should (equal "provider" (map-elt (agent-org--model-option provider-only) 'id)))
+    (should (equal '("ollama") (agent-org--model-values provider-only))))
+  (should-not (agent-org--model-option `(((id . "mode"))))))
+
 ;;;; Model NAME in the header line (the id is still what the wire wants)
 
 (ert-deftest test-agent-org-header-shows-model-name-not-id ()

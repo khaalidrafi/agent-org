@@ -432,10 +432,16 @@ legitimate answer, and a caller that sees nil must send neither
 
 (defun agent-org--model-option (config)
   "Return the settable model option from configOptions list CONFIG.
-Agents id it \"model\"; Goose exposes the same choice as \"provider\".
+An option with id \"model\" wins outright.  Goose is the case that makes
+the search more than a lookup: it advertises BOTH a \"provider\" select
+and a \"model\" select, and it can list the provider one first, so a
+`seq-find' over the list that accepted either id would hand back the
+provider option and the model menu would show providers.  Only when no
+\"model\" option exists at all (older Goose, or a single-model agent that
+names its only choice \"provider\") does this fall back to \"provider\".
 Nil when neither is offered."
-  (seq-find (lambda (o) (member (map-elt o 'id) '("model" "provider")))
-            config))
+  (or (seq-find (lambda (o) (equal (map-elt o 'id) "model")) config)
+      (seq-find (lambda (o) (equal (map-elt o 'id) "provider")) config)))
 
 (defun agent-org--model-from-config (config)
   "Return the model-ish current value from configOptions list CONFIG.
