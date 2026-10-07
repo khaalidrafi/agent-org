@@ -227,6 +227,20 @@ them, MiniMax included." t)
 Start an interactive MiniMax Code agent-org chat.
 MiniMax Code is `mcode', its own agent — not MiniMax models served
 through OpenCode." t)
+(autoload 'agent-org-copilot-start-agent "agent-org-providers" "\
+Start an interactive GitHub Copilot agent-org chat.
+The `copilot' CLI serves ACP over `--acp' (public preview); authenticate
+with the CLI's own login once outside Emacs, or export
+COPILOT_GITHUB_TOKEN for headless use." t)
+(autoload 'agent-org-cursor-start-agent "agent-org-providers" "\
+Start an interactive Cursor agent-org chat.
+Cursor's terminal agent is the `agent' binary and ACP is its subcommand
+(`agent acp'); log in once outside Emacs with `agent login', or export
+CURSOR_API_KEY / CURSOR_AUTH_TOKEN." t)
+(autoload 'agent-org-codebuddy-start-agent "agent-org-providers" "\
+Start an interactive CodeBuddy agent-org chat.
+CodeBuddy keeps its own login, so run `codebuddy' once outside Emacs to
+authenticate before starting (`codebuddy --acp')." t)
 (autoload 'agent-org-cline-start-agent "agent-org-providers" "\
 Start an interactive Cline agent-org chat.
 Cline's CLI serves ACP over `--acp'; it keeps its own credential store, so
