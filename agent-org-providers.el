@@ -52,6 +52,22 @@
 
 (defcustom agent-org-providers
   (list
+   ;; slave-agent (https://github.com/<fork>) is the master's own agent: a
+   ;; light-core Hermes derivative built for devs, hackers and power users, and
+   ;; the reason this package exists.  Its ACP server is a standalone console
+   ;; script (`slave-acp', = acp_adapter.entry:main) rather than a CLI
+   ;; subcommand, so an editor spawn does not load the whole `slave' CLI, and it
+   ;; never provisions dependencies on launch — the package manager owns that.
+   ;; It answers `session/list' and supports `session/load', so resume works,
+   ;; and it fronts many providers through its own config, so pin nothing:
+   ;; ~/.slave/config.yaml already names the model.  Credentials live in
+   ;; ~/.slave/.env, which the adapter loads itself, so nothing is exported by
+   ;; default; `SLAVE_HOME' is passed through when set, which is how an Emacs
+   ;; session talks to one profile's state dir instead of the launch default.
+   (list :id 'slave-agent
+         :name "slave-agent"
+         :command '("slave-acp")
+         :environment #'agent-org-slave-agent-environment)
    (list :id 'goose
          :name "Goose"
          :command '("goose" "acp")
@@ -117,8 +133,11 @@ Each entry is a plist; see `agent-org-providers.el' commentary."
 Must be the `:id' of an entry in `agent-org-providers'.  Qoder is the
 default because it answers `session/list' and supports
 `session/load', which is what resume needs; Goose advertises both but
-its `session/list' does not answer in practice."
-  :type '(choice (const :tag "Qoder" qoder)
+its `session/list' does not answer in practice.  slave-agent implements
+both methods too, and becomes the better default as soon as it is proven
+live on that path from this package -- until then the claim is untested."
+  :type '(choice (const :tag "slave-agent" slave-agent)
+                 (const :tag "Qoder" qoder)
                  (const :tag "Goose" goose)
                  (const :tag "OpenCode" opencode)
                  (const :tag "MiniMax" minimax)
@@ -128,6 +147,17 @@ its `session/list' does not answer in practice."
                  (const :tag "Cline" cline)
                  (symbol :tag "Other provider id"))
   :group 'agent-org)
+
+;;;###autoload
+(defun agent-org-slave-agent-start-agent ()
+  "Start an interactive slave-agent agent-org chat.
+slave-agent is the master's own agent, so this is the command the package
+was written around: it opens on the model named in ~/.slave/config.yaml
+(no pin) and resumes the directory's earlier slave-agent sessions through
+`session/list'.  Run `slave-acp --check' in a shell if this fails to
+start -- that says whether the ACP extra is installed."
+  (interactive)
+  (agent-org-start 'slave-agent))
 
 ;;;###autoload
 (defun agent-org-goose-start-agent ()
@@ -191,6 +221,17 @@ Cline's CLI serves ACP over `--acp'; it keeps its own credential store, so
 sign in once outside Emacs (see https://cline.bot/cli) before starting."
   (interactive)
   (agent-org-start 'cline))
+
+(defun agent-org-slave-agent-environment ()
+  "Return environment variables for the slave-agent ACP client.
+Nothing is exported by default: the adapter loads ~/.slave/.env itself, so
+the credential store is out of Emacs's hands.  `SLAVE_HOME' is the state
+dir the agent binds, and one slave-agent process may serve many profiles,
+so passing it through is how an Emacs chat opens against a specific
+profile's home rather than the launch default."
+  (let ((home (getenv "SLAVE_HOME")))
+    (when home
+      (list (format "SLAVE_HOME=%s" home)))))
 
 (defun agent-org-goose-environment ()
   "Return environment variables for the Goose ACP client.

@@ -89,6 +89,6 @@
   "Notifications `acp-send-notification' was called with, newest first.
 `agent-org-cancel-turn' is fire-and-forget on the wire, so this record
 is the only way a test can see the cancel was actually sent.")
-(cl-defun acp-send-notification (&key client notification sync)
+(cl-defun acp-send-notification (&key _client notification _sync)
   (push notification acp-mock-notifications))
 ;;; acp.el ends here

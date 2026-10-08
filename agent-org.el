@@ -249,8 +249,8 @@ Each entry is a plist:
                  `agent-org--drain-queue'.  These are the only
                  conversation text the agent has never seen, so they are
                  also the only thing a resume cannot replay: every change
-                 here is mirrored into the transcript's =:QUEUE:= drawer
-                 and read back out of it by
+                 here is mirrored into the transcript's queue block and
+                 read back out of it by
                  `agent-org--finish-replay'.  See
                  `agent-org-queue-when-busy'.
 
@@ -1068,6 +1068,23 @@ came back, including the ones no part of agent-org consumes."
       ;; one written, and point-max sits on the empty line after it
       (forward-line -1))))
 
+;;;###autoload
+(defun agent-org-copy-session-id ()
+  "Put this chat's ACP session id on the kill ring.
+The id is in the header line and in the buffer's `:ID:' property, but
+both mean retyping it — into `agent-org-resume-session', into a shell,
+into a bug report — and an id read off a mode line is an id retyped by
+hand, which is how ids get mistyped.  Refuses while the handshake has
+not finished, rather than copying nil or whatever was on the ring
+before."
+  (interactive)
+  (let ((id (let ((session (agent-org--session-for-buffer (current-buffer))))
+              (and session (plist-get session :session-id)))))
+    (unless id
+      (user-error "%s has no session id yet" (buffer-name (current-buffer))))
+    (kill-new id)
+    (message "Copied session id %s" id)))
+
 (cl-defun agent-org--list-sessions (session
                                     &key cursor seen pages
                                     (page-limit agent-org-session-list-page-limit)
@@ -1359,7 +1376,7 @@ spinner for a restore that is never coming."
 Read with the chat buffer current, because that is what resolves the
 transcript against the session's own project — the same resolution the
 writer used, so a reader cannot look in the wrong directory.  nil for the
-common case: no file, no drawer, an empty drawer."
+common case: no file, no queue block, an empty one."
   (with-current-buffer (plist-get session :buffer)
     (agent-org-buffer-transcript-queue
      (or (plist-get session :replay-session-id)
@@ -1376,7 +1393,7 @@ here, and applied once the session is ready.  Both halves of that order
 matter.  Read first because `agent-org--session-ready' mirrors the
 freshly replayed buffer over that file, and a replayed buffer carries no
 queue — the agent never saw a prompt that was never sent — so reading
-after the write would find an empty drawer.  Applied last because the
+after the write would find no queue block at all.  Applied last because the
 reload writes the restored queue into the transcript, and
 `agent-org--session-ready' has just mirrored the replayed buffer over that
 file -- refreshing before the mirror would have its work overwritten.
@@ -1589,7 +1606,7 @@ and id, so it comes back looking like the one that was replaced.
 The old buffer must be gone before the load: `agent-org--load-session'
 refuses to `session/load' an id a live buffer already holds and would
 switch to it instead.  A prompt that was queued but never sent comes
-back, because it lives in the transcript's =:QUEUE:= drawer rather than
+back, because it lives in the transcript's queue block rather than
 in the buffer, and a restart goes through resume: the fresh agent gets
 the prompts the old one never saw.  Worth knowing before restarting a
 session you want to leave alone."
@@ -2131,12 +2148,12 @@ repeated enqueue/remove passes cannot stack suffixes on one message."
 (defun agent-org--queue-refresh (session buffer)
   "Re-render BUFFER for SESSION's queue: entries, header count, transcript.
 Two projections of ONE list, and they cannot disagree because both are rendered
-from `(plist-get session :pending-prompts)': the `* NEXT'/`* WAIT' entries at
-the bottom of the chat are what the user edits, and the `:QUEUE:' drawer in
-the metadata block is the FILE's machine-readable copy.  The drawer is
-regenerated from the session and never from the entries, which is exactly
-right: an edit the user has not applied is invisible to the transcript, so a
-transcript never claims a prompt the agent was not actually sent.
+from `(plist-get session :pending-prompts)': the `* TODO' entries at
+the bottom of the chat are what the user edits, and the queue block in the
+FILE is the copy a resume reads.  The block is regenerated from the session and
+never from the entries, which is exactly right: an edit the user has not
+applied is invisible to the transcript, so a transcript never claims a prompt
+the agent was not actually sent.
 
 The mirror is written HERE rather than left for a turn boundary: a queued
 prompt that never reaches a boundary -- the user quits Emacs, the agent dies,
@@ -2207,10 +2224,10 @@ whatever draft it holds stay untouched."
       (setf (plist-get session :pending-prompts) (cdr prompts))
       (agent-org-buffer-begin-exchange buffer (car prompts))
       ;; Refresh AFTER the heading is in the buffer: the one write that
-      ;; drops the prompt from the `:QUEUE:' drawer is then also the write
-      ;; that puts it in the conversation, so no mirror on disk is ever
-      ;; without it.  Getting this backwards makes a crash between the two
-      ;; lose a prompt the user already paid for.
+      ;; drops the prompt from the transcript's queue block is then also
+      ;; the write that puts it in the conversation, so no mirror on disk
+      ;; is ever without it.  Getting this backwards makes a crash between
+      ;; the two lose a prompt the user already paid for.
       ;;
       ;; The prompt is ALSO noted before the refresh, so that a region the
       ;; user has already edited keeps the line while the session has
@@ -2419,20 +2436,25 @@ file the user turned off."
 
 ;;;; The queue, edited where it is read
 ;;
-;; The waiting prompts live at the BOTTOM of the chat buffer as `* NEXT' and
-;; `* WAIT' headings, and the user edits them there.  That replaces a second
+;; The waiting prompts live at the BOTTOM of the chat buffer as `* TODO'
+;; headings, and the user edits them there.  That replaces a second
 ;; buffer: the queue editor existed because the queue used to be a `:QUEUE:'
 ;; drawer inside the metadata block, which is deleted and reinserted on every
-;; usage update and would have eaten a cursor and a half-typed word.  The
+;; usage update and would have eaten a cursor and a half-typed word.  That
+;; drawer is gone (2026-10-07): the headings are the only rendering, and the
+;; transcript's copy is the same block mirrored
+;; (`agent-org-buffer-transcribe'), not a second format to keep in step.  The
 ;; entries are real headline text the chat owns and nobody regenerates while
 ;; the user is in it (`agent-org-buffer-refresh-queue'), so the working surface
 ;; and the reading surface are the same region and there is nothing to keep in
 ;; step.
 ;;
-;; Three states, in the user's words: the head of the queue is NEXT because it
-;; goes out when the turn ends, and everything behind it is WAIT.  The word is
-;; DERIVED from position on every render, so moving an entry moves its state
-;; with it.
+;; One state before the send and four after it, in the user's words: a queued
+;; prompt is TODO, and once it is on its way the same heading becomes
+;; RESPONDING, IDLE (it stopped and waits on him), RESPONDED or ERROR.  Which
+;; TODO leaves next is the ORDER of the headings -- not a word on them, which is
+;; what retired NEXT/WAIT: the head of the list had to be re-worded on every
+;; reorder, and a keyword derived from position can drift from it.
 
 (defvar-local agent-org-buffer--queue-sent nil
   "Prompts the agent SENT from this buffer's queue while it was being edited.
@@ -2462,7 +2484,7 @@ Position would be easier and would be wrong -- see
 ;;;###autoload
 (defun agent-org-queue-edit ()
   "Go to this session's queued prompts, at the bottom of the chat.
-The entries are `* NEXT'/`* WAIT' headings above the live `* User' box: type
+The entries are `* TODO' headings above the live `* User' box: type
 into them, add more with `C-c C-a', kill one with `C-c C-d', reorder with
 `M-UP'/`M-DOWN', and put the result on the wire with `M-x agent-org-queue-apply'
 (bound to `C-c C-a' nowhere on purpose: in a chat, `C-c C-a' is the user's own
@@ -2474,7 +2496,7 @@ and the reason the region is never repainted over an edit
 change under his hands, and a transcript must never claim a prompt the agent
 was not sent.
 
-An EMPTY queue is not an error and not a no-op either: one blank `* WAIT' entry
+An EMPTY queue is not an error and not a no-op either: one blank `* TODO' entry
 is created and point lands in it, because \"add a prompt to the queue\" and
 \"write down the next thing to ask\" are the same gesture here, and a blank
 entry is dropped on apply so composing one cannot send a blank."
@@ -2492,7 +2514,7 @@ entry is dropped on apply so composing one cannot send a blank."
         (when (and (looking-at-p "\\* ")
                    (string= (buffer-substring-no-properties
                              (point) (line-end-position))
-                            (format "* %s " (cadr agent-org-buffer--queue-keywords))))
+                            (format "* %s " (car agent-org-buffer--queue-keywords))))
           ;; a blank slot is a place to type, not a place to sit on the heading
           (end-of-line))
         (message "[agent-org] %d prompt(s) waiting; edit them here, then M-x agent-org-queue-apply"
@@ -3037,6 +3059,197 @@ nothing at all."
                            agent-org-resource-refresh-interval
                            #'agent-org--resource-tick)))
     (setq agent-org--resource-timer nil)))
+
+;;;; The clock report
+;;
+;; The read side of the data every turn already files.  `agent-org-buffer'
+;; writes an exact `:RESPONSE:' in seconds and a CLOSED `CLOCK:' range into
+;; the exchange's own drawers, and until now nothing added them up.  This is
+;; the first item of the worg brainstorm in `TODOs.org'
+;; ("Reporting over the clocks/cost we already write"), and it inherits that
+;; block's guardrail in full: the report READS clock data and never enters
+;; Org's clock machinery.  No `org-clock-in'/`-out'/`-load', no `org-clock-*'
+;; variable set, and only ever closed ranges parsed -- because Org keeps ONE
+;; running clock for the whole Emacs, and a package that occupied that slot
+;; would block the user's own clocking.
+;;
+;; There is no timer here either, unlike the resource monitor.  A monitor
+;; watches a quantity that moves while nobody is looking; a report reads
+;; files that only change at a turn boundary, so `C-c C-c' on its block
+;; (`org-update-dblock') is the refresh, and an on-demand command is what the
+;; guardrail asks for on a 4 GB machine.
+
+(defun agent-org--report-transcripts (directory)
+  "Every `.org' transcript in DIRECTORY, newest first; nil if there is none.
+DIRECTORY is the result of resolving `agent-org-transcript-directory' the way
+`agent-org-buffer--transcript-file' resolves it -- a relative name against
+the calling buffer's `default-directory', which in a chat is the session's
+own cwd -- so one project's report reads one project's chats.  A missing
+directory is nil, not an error: it is the ordinary answer for a project
+where nothing has been said yet."
+  (when (file-directory-p directory)
+    (let ((entries (mapcar (lambda (file)
+                             (cons file (nth 5 (file-attributes file))))
+                           (directory-files directory t "\\.org\\'"))))
+      ;; `file-attributes' once per file, not once per comparison: the mtime
+      ;; is taken with the name and the sort only reads what it already has
+      (mapcar #'car (sort entries
+                          (lambda (a b) (time-less-p (cdr b) (cdr a))))))))
+
+(defun agent-org--report-summary (file)
+  "What FILE's transcript says about itself, as a plist.
+Keys: `:file' `:name' `:title' `:provider' `:model' `:turns' `:seconds'
+`:tokens'.
+
+Read by regex over the file's text rather than by an Org parse, and that is
+the whole cost story: the numbers wanted are property VALUES, and setting up
+Org per file -- startup hooks, folding, an `org-mode' buffer per transcript --
+is a cost this report exists to avoid, on a machine where a project can hold
+thirty chats.  `:RESPONSE:' appears once per exchange and nowhere else, so
+counting its matches is counting exchanges and summing them is the total the
+header line only knows for the live session.
+
+The three header values come from the file's FIRST drawer, which is the
+metadata block `agent-org-buffer' owns; a per-exchange drawer never carries
+them, so the first match is the right match by construction."
+  (with-temp-buffer
+    (insert-file-contents file)
+    (let (provider model (tokens 0) (turns 0) (seconds 0))
+      (when (re-search-forward "^:Provider:[ \t]*\\(.*\\)" nil t)
+        (setq provider (match-string 1)))
+      (goto-char (point-min))
+      (when (re-search-forward "^:Model:[ \t]*\\(.*\\)" nil t)
+        (setq model (match-string 1)))
+      (goto-char (point-min))
+      (when (re-search-forward "^:Tokens:[ \t]*\\([0-9]+\\)" nil t)
+        (setq tokens (string-to-number (match-string 1))))
+      (goto-char (point-min))
+      (while (re-search-forward "^:RESPONSE:[ \t]*\\([0-9]+\\)" nil t)
+        (cl-incf turns)
+        (cl-incf seconds (string-to-number (match-string 1))))
+      (goto-char (point-min))
+      (list :file file
+            :name (file-name-nondirectory file)
+            :title (or (and (re-search-forward "^#+TITLE:[ \t]*\\(.*\\)" nil t)
+                            (match-string 1))
+                       (file-name-nondirectory file))
+            :provider (or provider "—")
+            :model (or model "—")
+            :turns turns
+            :seconds seconds
+            :tokens tokens))))
+
+(defun agent-org--report-block (files)
+  "The clocktable dynamic block over FILES, as text, already filled in.
+`:maxlevel 1' because one exchange is one level-1 heading in a transcript,
+so the table's leaf rows ARE the turns.  `:properties (\"RESPONSE\")' adds a
+column of the exact seconds per exchange and totals them, which is the thing
+a minute-granular `CLOCK:' range cannot show -- a 40-second answer is
+`0:00' in a range and `40' here.
+
+The scope is the explicit file list, written with `%S' so a path with a
+space survives the line's own `read'.  A directory is not an accepted scope,
+and naming the files is also what keeps the report out of
+`org-agenda-files': the agenda is a person's global list and this is one
+project's record."
+  (concat "#+begin: clocktable :maxlevel 1 :scope ("
+          (mapconcat (lambda (f) (format "%S" f)) files " ")
+          ") :properties (\"RESPONSE\") :emphasize nil\n"
+          "#+end:\n"))
+
+;;;###autoload
+(defun agent-org-clock-report (&optional only-this)
+  "Show the clock report: how long this project's agent chats have taken.
+ONLY-THIS -- a prefix argument -- narrows the report to the current chat's
+own transcript.  From a buffer with no session there is nothing to narrow
+to, and the project reading is the honest answer, which is exactly the call
+`agent-org-resource-monitor' makes for the same reason.
+
+Two tables of the same measurement, because they answer different questions.
+The first is agent-org's own: one row per chat, its provider and model, its
+turn count and its response time in EXACT seconds summed from the
+`:RESPONSE:' properties, plus the tokens the agent reported.  The second is
+Org's clocktable over the closed `CLOCK:' ranges every exchange files, which
+is the minute-granular view Org's own clock tools read, per file and per
+turn.  Neither writes to a transcript.
+
+`C-c C-c' with point on the clocktable re-runs it (`org-update-dblock'), and
+typing this command again rebuilds both tables from the files on disk, so a
+report is never stale in the way a cached summary is: it is a fresh read of
+data that only a turn boundary changes."
+  (interactive "P")
+  (let* ((directory (file-name-as-directory
+                     (expand-file-name agent-org-transcript-directory)))
+         (session (and only-this (agent-org--session-for-buffer (current-buffer))))
+         (id (plist-get session :session-id))
+         (summaries (mapcar #'agent-org--report-summary
+                            (if id
+                                (let ((transcript (agent-org-buffer--transcript-file id)))
+                                  (and (file-readable-p transcript) (list transcript)))
+                              (agent-org--report-transcripts directory))))
+         (files (mapcar (lambda (s) (plist-get s :file)) summaries)))
+    (unless files
+      (user-error "No %s transcripts to report in %s"
+                  (if id "session" "project") directory))
+    (let ((buffer (get-buffer-create "*agent-org clock report*")))
+      (with-current-buffer buffer
+        (unless (derived-mode-p 'org-mode) (org-mode))
+        (let ((inhibit-read-only t)) (erase-buffer))
+        (insert (format "#+TITLE: agent-org clock report -- %s\n\n"
+                        (if id (format "chat %s" id)
+                          (directory-file-name directory))))
+        (insert (agent-org--report-table summaries))
+        (insert "* Response time (Org clocktable)\n\n")
+        (insert (agent-org--report-block files))
+        ;; fills the block in place, the same call `C-c C-c' leads to; a
+        ;; report nobody has to refresh by hand is the on-demand half of the
+        ;; guardrail
+        (org-update-all-dblocks))
+      (display-buffer buffer)
+      (message "[agent-org] Clock report: %d transcript(s) in %s"
+               (length files) directory)
+      buffer)))
+
+(defun agent-org--report-table (summaries)
+  "The per-chat table over SUMMARIES, as text, sorted by model.
+Chats are grouped by the model that answered them because the question a
+report of response time invites is \"which of these is worth keeping\", and
+that is a question about a model, not about a session id.  The `*All*' row
+totals turns, exact seconds and tokens -- an average per chat is derivable
+and a total is not, and a total is the number that justifies the file.
+
+`agent-org--resource-table' is the monitor's writer and this is its second
+caller: the columns differ, the shape does not."
+  (let* ((sorted (sort (copy-sequence summaries)
+                       (lambda (a b)
+                         (string< (or (plist-get a :model) "")
+                                  (or (plist-get b :model) "")))))
+         (rows (mapcar (lambda (s)
+                         (list (plist-get s :title)
+                               (plist-get s :provider)
+                               (plist-get s :model)
+                               (format "%d" (plist-get s :turns))
+                               (agent-org--report-duration (plist-get s :seconds))
+                               (format "%d" (plist-get s :tokens))))
+                       sorted))
+         (total-seconds (seq-reduce #'+ (mapcar (lambda (s) (plist-get s :seconds)) summaries) 0))
+         (total-turns (seq-reduce #'+ (mapcar (lambda (s) (plist-get s :turns)) summaries) 0))
+         (total-tokens (seq-reduce #'+ (mapcar (lambda (s) (plist-get s :tokens)) summaries) 0)))
+    (concat (agent-org--resource-table
+             '("Chat" "Provider" "Model" "Turns" "Response" "Tokens")
+             (append rows
+                     (list (list "*All*" "" ""
+                                 (format "%d" total-turns)
+                                 (agent-org--report-duration total-seconds)
+                                 (format "%d" total-tokens)))))
+            "\n")))
+
+(defun agent-org--report-duration (seconds)
+  "SECONDS as H:MM:SS, the shape a person reads as a duration.
+Not Org's `0:13' clock format, which is minute-granular by design and would
+render two 40-second answers as `0:01' -- the seconds are the whole point of
+this column, and `format-seconds' gives them without a hand-rolled division."
+  (format-seconds "%h:%.2m:%.2s" (max 0 seconds)))
 
 (provide 'agent-org)
 ;;; agent-org.el ends here

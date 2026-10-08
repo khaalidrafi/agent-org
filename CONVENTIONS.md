@@ -40,14 +40,10 @@ Top to bottom, a session buffer is exactly:
 :END:
 
 #+TITLE: Refactor the auth module
-#+TODO: TODO ONGOING | COMPLETE FAILED
+#+TODO: TODO RESPONDING IDLE | RESPONDED ERROR
 
 :COMMANDS:
 /goose — talk to the goose agent
-:END:
-
-:QUEUE:
-- ask about the tests\nfirst
 :END:
 
 * Refactor the auth module
@@ -70,6 +66,11 @@ Top to bottom, a session buffer is exactly:
   - COMPLETE write_file
     + def login(user):
 :end:
+
+;; Prompts waiting to be sent, oldest first.
+;; Edit them here, then M-x agent-org-queue-apply.
+* TODO ask about the tests
+  first
 
 * User
 
@@ -160,29 +161,21 @@ fixed by two manual rules:
   conversation only.  The block spans `point-min` up to the first `* ` line,
   which is what `refresh-metadata` deletes-and-reinserts to stay idempotent.
 
-The block is folded by default — with one exception, decided per kind.  Per
+The block is folded by default, with no exception.  Per
 `info "(org) Initial visibility` (§2.2.2), first-visit folding is normally
 driven by `#+STARTUP:` — but these buffers are created programmatically and
 never "visited", so we fold the drawers directly (see §5) rather than relying
-on a startup line, and `agent-org-buffer--metadata-open-drawers` is the list
-of kinds that arrive UNFOLDED.  Today that is QUEUE: a queue that appears in
-the middle of a turn is news, and folded it is invisible exactly when it
-matters.  A drawer the user folded by hand stays folded — the list is a
-default for creation, never an instruction to every repaint.
+on a startup line.  `agent-org-buffer--metadata-drawers` names the four kinds
+(`PROPERTIES`, `COMMANDS`, `MODES`, `CONFIG`) so a rebuild can remember which
+ones the user had opened; a drawer the user folded by hand stays folded.
 
-**`:QUEUE:` is the one volatile drawer, and it comes last.**  COMMANDS, MODES
-and CONFIG are reference the agent advertised once; QUEUE holds the prompts
-the user sent into a busy session — text that is neither reference nor
-conversation yet, because a queued prompt gets its exchange heading only when
-it drains.  It belongs to the block because the block is inside the range the
-transcript mirrors (§14), and a prompt the agent has never seen is the one
-thing its `session/load` replay cannot give back.  One escaped line per
-prompt, oldest first (`agent-org-buffer--queue-encode`: newline and backslash
-flattened, `- ` prefixed so a prompt that *is* `:END:` cannot close its own
-drawer); an empty queue renders **no** drawer, because that absence is what
-stops a resume re-sending a prompt that already went out.  It is also the only
-drawer with no line cap (§17), and editing it is `agent-org-queue-edit`'s job
-in a buffer of its own — never typing inside this drawer (§17).
+**The queue is not a drawer of this block.**  COMMANDS, MODES and CONFIG are
+reference the agent advertised once; the waiting prompts are the user's own
+text, half-edited at any moment, and they live in a region of `* TODO`
+headings at the bottom of the chat (§20) where `C-c C-q` can put point on one.
+What the transcript needs from them it gets by re-rendering the session's list
+at the end of the mirrored range (§14) — the same headings, the same parser,
+and no second format to keep in step.
 
 Rebuilds are cheap-checked: `refresh-metadata` renders the block first and
 compares it against `agent-org-buffer--metadata-cache`, doing nothing when it
@@ -1077,17 +1070,17 @@ switch to.  One action, one name in `M-x`, same rule as §10.
   regenerated from the SESSION (§20), never from the region, and an unapplied
   edit is invisible to both until it is applied.
 
-* **Entry grammar.**  Headline `* NEXT <first line>` / `* WAIT <first line>`,
-  with the rest of the prompt on the lines below, EVERY line indented by one
-  space (`agent-org-buffer--queue-entry` with `--queue-text`'s dedent as its
-  exact inverse).  The indent is not decoration: a prompt is the user's own
+* **Entry grammar.**  Headline `* TODO <first line>`, with the rest of the
+  prompt on the lines below, EVERY line indented by one space
+  (`agent-org-buffer--queue-entry` with `--queue-text`'s dedent as its exact
+  inverse).  The indent is not decoration: a prompt is the user's own
   words, those words can be an Org document, and a `*` at column 0 is a
   headline — which would cut one prompt into two entries and send half of each.
   Blank lines are kept (they are the user's), which is why the split keeps the
   empty strings.
 
 * **A blank entry is a slot, and is dropped.**  `C-c C-a` appends one
-  `* WAIT` slot and lands point in it: "add a prompt" and "write down the next
+  `* TODO` slot and lands point in it: "add a prompt" and "write down the next
   thing to ask" are the same gesture here.  `agent-org-buffer-queue-parse`
   drops an entry whose text is blank, because `agent-org-send` refuses an empty
   draft and the queue must not smuggle one through by leaving a heading bare.
@@ -1106,9 +1099,10 @@ switch to.  One action, one name in `M-x`, same rule as §10.
 
 * **Resume restores the queue and sends the first prompt.**  A queued prompt
   was never sent, so it is in no `session/load` replay, in no `* User` heading
-  and in no agent memory: the transcript's `:QUEUE:` drawer is its only
-  surviving copy.  `agent-org--finish-replay` reads it BEFORE the replay paints
-  (the paint mirrors the buffer, and a replayed buffer carries no queue) and
+  and in no agent memory: the queue block at the bottom of the transcript is
+  its only surviving copy.  `agent-org--finish-replay` reads it BEFORE the
+  replay paints (the paint mirrors the buffer, and a replayed buffer carries no
+  queue) and
   applies it AFTER `agent-org--session-ready` (a drained prompt needs an
   interactive session: id set, box open, `:loading` gone).  An empty queue
   restores nothing, which is what stops a drained prompt being sent twice.
@@ -1229,13 +1223,18 @@ transcript is a record, and how it was being recorded is a fact about it.  The
 renderer takes the scope as an ARGUMENT because it is a pure function of the
 status plist, the same rule `agent-org-buffer--chat-label` follows.
 
-## 20. The queue is a region of the chat, and the words on it are derived
+## 20. The queue is a region of the chat, and one word per entry
 
-The user's order: "queued prompts should be shown in the Org buffer at the
-bottom with TODO headings with WAIT keywords with the next in-line prompt as
-NEXT. User can edit them, and add his own at the bottom."
+The user's order, in two acts.  First (2026-10-07, the region): "queued prompts
+should be shown in the Org buffer at the bottom with TODO headings with WAIT
+keywords with the next in-line prompt as NEXT. User can edit them, and add his
+own at the bottom."  Then the same day (the vocabulary): "Prompt TODO keywords:
+TODO RESPONDING IDLE | RESPONDED ERROR, besides other status indicators moved
+from header line."  The second supersedes the first's keywords and keeps its
+place: the prompts still live at the bottom of the chat, and now a prompt's
+keyword says where that prompt is in its own life, not where it sits in a list.
 
-**The entries are `* NEXT`/`* WAIT` headings between the last exchange and the
+**The entries are `* TODO` headings between the last exchange and the
 live `* User` box.**  They are not in a drawer at the top, because a drawer is
 part of the metadata block and that block is deleted and reinserted on every
 usage update — which is exactly why the queue needed a second buffer while it
@@ -1243,14 +1242,27 @@ lived there.  They are not *after* the box either: `--render-end` answers with
 `--queue-start` when a region exists, so a turn rendered while a queue waits
 lands ABOVE the queue and the box stays the last thing in the buffer.
 
-**`NEXT` and `WAIT` are per-file keywords in front of the done bar**
-(`agent-org-buffer--todo-setup`), so `#+TODO: NEXT WAIT TODO ONGOING |
-COMPLETE FAILED`: unlike a tool call, an entry IS a headline, so on it the
-keyword is a real Org state and `NEXT`/`WAIT` join the vocabulary the file
-declares.  **The word is DERIVED from position on every render**, never read
-back from the buffer: a keyword that drifted from the queue's order would be a
-lie about which prompt leaves next, and a `M-UP` must be able to move a
-heading without anyone restating what it means.
+**`TODO RESPONDING IDLE | RESPONDED ERROR` is the per-file keyword set**
+(`agent-org-buffer--todo-setup`), and it is the set of a PROMPT, which is the
+only headline this package writes.  `#+TODO:` on a queue heading is therefore a
+real Org state, cycleable with `C-c C-t`, and the five words describe one
+prompt: not sent yet, being answered, stopped and waiting on the user (a
+permission request, a plan to approve), answered, failed.  **Which TODO goes
+next is the ORDER of the headings** — the retired `NEXT`/`WAIT` pair put that
+order into the word, so the head of the list had to be re-worded on every edit,
+every reorder and every drain, and a keyword derived from position can drift
+from the position it claims.  **The tool words are not in the set at all**: a
+call is a line of the `:tool:` drawer, Org forbids headlines inside drawers, so
+`ONGOING`/`COMPLETE`/`FAILED` are text a reader sees and never a state `C-c C-t`
+could offer on a prompt's headline — where "complete" is the wrong verb for an
+answer.
+
+**Retired words are READ, never WRITTEN**
+(`agent-org-buffer--queue-legacy-keywords`).  A transcript from before this
+vocabulary holds `* NEXT`/`* WAIT`, and the parser takes both spellings: losing
+a prompt because the word on it changed is a deletion, not a migration.  The
+writer uses the current word only, so an old file converges on it the first
+time its queue is redrawn — no migration pass, no version stamp to check.
 
 **The region's preamble is comment lines and they are ABOVE the first entry.**
 That placement is load-bearing, not cosmetic: an entry's text is everything
@@ -1272,10 +1284,10 @@ the queue editor had, for the same reason, and it is what makes the region safe
 to type in: a queue a person is rearranging must not change under his hands,
 and a transcript must never claim a prompt the agent was not sent.
 
-**`:QUEUE:` drawer and the entries are two projections of ONE list**, both
-rendered from `:pending-prompts`, and the drawer is regenerated from the
-SESSION and never from the entries — which is right, because an unapplied edit
-must not reach the file.
+**The region and the transcript's queue block are two projections of ONE
+list**, both rendered from `:pending-prompts`, and the block is regenerated
+from the SESSION and never copied out of the region — which is right, because
+an unapplied edit must not reach the file.
 
 **The box is inserted at `point-max` and the region's END marker is re-armed
 afterwards.**  Both markers are rear-advancing, so inserting the box *at* the

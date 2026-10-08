@@ -78,10 +78,11 @@
 ;;     regions are re-fontified, never the whole buffer (a bulk paint is
 ;;     done once per replay, by `agent-org--render-replay').
 ;;   - The session's Org file (see `agent-org-transcribe') is a MIRROR of
-;;     this buffer's frozen body, rewritten at turn boundaries — not an
-;;     append log.  One renderer, so the file can never disagree with the
-;;     chat: a tool line that changed TODO→COMPLETE in place is COMPLETE in
-;;     the file, and twenty chunks of an answer cost no writes at all.
+;;     this buffer's frozen body, plus the queue block below it, rewritten
+;;     at turn boundaries — not an append log.  One renderer, so the file
+;;     can never disagree with the chat: a tool line that changed
+;;     TODO→COMPLETE in place is COMPLETE in the file, and twenty chunks of
+;;     an answer cost no writes at all.
 ;;   - A reply arrives in Markdown and is stored as Org
 ;;     (`agent-org-convert-markdown'): `# Title' would be an Org comment
 ;;     and `* item' a level-1 headline, so structure is rewritten on the
@@ -254,24 +255,23 @@ Either way, status text is never written into the chat buffer body."
   :type 'boolean
   :group 'agent-org-buffer)
 
-(defcustom agent-org-quote-model-author t
-  "When non-nil, a reply's quote block is authored by the model that answered it.
-So the line above `#+begin_quote' reads \"#+ATTR_TEXINFO: :author MiniMax M3\":
-which model produced an answer is a fact about the transcript, and the header
-line that says so is gone the moment the buffer is buried or the file is
-re-read a week later.  Nil keeps the stable word \"Agent\" for anyone who does
-not want a provider's catalog naming written into their notes.
+(defcustom agent-org-response-prefix t
+  "When non-nil, an answer is introduced by a line naming who answered it.
+The line reads \"MiniMax M3: \" --- the model in force, the agent's own label
+else its id --- and the answer streams under it, the way agent-shell prefixes
+each response with the model that produced it.  Which model answered is a fact
+about the transcript, and the header line that says so is gone the moment the
+buffer is buried or the file is re-read a week later.
 
-`:author' is the Org manual's own mechanism for the speaker of a quotation
-\(info \"(org) Quotations in Texinfo export\"), and it lands on the
-`quote-block' element as :attr_texinfo, which is where a reader — Org's own
-parser or an export backend — looks.  Nothing else is claimed for it: HTML
-and LaTeX export ignore it in Org 9.7, and the transcript is read in Emacs,
-where the attribute is visible on the line above the block.
+It replaced `#+ATTR_TEXINFO: :author NAME' above a `#+begin_quote', which was
+the Org manual's own way to attribute a quotation, when the user ended the
+quotation (\"No more quote blocks.  Just use model name as prefix\"): the same
+fact, in a shape that costs nothing.  With no model reported at all (Goose
+advertises none of this shape), or with this option nil, the word is \"Agent\".
 
-The heading is the user's question now, so this line is the only place the
+The heading is the user's question, so this line is the only place the
 answer's provenance lives.  It is written once, when the answer starts, so a
-later `C-c C-m' renames the NEXT quote and leaves the older ones alone."
+later `C-c C-m' renames the NEXT answer and leaves the older ones alone."
   :type 'boolean
   :group 'agent-org-buffer)
 
@@ -307,10 +307,12 @@ Keys: :provider :state :message :note :session-id :model :model-name :mode
 notifications.
 
 `:queued' is the one list key that is not wire data: the prompts waiting
-to be sent, oldest first, as the session holds them.  The metadata
-block's `:QUEUE:' drawer is rendered from it, which is how a prompt the
-user typed but never sent reaches the transcript, and how resume finds it
-again (see `agent-org-buffer-transcript-queue').
+to be sent, oldest first, as the session holds them.  They are the queue
+region's headlines at the bottom of the chat, and
+`agent-org-buffer-transcribe' mirrors that block into the transcript even
+though it is below the conversation, which is how a prompt the user typed
+but never sent survives, and how resume finds it again (see
+`agent-org-buffer-transcript-queue').
 
 `:model' is the wire id (`minimax/MiniMax-M3') and `:model-name' the
 label the agent advertises for it (\"MiniMax M3\"); the bar renders the
@@ -454,27 +456,23 @@ session and says nothing about the session's state."
 ;; seeds the title block with it, and a use before `defconst' byte-compiles
 ;; as a free-variable reference.
 (defconst agent-org-buffer--todo-setup
-  "#+TODO: NEXT WAIT TODO ONGOING | COMPLETE FAILED"
+  "#+TODO: TODO RESPONDING IDLE | RESPONDED ERROR"
   "Per-file keyword set (`org-set-regexps-and-options' reads it from
- the metadata block) naming the tool-call states and the queued-prompt states.
+ the metadata block) naming the states of a PROMPT -- the only headlines this
+ package writes, and so the only words that have to be real Org states.
 
-The call states are the user's own words: pending→TODO,
-in_progress→ONGOING, completed→COMPLETE, failed→FAILED.  COMPLETE and
-FAILED are both AFTER the bar, so Org sees them as this file's two done
-states -- a call that finished and a call that finished badly are both
-finished, and neither is the `CANCELLED' a person cycles to on purpose.  A
-call is a line of the `:tool:' drawer rather than a heading -- Org forbids
-headlines inside drawers -- so on that line a keyword is TEXT the reader
-sees, not an Org state `C-c C-t' can cycle (that acts on headlines).
-Declaring the set still pays: it documents the only vocabulary a transcript
-or a chat uses, and it keeps `DONE' out of a file that means COMPLETE.
+The user's own vocabulary, in his words: a queued prompt is TODO, the agent is
+answering it RESPONDING, a turn that stopped and waits on HIM (a permission
+request, a plan to approve) is IDLE, and past the bar a prompt is either
+RESPONDED or ERROR.  Three before the bar because all three are unfinished
+work, two after because a prompt ends in exactly those two ways.
 
-NEXT and WAIT are the QUEUE's states, in front of the bar with the call
-states because neither is done: a prompt that will go out when this turn
-ends is NEXT, and every prompt behind it is WAITING.  The user's words
-(\"TODO headings with WAIT keywords with the next in-line prompt as
-NEXT\"), and a queue entry IS a headline here rather than a drawer line, so
-unlike a tool call the keyword is a real Org state on a real headline.")
+The tool-call words are NOT declared here, on purpose.  A call is a line of
+the `:tool:' drawer rather than a heading -- Org forbids headlines inside
+drawers -- so its ONGOING, COMPLETE and FAILED are TEXT a reader sees, never a
+state `C-c C-t' can cycle (that acts on headlines).  Declaring them would put
+a call's words on the same completion list as a prompt's and let somebody mark
+a prompt COMPLETE, which is the wrong verb: a prompt is answered or it fails.")
 
 ;;;; Buffer creation
 
@@ -552,13 +550,17 @@ type-ahead box all live after the heading, so the heading is never the
 last thing in the turn.")
 
 (defvar-local agent-org-buffer--quote-end nil
-  "Marker at the start of the streaming answer's `#+end_quote' line.
-The answer is written ABOVE this marker, so the block is closed at every
-moment of a turn: an open `#+begin_quote' would swallow the drawers, the
-type-ahead box and the rest of the transcript file.  The marker is
-rear-advancing (`set-marker-insertion-type' t) precisely so that text
-inserted at it pushes it down with the block's end instead of leaving it
-behind, inside the body.  nil between turns.")
+  "Marker at the END of this turn's answer, or nil when no answer is open.
+Rear-advancing, so text inserted AT it -- which is where every chunk and every
+drawer of this turn lands -- pushes it down instead of staying behind inside the
+body.  It is what keeps a `:tool:\` drawer or a `:thinking:\` line below the
+answer when the two arrive in the other order, and with the quote block gone it
+is the ONLY thing holding that order (before, `#+end_quote' began its own line
+and did the same job by structure; measured: that line also meant an agent could
+end the block with a line of its own, which cost a guard on every reply line).
+
+Named for what it replaced rather than for what it does now: `--text-end' is
+the function that reads it, and the suffix is the answer's end either way.")
 
 (defvar-local agent-org-buffer--awaiting-answer-p nil
   "Non-nil when this buffer's last heading is a question with no answer yet.
@@ -639,6 +641,16 @@ and its fold, but it is no longer where new calls go.")
 (defvar-local agent-org-buffer--thought nil
   "Thinking text accumulated for the current Agent turn, rendered into
 the per-turn :thinking: drawer by `agent-org-buffer-append-thought'.")
+
+(defvar-local agent-org-buffer--answer-written-p nil
+  "Non-nil once this turn's answer has had a line of text appended.
+Set by `agent-org-buffer--advance-text-end' -- the one place answer text moves
+the insertion marker -- and cleared when the turn state resets.  It is how
+`agent-org-buffer--drop-empty-response' tells an answer that only ever streamed
+tools from one that said something: the marker has moved on by the time the turn
+closes, so \"is the line under the marker blank\" is no longer a test for
+emptiness (with real text it now points at the gap above a drawer, and that gap
+reads blank) -- the flag is the direct record of whether any prose landed.")
 
 ;;;; Forward declaration
 
@@ -916,9 +928,11 @@ Keys:
 
 (defun agent-org-buffer--tool-keyword (status)
   "Org TODO keyword for ACP tool STATUS (nil/unknown means pending).
-The vocabulary is the user's -- ONGOING, COMPLETE, FAILED -- and it is the
-set `agent-org-buffer--todo-setup' declares, so the word on a board line is
-a keyword the file actually knows.  `pending' keeps TODO."
+The vocabulary is the user's -- ONGOING, COMPLETE, FAILED -- and it is
+deliberately NOT the set `agent-org-buffer--todo-setup' declares: a call is a
+line of the `:tool:' drawer, Org forbids headlines inside drawers, so this
+word is TEXT the reader sees and never a state `C-c C-t' can set.
+`pending' keeps TODO."
   (pcase status
     ("in_progress" "ONGOING")
     ("completed" "COMPLETE")
@@ -928,15 +942,14 @@ a keyword the file actually knows.  `pending' keeps TODO."
 (defun agent-org-buffer--metadata-drawer (name entries cap)
   "Render drawer NAME with ENTRIES (already-formatted strings).
 Nil when no entries.  CAP is how many lines are shown before a `… (+N
-more)' tail; nil shows them all, and every caller says which it means.
+more)' tail; nil shows them all.
 
-The reference drawers are capped, because the drawer is a preview of
+Every drawer this renders is capped, because each is a preview of
 something the agent can be asked for again — an omitted `/command' costs a
-look, not a thing.  QUEUE is NOT capped: its drawer is the record, the one
-copy of a queued prompt that survives a crash, and truncating it would
-both hide a prompt the user paid for and leave its `… (+N more)' marker to
-be read back as a phantom prompt by
-`agent-org-buffer-transcript-queue'."
+look, not a thing.  Nothing here holds a user's work: the prompts waiting
+to be sent are queue headlines at the bottom of the chat
+(`agent-org-buffer-render-queue'), not a drawer, because a drawer the
+user cannot edit is the wrong home for text he means to type into."
   (when entries
     (let ((shown (if cap (seq-take entries cap) entries)))
       (concat (format ":%s:\n" name)
@@ -950,61 +963,7 @@ be read back as a phantom prompt by
   "Lines shown in a reference drawer before the `… (+N more)' tail.
 A number an AI conversation can outrun easily — an agent with forty slash
 commands is ordinary — which is why the cap is written down once instead
-of living in four call sites, and why QUEUE does not use it.")
-
-(defconst agent-org-buffer--metadata-open-drawers '("QUEUE")
-  "Metadata drawers created UNFOLDED; every other kind arrives folded.
-The split is by what a drawer is FOR.  COMMANDS, MODES and CONFIG are
-reference: the agent can be asked again, so folded costs a TAB.  QUEUE is
-the user's own work waiting to go out, and it changes in the middle of a
-turn — folded, it would be invisible exactly when it matters (the user's
-order: \"Show the prompt queue within the buffer\").
-This is a DEFAULT for creation, not an instruction for every repaint: a
-drawer the user folded by hand stays folded
-(`agent-org-buffer-refresh-metadata').")
-
-(defun agent-org-buffer--queue-encode (text)
-  "Escape TEXT onto ONE line of the `:QUEUE:' drawer.
-A queue entry is the user's own draft, so it can run to many lines and can
-contain a blank line or a bare `:END:' — either would cut the drawer short
-and leave the rest of the prompt outside it.  So one line per prompt:
-backslash doubles, newline and carriage return become =\\n= and =\\r=, and
-the `- ' prefix keeps even a prompt that IS `:END:' from starting its line
-with one.  The drawer is machine-read, so nothing is beautified:
-`agent-org-buffer--queue-decode' is the exact inverse and the queue
-survives a restart byte for byte."
-  (with-temp-buffer
-    (insert "- ")
-    (dotimes (i (length text))
-      (insert (pcase (aref text i)
-                 (?\\ "\\\\")
-                 (?\n "\\n")
-                 (?\r "\\r")
-                 (c (string c)))))
-    (buffer-string)))
-
-(defun agent-org-buffer--queue-decode (line)
-  "The prompt stored on queue drawer LINE, unescaped.
-Inverse of `agent-org-buffer--queue-encode'.  An unknown escape keeps the
-character that follows it, so a drawer written by a newer version reads
-back as text on resume instead of losing a prompt to an error."
-  (let ((body (if (string-prefix-p "- " line)
-                  (substring line 2)
-                (string-trim line)))
-        (i 0))
-    (with-temp-buffer
-      (while (< i (length body))
-        (let ((c (aref body i)))
-          (if (and (= c ?\\) (< (1+ i) (length body)))
-              (progn
-                (insert (pcase (aref body (1+ i))
-                          (?n ?\n)
-                          (?r ?\r)
-                          (other (string other))))
-                (cl-incf i 2))
-            (insert c)
-            (cl-incf i))))
-      (buffer-string))))
+of living in three call sites.")
 
 (defun agent-org-buffer--config-value (option)
   "The current value of config OPTION, as a person should read it.
@@ -1031,11 +990,9 @@ does not name, and blanking the field there would lie harder."
 The PROPERTIES drawer comes first, carrying the scalars (Provider, ID,
 Mode, Model, Context, Cost, Tokens), then the `#+TITLE:' keyword line,
 then COMMANDS/MODES/CONFIG drawers listing everything the agent
-reported, then QUEUE with the prompts waiting to be sent.  No heading:
-`* ' lines belong to the conversation.  Drawers whose lists are still
-unknown are omitted — including QUEUE the moment the queue empties,
-which is what stops a drained prompt being restored a second time — and
-so is the `:ID:' line until an id exists; a `:ID: unknown' would be a
+reported.  No heading: `* ' lines belong to the conversation and to the
+queue region below it.  Drawers whose lists are still unknown are omitted,
+as is the `:ID:' line until an id exists; a `:ID: unknown' would be a
 property Org's id machinery would choke on, and a lie besides.
 
 LITE is the session's resolved lite scope, passed in for the same reason
@@ -1065,12 +1022,7 @@ would answer for whichever buffer happened to be current.  It adds the
          (config (mapcar (lambda (o)
                           (format "%s — %s" (map-elt o 'name)
                                   (agent-org-buffer--config-value o)))
-                        (plist-get status :config)))
-         ;; Waiting prompts, oldest first, one escaped line each.  The
-         ;; conversation cannot show them: a queued prompt gets its
-         ;; `* User' heading only when it drains.
-         (queued (mapcar #'agent-org-buffer--queue-encode
-                         (plist-get status :queued))))
+                        (plist-get status :config))))
     (concat
      (mapconcat
       #'identity
@@ -1106,23 +1058,19 @@ would answer for whichever buffer happened to be current.  It adds the
              (agent-org-buffer--metadata-drawer "MODES" modes
                                                 agent-org-buffer--metadata-drawer-cap)
              (agent-org-buffer--metadata-drawer "CONFIG" config
-                                                agent-org-buffer--metadata-drawer-cap)
-             ;; last: the one list that changes mid-turn, so the
-             ;; reference drawers above never shift position.  No cap
-             ;; (`agent-org-buffer--metadata-drawer'): this is the record.
-             (agent-org-buffer--metadata-drawer "QUEUE" queued nil)))
+                                                agent-org-buffer--metadata-drawer-cap)))
       "\n")
      ;; blank line separating the block from the first conversation
      ;; heading (refresh deletes up to that heading)
      "\n")))
 
 (defconst agent-org-buffer--metadata-drawers
-  '("PROPERTIES" "COMMANDS" "MODES" "CONFIG" "QUEUE")
+  '("PROPERTIES" "COMMANDS" "MODES" "CONFIG")
   "Names of the drawers in the metadata block.
 `agent-org-buffer-refresh-metadata' reads this to remember which drawers the
 user had opened, and a name missing here is a drawer that reappears unfolded
-on every rebuild.  How each one arrives the FIRST time is a different
-question — `agent-org-buffer--metadata-open-drawers'.")
+on every rebuild.  Every one of them arrives folded the first time — they
+are all reference the agent can be asked again for.")
 
 (defvar-local agent-org-buffer--metadata-cache nil
   "Last metadata block written at the top of this buffer, or nil.
@@ -1138,8 +1086,7 @@ Delete-then-insert keeps this idempotent.  The block spans point-min
 up to (but not including) the first conversation heading, so chat
 text is never touched.  Drawers the user had left folded are re-folded
 after the rebuild; ones they opened stay open, and a drawer that does
-not exist yet arrives with its own default
-(`agent-org-buffer--metadata-open-drawers').
+not exist yet arrives folded (`agent-org-buffer--metadata-drawers').
 
 Skips entirely when the rendered block is byte-identical to
 `agent-org-buffer--metadata-cache': no deletion, no insertion, and no
@@ -1156,14 +1103,17 @@ Skips entirely when the rendered block is byte-identical to
                       (cons name
                             (save-excursion
                               (goto-char (point-min))
+                              ;; Already there: keep whatever the user left it
+                              ;; in.  Not there yet: it arrives with this
+                              ;; rebuild, and every drawer that remains is
+                              ;; reference, so it arrives FOLDED -- that is the
+                              ;; one case a nil here used to mean "open", and
+                              ;; reading it as "leave alone" silently made every
+                              ;; first render show its drawers unfolded.
                               (if (re-search-forward (format "^:%s:" name) nil t)
                                   (progn (forward-line 1)
                                          (invisible-p (point)))
-                                ;; Not there yet, so this rebuild creates it:
-                                ;; its kind decides (a drawer that arrives
-                                ;; OPEN needs no fold call at all).
-                                (not (member name
-                                             agent-org-buffer--metadata-open-drawers))))))
+                                t))))
                     agent-org-buffer--metadata-drawers)))
               (goto-char (point-min))
               (if (re-search-forward "^\\* " nil t)
@@ -1234,7 +1184,7 @@ user is waiting to send.")
 (defvar-local agent-org-buffer--queue-end nil
   "Marker just past this buffer's queue region, or nil when the queue is empty.
 The region's other side, so a repaint deletes exactly the region and never the
-turn's `#+end_quote' above it or the `* User' box below it.  Rear-advancing for
+turn's answer above it or the `* User' box below it.  Rear-advancing for
 the same reason as `--queue-start'.")
 
 (defvar-local agent-org-buffer--queue-shown nil
@@ -1272,23 +1222,31 @@ Always called with the chat buffer current."
          (agent-org-buffer--live-mark agent-org-buffer--prompt-anchor))
         (t (point-max))))
 
-(defconst agent-org-buffer--queue-keywords '("NEXT" "WAIT")
-  "The two states a queued prompt's heading can wear, in the user's words.
-`NEXT' is the prompt that goes out when the current turn ends and `WAIT' is
-every prompt behind it.  The word is DERIVED from position on every render,
-never read back from the buffer: a keyword that drifted from the queue's order
-would be a lie about which prompt leaves next, and `M-UP'/`M-DOWN' must be able
-to move a heading without anybody restating what it means.")
+(defconst agent-org-buffer--queue-keywords '("TODO")
+  "The one state a queued prompt's heading wears, in the user's words.
+Every entry in the region waits, so every entry is TODO and WHICH one leaves
+next is the ORDER of the headings, not a word on them.  The retired NEXT/WAIT
+pair put that order into a keyword, so the head of the list had to be re-worded
+on every edit and on every reorder; a position cannot drift from itself.")
 
-(defconst agent-org-buffer--queue-headline-re "^[*] NEXT \\|^[*] WAIT "
-  "A queued prompt's headline: one of `agent-org-buffer--queue-keywords'.
-Two anchored alternatives and NO grouping, which is not a style choice: the
-only backslash in this literal is the alternation bar, so there is no
+(defconst agent-org-buffer--queue-legacy-keywords '("NEXT" "WAIT")
+  "Retired prompt states, READ but never WRITTEN.
+Every transcript written before this vocabulary existed holds `* NEXT'/`* WAIT'
+entries.  The parser accepts them so a resume does not silently drop a prompt
+the user queued yesterday; the renderer only ever uses
+`agent-org-buffer--queue-keywords', so a file converges on the new word the
+first time its queue is redrawn.")
+
+(defconst agent-org-buffer--queue-headline-re
+  "^[*] TODO \\|^[*] NEXT \\|^[*] WAIT "
+  "A queued prompt's headline: a current keyword or a retired one.
+Two or three anchored alternatives and NO grouping, which is not a style choice:
+the only backslash in this literal is the alternation bar, so there is no
 `\\(...\\)' for a lost backslash to turn into a literal paren.  That mistake is
 not hypothetical -- it shipped once in this file and every queue entry came
 back with its first line swallowed by a group that was never closed.
 
-Only these two words make a headline an ENTRY, so the conversation's own
+Only these words make a headline an ENTRY, so the conversation's own
 headlines -- which are prompts and agent turns -- are never mistaken for a
 queue, and a `* note' the user typed at the bottom is text he can keep.")
 
@@ -1297,15 +1255,53 @@ queue, and a `* note' the user typed at the bottom is text he can keep.")
 String surgery and NOT a regexp, for the reason
 `agent-org-buffer--queue-headline-re' gives: this is the one place that has to
 recover a prompt's first line from its headline, and a pattern with a group in
-it is a pattern that can lose its closing paren.  Both keywords are tried
-because there are two and neither is a special case."
-  (cl-loop for keyword in agent-org-buffer--queue-keywords
+it is a pattern that can lose its closing paren.  Every keyword is tried,
+current and retired alike, because a prompt read out of an old file is the
+same prompt."
+  (cl-loop for keyword in (append agent-org-buffer--queue-keywords
+                                  agent-org-buffer--queue-legacy-keywords)
            for prefix = (concat "* " keyword " ")
            when (string-prefix-p prefix line)
            return (substring line (length prefix))))
 
-(defun agent-org-buffer--queue-entry (text next)
-  "One queued prompt's heading and body: TEXT under NEXT, or under WAIT.
+(defun agent-org-buffer--queue-parse-text (region)
+  "The prompts stored in queue-region text REGION, oldest first.
+The one reader of the queue's on-page form, used by
+`agent-org-buffer-queue-parse' for the live region and by
+`agent-org-buffer-transcript-queue' for a mirrored file, so the two can
+never drift apart on the exact question of what a queued prompt IS.
+REGION is the region's text and nothing else: an entry is its headline plus
+every following line up to the next headline, so a multi-line prompt stays
+ONE prompt.  Everything before the first headline is the preamble
+(`agent-org-buffer--queue-note-text') and is dropped, as is a prompt that
+trims to nothing — a bare heading is a slot the user has not typed in yet,
+and `agent-org-send' refuses an empty draft.
+
+Each body line gives back the one space `agent-org-buffer--queue-entry' put
+on; blank lines are KEPT, because a prompt is the user's own text and its
+own blank lines are part of it.  The entry as a whole is trimmed, so a
+trailing newline from the renderer does not become a trailing blank line in
+the prompt."
+  (let (prompts body)
+    (dolist (line (split-string region "\n"))
+      (let ((head (agent-org-buffer--queue-headline-text line)))
+        (if head
+            (progn
+              (when body
+                (push (string-trim (mapconcat #'identity (nreverse body) "\n"))
+                      prompts))
+              (setq body (list head)))
+          (when body
+            (push (if (string-prefix-p " " line) (substring line 1) line) body)))))
+    (when body
+      (push (string-trim (mapconcat #'identity (nreverse body) "\n")) prompts))
+    (delq nil
+          (mapcar (lambda (prompt)
+                    (and (not (string-blank-p prompt)) prompt))
+                  (nreverse prompts)))))
+
+(defun agent-org-buffer--queue-entry (text)
+  "One queued prompt's heading and body: TEXT under TODO.
 The same shape as an exchange heading (`agent-org-buffer-begin-exchange'): the
 first line of the prompt IS the heading, and every later line takes one space
 of indent so it stays the heading's own affixed metadata instead of becoming a
@@ -1327,15 +1323,14 @@ newline is the one the renderer owns."
                           (cdr lines)
                           "\n"))
          (heading (format "* %s %s"
-                          (if next (car agent-org-buffer--queue-keywords)
-                            (cadr agent-org-buffer--queue-keywords))
+                          (car agent-org-buffer--queue-keywords)
                           (if (string-empty-p first) "" first))))
     (if (string-empty-p rest)
         (concat heading "\n")
       (concat heading "\n" rest "\n"))))
 
 (defconst agent-org-buffer--queue-note-text
-  ";; Waiting prompts: NEXT goes out when this turn ends.
+  ";; Prompts waiting to be sent, oldest first.
 ;; Edit them here, then M-x agent-org-queue-apply.
 "
   "The region's preamble, ABOVE the entries and never below them.
@@ -1349,30 +1344,28 @@ a reader of a TRANSCRIPT cannot work out for himself.")
 
 (defun agent-org-buffer-render-queue (prompts)
   "The whole queue REGION for PROMPTS, oldest first.
-The first prompt wears NEXT and every other WAIT, because the head of the list
-is the one that goes out when the turn ends (`agent-org--drain-queue').  PROMPTS
-nil renders as the EMPTY STRING, and no queue leaves no trace at all: an empty
-entry is a slot to compose in, which is what `agent-org-queue-edit' asks
-`agent-org-buffer-queue-insert-entry' for, and a permanent blank heading would
-put a headline in every transcript for nothing.
+Every entry wears TODO: the head of the list is the one that goes out when the
+turn ends (`agent-org--drain-queue'), and that is shown by its ORDER, not by a
+different word on it.  PROMPTS nil renders as the EMPTY STRING, and no queue
+leaves no trace at all: an empty entry is a slot to compose in, which is what
+`agent-org-queue-edit' asks `agent-org-buffer-queue-insert-entry' for, and a
+permanent blank heading would put a headline in every transcript for nothing.
 
 A non-nil PROMPTS whose only member is the empty string renders the preamble
 and NO entry, which is how a slot exists before the user has typed anything."
   (if (null prompts)
       ""
     (concat agent-org-buffer--queue-note-text
-            (mapconcat (lambda (pair)
+            (mapconcat (lambda (prompt)
                          ;; an empty prompt renders as NOTHING: the slot a
                          ;; user is about to type in is not an entry yet, and a
-                         ;; bare `* WAIT' heading here would be one that says
+                         ;; bare `* TODO' heading here would be one that says
                          ;; it (the renderer is called with the list before
                          ;; the heading is inserted)
-                         (if (string-empty-p (car pair))
+                         (if (string-empty-p prompt)
                              ""
-                           (agent-org-buffer--queue-entry (car pair) (cdr pair))))
-                       (cl-loop for text in prompts
-                                for first = t then nil
-                                collect (cons text first))
+                           (agent-org-buffer--queue-entry prompt)))
+                       prompts
                        ""))))
 
 ;;;; The queue region: waiting prompts at the bottom of the chat
@@ -1397,7 +1390,7 @@ current, and a cached pair would go stale on every insert at the region."
   "Non-nil when BUFFER shows a queue region at all; the current buffer if nil.
 The MARKERS and not the text, so a queue the user has emptied by hand is still
 a region -- with nothing in it -- and a repaint can put it back where it
-belongs.  A region found only by searching for a `* NEXT' line would refuse."
+belongs.  A region found only by searching for a `* TODO' line would refuse."
   (with-current-buffer (or buffer (current-buffer))
     (not (null (agent-org-buffer--queue-region)))))
 
@@ -1422,7 +1415,7 @@ one -- in the buffer or in the transcript."
         (when (and (null prompts) (not (equal prompts "")))
           (setq agent-org-buffer--queue-start nil
                 agent-org-buffer--queue-end nil))
-        ;; the keywords have to be live for NEXT/WAIT to read as Org states
+        ;; the keywords have to be live for TODO to read as an Org state
         ;; on the headings the user is about to edit
         (org-set-regexps-and-options)))))
 
@@ -1489,48 +1482,16 @@ question that begins with those words."
             (push (match-beginning 0) spots))
           (nreverse spots))))))
 
-(defun agent-org-buffer--queue-text (spot end)
-  "The prompt stored in the entry whose headline starts at SPOT, up to END.
-Inverse of `agent-org-buffer--queue-entry', in both halves: the headline
-CARRIES the prompt's first line (as an exchange heading does), so the keyword
-and its spaces come off the front of that line, and every body line gives back
-the one leading space the renderer put there.  Blank lines are kept -- a
-prompt is the user's own text and its own blank lines are part of it -- while
-the entry as a whole is trimmed, so a slot nobody typed in reads as blank and
-`agent-org-buffer-queue-parse' drops it."
-  (save-excursion
-    (goto-char spot)
-    (let ((first (buffer-substring-no-properties
-                  (point) (line-end-position))))
-(string-trim
-       (concat (or (agent-org-buffer--queue-headline-text first) "")
-               "\n"
-               (mapconcat (lambda (line)
-                            (if (string-prefix-p " " line) (substring line 1) line))
-                          (split-string
-                           (buffer-substring-no-properties
-                            (1+ (line-end-position)) end)
-                           "\n")
-                          "\n"))))))
-
 (defun agent-org-buffer-queue-parse (&optional buffer)
   "BUFFER's queue entries as prompts, top to bottom; the current buffer if nil.
-An entry is everything from its headline to the next one, so a multi-line
-prompt stays ONE prompt, and a blank entry is dropped: `agent-org-send' refuses
-an empty draft, and the queue must not smuggle one through by leaving a heading
-bare."
+The live region's own text through `agent-org-buffer--queue-parse-text', which
+is the same reader a transcript file uses — one rule for what a queued prompt
+is, applied to both.  So a re-order or an in-place edit that has not been
+applied yet is read as it LOOKS, blanks and all."
   (when (buffer-live-p (or buffer (current-buffer)))
     (with-current-buffer (or buffer (current-buffer))
-      (let ((spots (agent-org-buffer--queue-headlines))
-            (region (agent-org-buffer--queue-region)))
-        (when (and spots region)
-          (let ((ends (append (cdr spots) (list (cdr region)))))
-            (delq nil
-                  (cl-loop for spot in spots
-                           for end in ends
-                           for text = (agent-org-buffer--queue-text spot end)
-                           unless (string-blank-p text)
-                           collect text))))))))
+      (agent-org-buffer--queue-parse-text
+       (agent-org-buffer--queue-region-text)))))
 
 (defun agent-org-buffer--queue-at-p ()
   "Non-nil when point is inside this buffer's queue region.
@@ -1587,11 +1548,12 @@ that leaves two entries behind."
         nil))))
 
 (defun agent-org-buffer-queue-insert-entry (buffer)
-  "Append a blank `* WAIT' entry to BUFFER's queue region; return its position.
+  "Append a blank `* TODO' entry to BUFFER's queue region; return its position.
 A blank entry is a SLOT to type in, which is how the user adds a prompt of his
 own at the bottom -- and `--queue-parse' drops it if he leaves it empty, so
-composing one cannot send a blank.  The word is WAIT whatever the queue holds:
-a new entry is last, so it cannot be the next to go out."
+composing one cannot send a blank.  It wears the same word as every other entry:
+position in the region, not the keyword, is what makes a prompt the next one
+out."
   (with-current-buffer buffer
     (let ((inhibit-read-only t))
       (unless (agent-org-buffer-queue-p)
@@ -1602,7 +1564,7 @@ a new entry is last, so it cannot be the next to go out."
         ;; arrived then would delete a half-typed prompt.
         (agent-org-buffer--queue-paint nil (list "")))
       (goto-char (cdr (agent-org-buffer--queue-region)))
-      (insert (format "* %s \n" (cadr agent-org-buffer--queue-keywords)))
+      (insert (format "* %s \n" (car agent-org-buffer--queue-keywords)))
       (point-max))))
 
 (defun agent-org-buffer-queue-kill-entry (buffer)
@@ -1718,22 +1680,13 @@ link alternative captures its URL because that is the only part a renderer
 needs grouped -- the rest is read back off the match string.")
 
 (defvar-local agent-org-buffer--md-fragment nil
-  "Last line of the streaming Agent turn, still incomplete and still Markdown.
-A chunk stops wherever the model's tokenizer stopped, so `**bold' can end one
-chunk and `**' open the next.  The fragment's Org rendering IS in the buffer —
-provisionally, at `agent-org-buffer--md-tail' — and the next chunk rewrites it,
-which is what makes a split construct reach the buffer once, as markup, while
-still letting the user watch the answer arrive.")
-
-(defvar-local agent-org-buffer--md-tail nil
-  "Marker at the start of the provisional last line of the streaming turn.
-The region from here to `agent-org-buffer--text-end' -- the answer's closing
-`#+end_quote' while one is open -- is the only text
-`agent-org-buffer--markdown-receive' ever rewrites: everything before it is
-finished, and anything drawn at a boundary (`:tool:', `:thinking:') is finished
-too, because `agent-org-buffer--markdown-flush-here' freezes the tail first.
-Nil while no line is pending.")
-
+  "The line of the streaming answer still arriving, in the agent's own words.
+A chunk stops wherever the model's tokenizer stopped, so `**bold\' can end one
+chunk and `**\' open the next.  It is appended to the buffer RAW as it arrives
+— that is what the person is watching — and held here so that when its newline
+lands the JOINED line can be converted and appended once, as markup.  Nothing is
+ever rewritten (`agent-org-buffer--markdown-write' appends and nothing else),
+which is the user's rule: \"Just append.\"")
 (defvar-local agent-org-buffer--md-src-p nil
   "Non-nil while the streaming Agent turn is inside a fenced code block.
 Its body is CODE, so no conversion rule may fire on it (`# comment' in a
@@ -1894,154 +1847,144 @@ of the transcript file, and an agent that hit its token limit can send one."
         (concat (car result) "\n#+end_src")
       (car result))))
 
-(defun agent-org-buffer--markdown-write (frozen partial)
-  "Rewrite this buffer's provisional tail as FROZEN lines then one PARTIAL line.
-FROZEN is the Org rendering of the lines this chunk completed (nil when it
-completed none); PARTIAL is the Org rendering of the line still arriving (nil
-when nothing is pending).  Run it in the chat buffer.
+(defun agent-org-buffer--markdown-write (lines)
+  "Append the converted LINES of completed answer text to this buffer.
+APPEND-ONLY, and that is the whole rule the user asked for (\"No need to
+reorder, or to go back to insert text.  Just append.\"): nothing already in the
+buffer is ever deleted, so a chunk can neither move text nor undo text the
+person has already read.  There is no provisional region and no
+`--md-tail' marker any more, because there is nothing left to rewrite.
 
-The region replaced is exactly the one the previous PARTIAL wrote, so nothing
-that was already finished — and no drawer drawn at a boundary — can be touched
-by a later chunk.  The region's END is `agent-org-buffer--text-end' rather than
-`agent-org-buffer--render-end': the provisional line lives INSIDE the answer's
-quote block, and rewriting it must never reach past `#+end_quote' into the
-drawers or the type-ahead box below it.
+The line COMPLETION is the granularity, and it is what makes append-only
+possible: `agent-org-buffer--markdown-receive' holds the still-arriving line
+in `agent-org-buffer--md-fragment' and converts it here, once, when its
+newline lands.  A line therefore appears when it is finished rather than
+character by character --- which is what a terminal, and agent-shell, do --- and
+a Markdown construct split across two chunks (`**bold' + `**') still converts
+correctly, because it is the JOINED line that is converted, not the chunk.
 
-BOTH strings go through `agent-org-buffer--block-safe-lines', which is what
-makes a converted reply safe to place in a block it could otherwise close: the
-converter's own `#+begin_src' output is a real block marker, but a `* bold'
-line it produced from a Markdown heading would have ended the quote.  The
-partial line takes its newline too, so at every instant between two chunks
-`#+end_quote' still begins its own line — the block is closed all the way
-through the turn, never only at its end."
-  (when (or (and frozen (not (string-empty-p frozen)))
-            (and partial (not (string-empty-p partial)))
-            (markerp agent-org-buffer--md-tail))
+Everything goes through `agent-org-buffer--response-safe-lines', which is what
+keeps agent text from becoming a HEADLINE of its own in the middle of an
+exchange (measured with `org-element-parse-buffer'): a `*' at column 0 would
+cut the turn in two and put the rest of the answer under a heading of its own.
+Run it in the chat buffer."
+  (when lines
     (let ((inhibit-read-only t))
       (save-excursion
-        ;; Read the position BEFORE detaching: `set-marker' with nil leaves the
-        ;; variable holding a perfectly live marker OBJECT whose
-        ;; `marker-position' is nil, and `markerp' cannot tell the two apart
-        ;; (measured: the chunk after one that ended with a newline crashed with
-        ;; `integer-or-marker-p nil' on the way to `goto-char').
-        (let* ((tail-pos (and (markerp agent-org-buffer--md-tail)
-                              (marker-position agent-org-buffer--md-tail)))
-               (beg (or tail-pos (agent-org-buffer--text-end))))
-          (when (markerp agent-org-buffer--md-tail)
-            (set-marker agent-org-buffer--md-tail nil)
-            (setq agent-org-buffer--md-tail nil))
-          (goto-char beg)
-          (delete-region beg (max beg (agent-org-buffer--text-end)))
-          (when (and frozen (not (string-empty-p frozen)))
-            (let ((start (point)))
-              (insert (mapconcat #'identity
-                                 (agent-org-buffer--block-safe-lines frozen)
-                                 "\n")
-                      "\n")
-              (agent-org-buffer--protect start (point))))
-          (when (and partial (not (string-empty-p partial)))
-            (let* ((start (point))
-                   (text (car (agent-org-buffer--block-safe-lines partial))))
-              (insert text "\n")
-              (move-marker (setq-local agent-org-buffer--md-tail (make-marker))
-                           start)
-              (agent-org-buffer--protect start (point)))))))))
+        (goto-char (agent-org-buffer--text-end))
+        (unless (bolp) (insert "\n"))
+        (let ((start (point)))
+          (insert (mapconcat #'identity
+                             (agent-org-buffer--response-safe-lines
+                              (if (stringp lines) lines
+                                (mapconcat #'identity lines "\n")))
+                             "\n")
+                  "\n")
+          (agent-org-buffer--protect start (point))
+          (agent-org-buffer--advance-text-end (point)))))))
 
 (defun agent-org-buffer--markdown-receive (text)
-  "Take one streamed Agent TEXT chunk into this buffer, converting as it arrives.
-Nothing waits for a newline: the line still arriving is written as provisional
-text and rewritten by the next chunk (`agent-org-buffer--md-tail'), so a
-one-line answer that never sends a newline appears AS the agent sends it rather
-than all at once when the turn closes.  The rewrite is why the fragment is kept:
-a construct split across two chunks (`**bold' + `**') is converted from the
-joined string, so it reaches the buffer once, as markup.
+  "Take one streamed Agent TEXT chunk into this buffer, appending it.
+Run it in the chat buffer, after the turn's heading exists.
 
-Run it in the chat buffer, after the turn's heading exists."
+The lines this chunk FINISHED are converted and appended now; the line still
+arriving is kept in `agent-org-buffer--md-fragment' and appended, converted,
+when ITS newline lands --- and `agent-org-buffer--markdown-flush-here' catches
+whatever is still arriving at the turn boundary.  Nothing is ever written
+twice and nothing is ever rewritten: an earlier shape ALSO appended the raw
+arriving line here, which left the buffer holding every line twice (once raw,
+once converted), and that is the opposite of append-only.
+
+The granularity is therefore the LINE, which is what a terminal, and
+agent-shell, display: a Markdown construct split across two chunks (`**bold' +
+`**') still converts correctly, because it is the JOINED line that is
+converted, not the chunk."
   (let* ((combined (concat agent-org-buffer--md-fragment text))
          (parts (split-string combined "\n"))
          (tail (car (last parts)))
          (done (butlast parts))
-         (frozen nil))
+         (result nil))
     (when done
-      (let ((result (agent-org-buffer--markdown-convert-lines
-                     done agent-org-buffer--md-src-p)))
-        (setq agent-org-buffer--md-src-p (cdr result)
-              frozen (car result))))
-    (agent-org-buffer--markdown-write
-     frozen
-     ;; The partial line is converted WITHOUT keeping the state it reports: a
-     ;; fence opener seen early would otherwise put the rest of the turn inside
-     ;; a code block before its newline ever arrived.
-     (when (and tail (not (string-empty-p tail)))
-       (car (agent-org-buffer--markdown-line tail agent-org-buffer--md-src-p))))
+      (setq result (agent-org-buffer--markdown-convert-lines
+                    done agent-org-buffer--md-src-p))
+      (setq agent-org-buffer--md-src-p (cdr result))
+      (agent-org-buffer--markdown-write (car result)))
     (setq agent-org-buffer--md-fragment tail)))
 
 (defun agent-org-buffer--markdown-flush-here ()
-  "Freeze the converter's provisional line in this buffer.
-The text is already there — streaming writes every chunk — so this ends the
-line, closes a fence the agent never closed, and FORGETS the state.  Forgetting
-is load-bearing, not tidiness: a provisional region must not outlive a
-boundary, because the next chunk would rewrite everything from its marker to
-`agent-org-buffer--text-end', which by then holds the drawer drawn here.  So
-a paragraph may be split across a drawer, which is what the drawer is for;
-nothing is ever rewritten twice.
+  "Finish this turn's arriving line, appending it converted.  Run in this buffer.
+The text is appended as it arrives; this ends the last line, closes a fence the
+agent never closed, and FORGETS the converter state.  Forgetting is
+load-bearing, not tidiness: state left behind would put the next turn's opening
+paragraph inside this turn's code block.
 
-Called at every boundary that draws below the turn's text — `append-thought',
-`insert-tool', `end-agent-turn'."
-  (when (or agent-org-buffer--md-fragment agent-org-buffer--md-src-p
-            (markerp agent-org-buffer--md-tail))
-    (let ((inhibit-read-only t))
-      (save-excursion
-        (when (markerp agent-org-buffer--md-tail)
-          (set-marker agent-org-buffer--md-tail nil)
-          (setq agent-org-buffer--md-tail nil))
-        (setq agent-org-buffer--md-fragment nil)
-        ;; INSIDE the block, ahead of `#+end_quote': an unclosed fence shut
-        ;; after the quote would be a source block that swallowed the closing
-        ;; marker and everything under it.
-        (goto-char (agent-org-buffer--text-end))
-        (let ((start (point)))
+Still an append, so it goes in at the answer's insertion point and touches
+nothing above it; and an unclosed fence is closed HERE, immediately after the
+agent's last line, because a `#+begin_src' left open would swallow the
+`:tool:' drawer and the type-ahead box below it (measured)."
+  (when (or agent-org-buffer--md-fragment agent-org-buffer--md-src-p)
+    (when (and agent-org-buffer--md-fragment
+               (not (string-empty-p agent-org-buffer--md-fragment)))
+      (let ((inhibit-read-only t))
+        (save-excursion
+          (goto-char (agent-org-buffer--text-end))
           (unless (bolp) (insert "\n"))
-          (when agent-org-buffer--md-src-p
-            (insert (car (agent-org-buffer--block-safe-lines "#+end_src")) "\n")
-            (setq agent-org-buffer--md-src-p nil))
-          (agent-org-buffer--protect start (point)))))))
+          (let ((start (point)))
+            (insert (mapconcat #'identity
+                               (agent-org-buffer--response-safe-lines
+                                (car (agent-org-buffer--markdown-convert-lines
+                                      (list agent-org-buffer--md-fragment)
+                                      agent-org-buffer--md-src-p)))
+                               "\n")
+                    "\n")
+            (agent-org-buffer--protect start (point))
+            (agent-org-buffer--advance-text-end (point))))))
+    (when agent-org-buffer--md-src-p
+      (let ((inhibit-read-only t))
+        (save-excursion
+          (goto-char (agent-org-buffer--text-end))
+          (unless (bolp) (insert "\n"))
+          (let ((start (point)))
+            (insert (car (agent-org-buffer--response-safe-lines "#+end_src")) "\n")
+            (agent-org-buffer--protect start (point))
+            (agent-org-buffer--advance-text-end (point))))))
+    (setq agent-org-buffer--md-fragment nil
+          agent-org-buffer--md-src-p nil)))
 
 ;;;; One heading per exchange: the question IS the heading
 
-(defun agent-org-buffer--block-safe-lines (text)
-  "TEXT as lines that cannot end the block or section they are placed in.
-Two shapes that are ordinary in agent and prompt text are STRUCTURAL here,
-and both were measured with `org-element-parse-buffer' on a real
-`#+begin_quote':
+(defun agent-org-buffer--response-safe-lines (text)
+  "TEXT as answer lines that cannot re-shape the exchange they sit in.
+Two shapes are structural in Org and ordinary in agent text, and the quote
+block that used to hold them inert is gone:
 
-  - a line starting with `*' at column 0 is not text inside the block — the
-    parser ENDS the block, makes a headline, and everything the agent said
-    after that bullet leaves its own answer.  Nesting is no protection: the
-    same happened to a `* x' line inside a `#+begin_src' the reply itself
-    opened, because headline scanning does not respect block contents.
-  - a line reading `#+end_quote' CLOSES the block, and indentation does not
-    save you (measured: the block stopped there and the following line was
-    outside it), so it needs a character that is not a marker.  Wrapping it
-    in `=...=' does that and exports as the literal text it is.
+  - a `*' at column 0 is a level-1 HEADLINE, so a Markdown `* item' bullet —
+    or prose that happens to start with a star — would END the exchange the
+    answer belongs to and put the rest under a heading of its own;
+  - a `:NAME:' at column 0 OPENS a drawer and `:END:' CLOSES one, so an agent
+    quoting a transcript back at you can write `:thinking:' into its own
+    answer — and `agent-org-buffer--redraw-drawer' searches the turn region
+    TEXTUALLY for exactly those lines, so its own reply would be painted over
+    (measured: the redraw's `re-search-forward' for the drawer's `:end:' runs
+    past the fake opener and signals search-failed).
 
-So: indent every non-blank line one space, and wrap a bare end-marker in
-verbatim markers first.  Indentation is the same guard the drawer bodies use,
-and it costs nothing to the reply's own markup — measured that an indented
-`- item' is still an unordered list, an indented `|a|b|' still a table, and an
-indented `#+begin_src' still a source block.  Blank lines stay blank.
+So precisely those lines take one space of indent, which is all a headline or a
+drawer keyword needs to stop being one (info \"(org) Headlines', \"(org)
+Drawers'), and everything else is left flush left so the reply reads as prose.
+The earlier version of this guard indented EVERY line and wrapped
+`#+end_quote'; both were for the quote block, and the block is gone (the user:
+\"No more quote blocks\") — indenting all of it would turn ordinary paragraphs
+into Org verbatim blocks.
 
-This is also why the answer is never truncated and never re-flowed: the block
-is the affordance, and a record that quietly lost its middle is worse than an
-indented one."
+This is also why the answer is never truncated and never re-flowed: a record
+that quietly lost its middle is worse than an indented one."
   (let ((case-fold-search t))
     (mapcar (lambda (line)
-              (if (string-empty-p line)
-                  ""
-                (concat " "
-                        (if (string-match-p "^[ \t]*\\(?:=+\\)?#\\+end_quote\\(?:=+\\)?[ \t]*$" line)
-                            (format "=%s=" (string-trim line))
-                          (string-trim-right line)))))
+              (if (or (string-empty-p line)
+                      (not (string-match-p "^[ \t]*\\(?:\\*+[ \t]\\|:[A-Za-z0-9_+-]*:[ \t]*$\\)"
+                                           line)))
+                  line
+                (concat " " (string-trim-right line))))
             (split-string (string-trim-right text) "\n"))))
 
 (defun agent-org-buffer--heading-text (text)
@@ -2105,7 +2048,7 @@ across pairs."
                 ;; paragraph glued to the furniture
                 (insert "\n"
                         (mapconcat #'identity
-                                   (agent-org-buffer--block-safe-lines
+                                   (agent-org-buffer--response-safe-lines
                                     (mapconcat #'identity rest "\n"))
                                    "\n"))))
             (insert "\n")
@@ -2135,40 +2078,41 @@ across pairs."
                 agent-org-buffer--tool-group-start 0
                 agent-org-buffer--tool-drawer-live-p nil
                 agent-org-buffer--thought nil
+                ;; a fresh turn has written no answer prose yet: this is what
+                ;; `agent-org-buffer--drop-empty-response' keys on, and a stale
+                ;; t from the previous turn would keep an empty prefix alive
+                agent-org-buffer--answer-written-p nil
                 ;; markdown->org is turn-local too: a held half line from the
                 ;; previous answer must not open this one, and a fence left
                 ;; unclosed by a truncated reply must not hide this answer
-                ;; inside a code block.  The provisional tail goes with them —
-                ;; it points into the PREVIOUS answer's text, and rewriting
-                ;; from there would delete it.
+                ;; inside a code block
                 agent-org-buffer--md-fragment nil
-                agent-org-buffer--md-src-p nil
-                agent-org-buffer--md-tail nil))))))
+                agent-org-buffer--md-src-p nil))))))
 
 ;;;; Streaming (the hot path)
 
-(defun agent-org-buffer--author-line ()
-  "The affiliated keyword line naming who is answering, for the quote block.
-`#+ATTR_TEXINFO: :author NAME' is the Org manual's own way to say who is
-speaking inside a quotation (info \"(org) Quotations in Texinfo export\"), and
-the value goes unquoted: a multi-word model label is what the manual's example
-shows, and the parser stores the whole rest of the line as the value.
+(defun agent-org-buffer--prefix-line ()
+  "The line that introduces an answer: the model that is answering.
+`Model name: ' --- the model in force, from
+`agent-org-buffer--model-display' (the agent's own label else its id),
+flattened by `agent-org-buffer--label' because a config option's `name' is
+agent text and a newline here would start the answer on the wrong line.
 
-With `agent-org-quote-model-author' (the default) the name is the model in
-force — `agent-org-buffer--model-display', the agent's own label else its id —
-flattened by `agent-org-buffer--label', because a config option's `name' is
-agent text and a newline on a keyword line would end the attribute and leave a
-stray paragraph.  With no model at all (Goose advertises none of this shape) or
-the option off, the word is \"Agent\": an empty `:author' is a claim about
-nobody.
+This line USED to be `#+ATTR_TEXINFO: :author NAME' above a
+`#+begin_quote', which was the manual's own way to attribute a quotation.
+The user ended the quotation (\"No more quote blocks.  Just use model name as
+prefix.\"), and a prefix line is the same fact in a shape that costs nothing:
+no `#+begin_quote'/`#+end_quote' furniture to close, nothing for an agent to
+escape from, and no block for Org to abandon.  With no model at all (Goose
+advertises none of this shape) or `agent-org-response-prefix' nil, the word is
+\"Agent\": an empty line is a claim about nobody.
 
-Written ONCE, when the answer starts, and never derived again — which is why no
-per-turn model map is needed: this line IS the record of which model answered,
-and a later `C-c C-m' renames the quotes after it and leaves the older ones
-alone.  It moved here from the heading because the heading is the user's
-question now."
-  (format "#+ATTR_TEXINFO: :author %s"
-          (or (and agent-org-quote-model-author
+Written ONCE, when the answer starts, and never derived again --- which is why
+no per-turn model map is needed: this line IS the record of which model
+answered, and a later `C-c C-m' renames the answers after it and leaves the
+older ones alone."
+  (format "%s: "
+          (or (and agent-org-response-prefix
                    (when-let* ((model (agent-org-buffer--model-display
                                        agent-org-buffer--status)))
                      (agent-org-buffer--label model)))
@@ -2176,15 +2120,30 @@ question now."
 
 (defun agent-org-buffer--text-end ()
   "Where the next byte of the answer belongs in this buffer.
-The start of this turn's `#+end_quote' line while an answer is open, so the
-block is CLOSED at every moment of a turn — an open `#+begin_quote' swallows
-the drawers, the type-ahead box and the rest of the transcript file.  Falls
-back to `agent-org-buffer--render-end' when there is no block yet (a boundary
-arriving before any chunk does) or after the turn closed.
+The answer's own insertion point while one is open --- a marker the text
+path keeps at the end of the answer written so far (see
+`agent-org-buffer--advance-text-end') --- so every chunk lands ABOVE the
+`:thinking:' and `:tool:' drawers this turn has already drawn, whatever order
+they arrived in.  Falls back to `agent-org-buffer--render-end' when no answer
+is open (a boundary arriving between turns).
 
 Always called with the chat buffer current."
   (or (agent-org-buffer--live-mark agent-org-buffer--quote-end)
       (agent-org-buffer--render-end)))
+
+(defun agent-org-buffer--advance-text-end (position)
+  "Leave the answer's insertion marker at POSITION, the end of text just added.
+Called by every writer that appends answer text at `agent-org-buffer--text-end',
+with the `(point)' reached after its insert.  This is the marker's one mover:
+because it is NOT rear-advancing (see `agent-org-buffer-start-agent-turn'), a
+drawer drawn at the same spot cannot shove it down and strand the prose under
+the board, and only an actual answer line advances it -- so consecutive chunks
+still land in arrival order, each under the last.
+
+Does nothing between turns, when no answer marker is live."
+  (when (markerp agent-org-buffer--quote-end)
+    (setq agent-org-buffer--answer-written-p t)
+    (move-marker agent-org-buffer--quote-end position)))
 
 (defun agent-org-buffer--orphan-heading ()
   "Open a heading for an answer that has no question in front of it.
@@ -2209,23 +2168,26 @@ branch never runs, so the board is never cleared a second time mid-turn."
         agent-org-buffer--tool-group-start 0
         agent-org-buffer--tool-drawer-live-p nil
         agent-org-buffer--thought nil
+        agent-org-buffer--answer-written-p nil
         agent-org-buffer--md-fragment nil
-        agent-org-buffer--md-src-p nil
-        agent-org-buffer--md-tail nil))
+        agent-org-buffer--md-src-p nil))
 
 (defun agent-org-buffer-start-agent-turn (buffer _session)
-  "Open this exchange's answer as a quote block in BUFFER, once per turn.
+  "Open this exchange's answer in BUFFER under the model name, once per turn.
 Font-lock stays on for the whole turn so Org colors never vanish while
-streaming.  Incremental cost is kept low by the append path, which only
-ever fontifies the freshly inserted chunk (see
-`agent-org-buffer-append-chunk'), not the whole buffer.
+streaming.  Incremental cost is kept low by the append path, which only ever
+fontifies the text it just inserted (see `agent-org-buffer-append-chunk'), not
+the whole buffer.
 
-The block's furniture is three lines — the `:author' keyword, `#+begin_quote'
-and `#+end_quote' — and the answer is written BETWEEN them for the whole turn
-(`agent-org-buffer--text-end'), which is what keeps the buffer valid Org while
-the agent is still talking.  The closing marker is rear-advancing, so text
-inserted at it pushes the marker down with the line instead of leaving the
-marker inside the body.
+The furniture is ONE line --- the prefix (`agent-org-buffer--prefix-line') ---
+and the answer is APPENDED under it for the whole turn
+(`agent-org-buffer--text-end').  That line is what replaced the quote block:
+`#+ATTR_TEXINFO' / `#+begin_quote' / `#+end_quote' were three lines whose only
+job was to hold an attribution and keep the buffer valid Org while the agent
+was still talking, and with the block gone there is nothing to close and nothing
+for an agent to escape from.  The insertion marker stays (rear-advancing, at
+the end of the prefix line), so every chunk and every drawer lands in the
+right order no matter which arrives first.
 
 It joins the heading `agent-org-buffer-begin-exchange' wrote, because one
 heading covers the pair; with nothing to answer it opens a heading of its own
@@ -2241,8 +2203,9 @@ ABOVE the box instead of inside it."
     (save-excursion
       (let ((inhibit-read-only t))
         (unless agent-org-buffer--streaming-p
-          ;; already streaming means the block is open: a second one per
+          ;; already streaming means the answer is open: a second prefix per
           ;; exchange would be a second answer
+          (setq agent-org-buffer--answer-written-p nil)
           (goto-char (agent-org-buffer--render-end))
           (agent-org-buffer--separator)
           (unless agent-org-buffer--awaiting-answer-p
@@ -2250,41 +2213,57 @@ ABOVE the box instead of inside it."
             (goto-char (agent-org-buffer--render-end))
             (agent-org-buffer--separator))
           (let ((beg (point)))
-            (insert (format "%s\n#+begin_quote\n" (agent-org-buffer--author-line)))
-            (let ((close (point)))
-              (insert "#+end_quote\n")
-              (agent-org-buffer--protect beg (point))
-              (let ((marker (make-marker)))
-                ;; rear-advancing: text inserted AT this position goes before
-                ;; the marker, so it keeps pointing at the closing line
-                (set-marker-insertion-type marker t)
-                (move-marker marker close)
-                (setq-local agent-org-buffer--quote-end marker))))
+            (insert (agent-org-buffer--prefix-line))
+            (insert "\n")
+            (agent-org-buffer--protect beg (point))
+            (let ((marker (make-marker)))
+              ;; rear-advancing, so consecutive answer chunks append in order:
+              ;; text written AT this position goes before the marker and it
+              ;; keeps pointing at the end of the answer.  That is also the
+              ;; hazard: a `:thinking:' / `:tool:' drawer drawn at
+              ;; `agent-org-buffer--render-end' -- which, with nothing trailing
+              ;; the answer yet, IS this marker position -- would push the
+              ;; sticky marker down past the board, and the answer's next chunk
+              ;; would land BELOW the drawers: the empty `Agent:' line on top
+              ;; with the prose stranded under the board, the exact "I can't go
+              ;; back and forth to read what the agent said" the user reported.
+              ;; `agent-org-buffer--redraw-drawer' therefore puts the marker
+              ;; back above any drawer it creates at this spot.
+              (set-marker-insertion-type marker t)
+              (move-marker marker (point))
+              (setq-local agent-org-buffer--quote-end marker))))
           (setq agent-org-buffer--streaming-p t
                 agent-org-buffer--awaiting-answer-p nil
-                agent-org-buffer--stream-start (point)))))))
+                agent-org-buffer--stream-start (point))))))
 
-(defun agent-org-buffer--drop-empty-quote ()
-  "Remove this turn's quote furniture when no answer text ever arrived.
-An empty quotation is not a fact about a silent agent, it is noise in the
-user's notes: a turn that only ran tools should read as the question plus its
-`:tool:' board.  Called at the turn boundary, when nothing more can arrive.
-The `:author' line goes with it — the provenance of nothing is nothing."
-  (when-let* ((end-pos (agent-org-buffer--live-mark agent-org-buffer--quote-end)))
-    (let ((inhibit-read-only t))
-      (save-excursion
-        (goto-char end-pos)                    ; bol of `#+end_quote'
-        (forward-line -1)
-        ;; EMPTY iff the line right above the closer is the opener: a real body
-        ;; line would sit between them.  (`line-end-position' of that line is
-        ;; always one short of `end-pos' — the closer's own newline — so an
-        ;; equality test there could never fire, and every tool-only turn kept
-        ;; a quote block with nothing in it.)
-        (when (looking-at "#\\+begin_quote[ \t]*$")
-          (forward-line -1)                    ; the `:author' keyword line
-          (delete-region (line-beginning-position)
-                         (progn (forward-line 3) (point))))
-        (move-marker agent-org-buffer--quote-end nil)))))
+(defun agent-org-buffer--drop-empty-response ()
+  "Remove this turn's prefix line when no answer text ever arrived.
+An attribution to nothing is noise in the user's notes: a turn that only ran
+tools should read as the question plus its `:tool:' board.  Called at the turn
+boundary, when nothing more can arrive.
+
+The test is the flag, not the buffer: `agent-org-buffer--answer-written-p' is
+set by `agent-org-buffer--advance-text-end' -- the one mover of the answer's
+marker -- so it records directly whether any prose landed this turn.  A blank
+line at the marker is NOT that test: once the marker has moved past the answer
+text and a drawer has been drawn below it, the marker points at the gap above
+the board, which reads blank, and an empty-looking line is no proof that the
+answer was empty.  Keyed off the flag, a tool-only turn (flag nil) drops its
+lonely `Agent:' line and a turn that said something (flag t) never does.
+
+It is the PREFIX line alone that goes.  With no text written the marker never
+moved, so it sits just past the newline that ends the prefix line: one
+`forward-line' back is the prefix, and the region from its start to the marker
+is exactly the `Agent:\\n' to remove -- never the drawer that follows."
+  (unless agent-org-buffer--answer-written-p
+    (when-let* ((end-pos (agent-org-buffer--live-mark agent-org-buffer--quote-end)))
+      (let ((inhibit-read-only t))
+        (save-excursion
+          (goto-char end-pos)                  ; just past the prefix's newline
+          (forward-line -1)                    ; onto the prefix line
+          (delete-region (line-beginning-position) end-pos)))))
+  (when (markerp agent-org-buffer--quote-end)
+    (move-marker agent-org-buffer--quote-end nil)))
 
 (defun agent-org-buffer--close-response-clock ()
   "Write this turn's `CLOCK:' line and `:RESPONSE:' property, once.
@@ -2373,7 +2352,7 @@ furniture entirely if the agent never said anything."
           (agent-org-buffer--markdown-flush-here)
           (goto-char (agent-org-buffer--text-end))
           (unless (bolp) (insert "\n"))
-          (agent-org-buffer--drop-empty-quote)
+          (agent-org-buffer--drop-empty-response)
           (setq agent-org-buffer--streaming-p nil
                 agent-org-buffer--stream-start nil))
         ;; The response clock closes at EVERY boundary, streaming or not:
@@ -2393,7 +2372,7 @@ With `agent-org-convert-markdown' (the default) the chunk goes to
 still-arriving line provisional — so what the buffer holds is always what the
 user reads, and the transcript mirrors that.  Without it the agent's bytes land
 as they were sent — but still through
-`agent-org-buffer--block-safe-lines', because verbatim is a rendering
+`agent-org-buffer--response-safe-lines', because verbatim is a rendering
 sentence, not a licence to let a `*' bullet end the answer's own quote block."
   (when (and text (not (string-empty-p text)))
     (agent-org-buffer-start-agent-turn buffer session)
@@ -2410,10 +2389,11 @@ sentence, not a licence to let a `*' bullet end the answer's own quote block."
             (goto-char (agent-org-buffer--text-end))
             (let ((beg (point)))
               (insert (mapconcat #'identity
-                                 (agent-org-buffer--block-safe-lines text)
+                                 (agent-org-buffer--response-safe-lines text)
                                  "\n"))
               (unless (bolp) (insert "\n"))
-              (agent-org-buffer--protect beg (point)))))))))
+              (agent-org-buffer--protect beg (point))
+              (agent-org-buffer--advance-text-end (point)))))))))
 
 ;;;; Auto-folded per-turn structure (tool and thinking drawers)
 
@@ -2484,11 +2464,25 @@ one drawer's body."
           (body (mapconcat #'identity lines "\n")))
       (save-excursion
         (let* ((turn-end (agent-org-buffer--render-end))
-               (region-start (or (agent-org-buffer--live-mark
-                                  agent-org-buffer--quote-end)
-                                 (agent-org-buffer--live-mark
-                                  agent-org-buffer--turn-anchor)
-                                 turn-end))
+               (anchor-pos (agent-org-buffer--live-mark
+                            agent-org-buffer--turn-anchor))
+               (mark-pos (agent-org-buffer--live-mark
+                          agent-org-buffer--quote-end))
+               ;; The search starts BELOW the answer's end marker whenever
+               ;; there is room below it (the live type-ahead box or queue,
+               ;; so a `:thinking:' line inside the agent's OWN text cannot
+               ;; be mistaken for the drawer).  But a drawer created with
+               ;; nothing under the marker makes the rear-advancing marker
+               ;; jump past its own `:end:' --- at that instant marker IS
+               ;; turn-end --- and searching from there would miss the very
+               ;; drawer it just leapt over and paint a second one below.
+               ;; When that jump has happened, start at the turn anchor
+               ;; instead: the drawer is between the anchor and the marker,
+               ;; and the marker sitting exactly at the end of the last
+               ;; drawer's body line makes the search find it.
+               (region-start (if (and mark-pos (< mark-pos turn-end))
+                                 mark-pos
+                               (or anchor-pos mark-pos turn-end)))
                ;; While a turn streams it runs from its anchor to
                ;; `turn-end': the live type-ahead box trails it, so the
                ;; search stops at the box rather than at `point-max'.
@@ -2500,7 +2494,8 @@ one drawer's body."
                        (when (re-search-forward (format "^:%s:$" name) turn-end t)
                          (match-beginning 0))))))
           (if (not drawer-beg)
-              (progn
+              (let ((answer-mark (agent-org-buffer--live-mark
+                                  agent-org-buffer--quote-end)))
                 (goto-char turn-end)
                 (agent-org-buffer--separator)
                 (let ((beg (point)))
@@ -2511,7 +2506,23 @@ one drawer's body."
                     (forward-line 1)
                     (let ((content (point)))
                       (re-search-forward "^:end:$")
-                      (org-fold-region content (line-end-position) t 'drawer)))))
+                      (org-fold-region content (line-end-position) t 'drawer))))
+                ;; Pull the answer's marker back above the drawer we just laid
+                ;; down.  A rear-advancing marker sits at the end of the answer
+                ;; text, and a drawer created here -- which is `render-end',
+                ;; i.e. the very bottom, the same position the marker holds
+                ;; whenever nothing trails the answer yet -- slides that marker
+                ;; past the separator AND the whole board, so the next chunk of
+                ;; prose would land UNDER the drawers while an empty `Agent:'
+                ;; line stayed on top.  The answer text always ends above this
+                ;; drawer (the drawer is drawn below everything in the turn), so
+                ;; restoring the marker to where it stood before the separator
+                ;; keeps every future chunk in the text and never under the
+                ;; board -- the ordering the user asked for.  Captured before
+                ;; the separator so the blank line that precedes the drawer
+                ;; stays BELOW the answer, not between prefix and prose.
+                (when (and (markerp agent-org-buffer--quote-end) answer-mark)
+                  (move-marker agent-org-buffer--quote-end answer-mark)))
             (let* ((content (save-excursion
                               (goto-char drawer-beg)
                               (forward-line 1)
@@ -2908,16 +2919,24 @@ The mirror is the frozen body — `point-min' to
 `agent-org-buffer--render-end' — which is exactly the conversation and
 nothing else: the same marker that keeps a streaming turn from
 scribbling over the user's draft separates \"sent\" from \"still
-typing\", so a draft that was never taken never reaches the file.  The
-metadata block is inside that range, which is how the `:QUEUE:' drawer —
-prompts the user sent into a busy session, so not conversation
-yet — comes along.
+typing\".  The metadata block is inside that range; the queue block is not,
+and `agent-org-buffer-transcribe' adds it, because a prompt the user sent
+into a busy session is neither conversation yet nor a draft.
 
 Called from turn boundaries and from the queue's own mutations (see
 agent-org.el), never from a render site: twenty chunks of an answer cost
 no writes, so a slow disk cannot stall a stream.  No-op with
 `agent-org-transcribe' nil, or before the agent has given the session an
 id.
+
+The waiting prompts are NOT in that range — `--render-end' answers with
+the queue region's own start so a turn can never bury them — so the block
+is appended here from `:queued', the session's list.  Not copied from the
+buffer: the region is the user's text and may be half-edited, and the
+drain takes the list, so the list is what a resume must find.  The block is
+the renderer's own output, so the file shows the same `* TODO'
+headlines the chat shows, in the same order, and
+`agent-org-buffer-transcript-queue' reads them back with the same parser.
 
 LITE is the third gate, and it is not \"no file\": a lite session writes its
 file while `:queued' is non-nil and stops the moment the queue drains.  The
@@ -2941,8 +2960,9 @@ the user turned off."
              (queue (plist-get status :queued))
              (lite (agent-org-lite-p)))
         (when (and session-id (or force (not lite) queue))
-          (let ((text (buffer-substring-no-properties
-                       (point-min) (agent-org-buffer--render-end))))
+          (let ((text (concat (buffer-substring-no-properties
+                               (point-min) (agent-org-buffer--render-end))
+                              (agent-org-buffer-render-queue queue))))
             (when (or force (not (equal text agent-org-buffer--transcript-cache)))
               (agent-org-buffer--write-transcript session-id text))))))))
 
@@ -2962,17 +2982,24 @@ global pool is still a setting away rather than a code change."
 Resume needs this because a queued prompt was never sent: it is in none of
 the places a restore normally finds text — not the agent's `session/load'
 replay (the agent never saw it), not the buffer (a fresh one), not a
-`* User' heading.  The drawer the last session mirrored is the only copy
-that survives.
+`* User' heading.  The queue block `agent-org-buffer-transcribe' appended to
+the last session's mirror is the only copy that survives.
+
+The block is found by its preamble (`agent-org-buffer--queue-note-text'),
+which the renderer writes and a conversation line cannot be — and the LAST
+such match is the one taken, because the block is always the final thing in
+the file.  Slicing from there means the entries are read by
+`agent-org-buffer--queue-parse-text', the same reader the live region uses,
+so a file written by one version cannot mean something else to another.
 
 Called with the chat buffer current, so the file resolves against the same
 project the writer used — looking in the wrong directory would silently
 restore nothing.
 
-nil is the ordinary answer: no file (`agent-org-transcribe' off, or a
-session older than the feature), no drawer, or an empty one.  An unreadable
-file is nil too: a transcript is a convenience, and one that cannot be read
-must not stop a session loading."
+nil is the ordinary answer: no file (`agent-org-transcribe' off, a session
+older than the feature, or one that never queued anything), or a block with
+no entries in it.  An unreadable file is nil too: a transcript is a
+convenience, and one that cannot be read must not stop a session loading."
   (when session-id
     (let ((file (agent-org-buffer--transcript-file session-id)))
       (when (file-readable-p file)
@@ -2980,25 +3007,15 @@ must not stop a session loading."
             (with-temp-buffer
               (insert-file-contents file)
               (goto-char (point-min))
-              (when (re-search-forward "^:QUEUE:[ \t]*\n" nil t)
-                ;; the body is one line per prompt, up to BUT NOT INCLUDING
-                ;; the `:END:' line — `re-search-forward' returns a match's
-                ;; END, so the region has to stop at `match-beginning'.
-                (let ((beg (point)))
-                  (when (re-search-forward "^:END:[ \t]*$" nil t)
-                    ;; Only `- ' lines are entries.  A drawer body with
-                    ;; anything else in it — a `… (+3 more)' tail left by an
-                    ;; older build, a line a person typed while looking at
-                    ;; the file — is not a prompt, and decoding it would
-                    ;; enqueue a phantom on resume.
-                    (mapcar #'agent-org-buffer--queue-decode
-                            (seq-filter (lambda (line)
-                                          (string-prefix-p "- " line))
-                                        (split-string
-                                         (buffer-substring-no-properties
-                                          beg (match-beginning 0))
-                                         "\n" t)))))))
+              (let ((note (regexp-quote agent-org-buffer--queue-note-text))
+                    (beg nil))
+                (while (re-search-forward note nil t)
+                  (setq beg (match-beginning 0)))
+                (when beg
+                  (agent-org-buffer--queue-parse-text
+                   (buffer-substring-no-properties beg (point-max))))))
           (file-error nil))))))
+
 (defun agent-org-buffer--write-transcript (session-id text)
   "Replace this buffer's transcript file with TEXT.
 Called with the chat buffer current, which is what gives

@@ -45,6 +45,44 @@
 
 ;;;; Provider registry
 
+(ert-deftest test-agent-org-slave-agent-provider-present ()
+  "slave-agent is registered as the first provider: it is the agent this
+package was written around.
+The command is `slave-acp', a standalone console script, NOT `slave acp'.
+That distinction is load-bearing and invisible from the outside: the
+script serves ACP on stdio without loading the CLI and without
+provisioning dependencies at launch, which is what a package-manager
+install (Guix) needs an editor spawn to do.  It pins no model because the
+agent reads its own ~/.slave/config.yaml."
+  (let ((slave (agent-org--provider-spec 'slave-agent)))
+    (should (equal (plist-get slave :name) "slave-agent"))
+    (should (equal (plist-get slave :command) '("slave-acp")))
+    (should-not (plist-get slave :model))
+    (should (equal (plist-get slave :environment)
+                   #'agent-org-slave-agent-environment))))
+
+(ert-deftest test-agent-org-slave-agent-start-opens-slave-agent ()
+  "The named entry point opens slave-agent, not another provider.
+Caught by the same copy-paste that made the drift test necessary: a
+`agent-org-slave-agent-start-agent' that starts the wrong agent passes
+`test-agent-org-every-provider-has-a-start-agent-command'."
+  (ao--capture-wire
+    (let ((buf (agent-org-slave-agent-start-agent)))
+      (should (buffer-live-p buf))
+      (should (eq 'slave-agent (plist-get (agent-org--session-for-buffer buf) :name)))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-slave-agent-environment-passes-home-only ()
+  "No secret crosses into the agent's environment from Emacs.
+slave-agent loads ~/.slave/.env itself; the one thing Emacs may legitimately
+steer is which profile's state dir the session binds, via `SLAVE_HOME'.
+Exporting anything else would be a second source of truth for a credential."
+  (let ((process-environment '("SLAVE_HOME=")))
+    (should-not (agent-org-slave-agent-environment)))
+  (let ((process-environment '("SLAVE_HOME=/tmp/slave-profile")))
+    (should (equal (agent-org-slave-agent-environment)
+                   '("SLAVE_HOME=/tmp/slave-profile")))))
+
 (ert-deftest test-agent-org-goose-provider-present ()
   "Goose provider is registered with required fields."
   (let ((goose (seq-find (lambda (p) (eq (plist-get p :id) 'goose))
@@ -116,6 +154,36 @@ Login is kept by the CLI itself, so nothing is exported by default."
     (should-not (plist-get codebuddy :model))
     (should (equal (plist-get codebuddy :environment)
                    #'agent-org-codebuddy-environment))))
+
+(ert-deftest test-agent-org-copilot-cursor-codebuddy-pass-only-what-they-need ()
+  "Three providers, three credential stories, and all three are pass-through or
+nothing.  Copilot exports nothing unless a headless COPILOT_GITHUB_TOKEN is
+already in the environment; Cursor prefers CURSOR_API_KEY and falls back to
+CURSOR_AUTH_TOKEN, both passed through rather than fetched; CodeBuddy exports
+NOTHING, ever, because its login lives in the CLI.  The point of the three
+assertions is the same: no provider of this package reads a credential store
+of its own, so Emacs never becomes a second source of truth for a secret."
+  (let ((process-environment '("COPILOT_GITHUB_TOKEN="
+                                "CURSOR_API_KEY="
+                                "CURSOR_AUTH_TOKEN=")))
+    (should-not (agent-org-copilot-environment))
+    (should-not (agent-org-cursor-environment))
+    (should-not (agent-org-codebuddy-environment)))
+  (let ((process-environment '("COPILOT_GITHUB_TOKEN=ghp_headless"
+                                "CURSOR_API_KEY=key-123"
+                                "CURSOR_AUTH_TOKEN=token-456")))
+    (should (equal (agent-org-copilot-environment)
+                   '("COPILOT_GITHUB_TOKEN=ghp_headless")))
+    ;; the PREFERRED variable wins, and only one of the two crosses
+    (should (equal (agent-org-cursor-environment) '("CURSOR_API_KEY=key-123"))))
+  ;; the FALLBACK token is used only when the preferred one is absent
+  (let ((process-environment '("CURSOR_API_KEY=" "CURSOR_AUTH_TOKEN=token-456")))
+    (should (equal (agent-org-cursor-environment)
+                   '("CURSOR_AUTH_TOKEN=token-456"))))
+  ;; CodeBuddy has no environment function body to fall back on: its login is
+  ;; the CLI's, so the answer is nil whatever the environment says
+  (let ((process-environment '("CODEBUDDY_TOKEN=whatever")))
+    (should-not (agent-org-codebuddy-environment))))
 
 (ert-deftest test-agent-org-cline-provider-present ()
   "Cline is its own CLI agent: `cline --acp', login kept by the CLI.
@@ -1291,8 +1359,9 @@ declared is text pretending to be a state."
       (should (= 1 (ao--count-occurrences text "^  - COMPLETE tc3$")))
       (should (= 1 (ao--count-occurrences text "^  - FAILED tc4$")))
       (should-not (string-match-p "^  - \\(DOING\\|DONE\\|CANCELLED\\) " text))
-      ;; and the file declares exactly that set, done states last
-      (should (string-match-p "^#\\+TODO: NEXT WAIT TODO ONGOING | COMPLETE FAILED$"
+      ;; and the file declares the PROMPT vocabulary, not the call words: a
+      ;; call is drawer text, so ONGOING/COMPLETE/FAILED are never Org states
+      (should (string-match-p "^#\\+TODO: TODO RESPONDING IDLE | RESPONDED ERROR$"
                              text)))
     (kill-buffer buf)))
 
@@ -1905,14 +1974,13 @@ reopen."
         (should (eq 'error (plist-get agent-org-buffer--status :state)))))
     (kill-buffer buf)))
 
-;;;; The queue, edited where it is read: `* NEXT'/`* WAIT' at the buffer end
+;;;; The queue, edited where it is read: `* TODO' at the buffer end
 
 (defun ao--queued (prompts)
   "A test session whose queue is PROMPTS, with the entries rendered.
-Returns (CHAT . SESSION).  The refresh is the real one, so the entries, the
-`:QUEUE:' drawer and the transcript all stand where a live enqueue would
-leave them -- these tests are about the shape the user edits, not about a
-renderer called directly."
+Returns (CHAT . SESSION).  The refresh is the real one, so the entries and the
+transcript both stand where a live enqueue would leave them -- these tests are
+about the shape the user edits, not about a renderer called directly."
   (let* ((pair (ao--make-test-session "queue"))
          (chat (car pair))
          (session (cdr pair)))
@@ -1929,7 +1997,7 @@ renderer called directly."
             (agent-org-buffer--queue-headlines))))
 
 (ert-deftest test-agent-org-queue-entries-sit-at-the-buffer-bottom ()
-  "The waiting prompts are `* NEXT'/`* WAIT' headings between the last exchange
+  "The waiting prompts are `* TODO' headings between the last exchange
 and the live `* User' box -- not in a drawer at the top, and not after the box.
 The user asked for them at the bottom and for the box to stay the last
 thing they type in, so the order is exchange, then entries, then box."
@@ -1942,13 +2010,13 @@ thing they type in, so the order is exchange, then entries, then box."
           (agent-org--queue-refresh (cdr pair) buf)
           (let ((text (buffer-string)))
             (should (apply #'ao--ordered text
-                           (list "* NEXT first" "* WAIT second" "* User")))
-            (should (string-match-p "^\\* NEXT first$" text))
-            (should (string-match-p "^\\* WAIT second$" text))
-            ;; and the file DECLARES both words, which is what makes them
+                           (list "* TODO first" "* TODO second" "* User")))
+            (should (string-match-p "^\\* TODO first$" text))
+            (should (string-match-p "^\\* TODO second$" text))
+            ;; and the file DECLARES the words, which is what makes them
             ;; states rather than text (the live set is Org's own business:
             ;; `org-todo-keywords-1' lives in org-agenda.el)
-            (should (string-match-p "^#\\+TODO: NEXT WAIT " text))
+            (should (string-match-p "^#\\+TODO: TODO RESPONDING IDLE " text))
             (should (agent-org-buffer--todo-live-p))))
       (kill-buffer buf))))
 
@@ -1969,8 +2037,27 @@ everything from its headline to the next, so a prompt keeps its blank lines."
       (should (= 3 (length (agent-org-buffer--queue-headlines)))))
     (kill-buffer (car pair))))
 
+(ert-deftest test-agent-org-queue-reads-retired-words-and-writes-only-todo ()
+  "A NEXT/WAIT file from before this vocabulary still gives up its prompts.
+Yesterday's queue is the user's own text: losing a prompt because the word on it
+changed is not a migration, it is a deletion.  So the READER takes both
+spellings and the WRITER only ever uses TODO -- which means an old file
+converges on the new word the first time its queue is redrawn, with no migration
+pass and no version stamp to check."
+  (let ((old (concat agent-org-buffer--queue-note-text
+                     "* NEXT finish the tests\n"
+                     "* WAIT then check the build\n second line\n")))
+    (should (equal '("finish the tests" "then check the build\nsecond line")
+                   (agent-org-buffer--queue-parse-text old)))
+    ;; and re-rendering what that file held cannot write the retired words back
+    (let ((pair (ao--queued (agent-org-buffer--queue-parse-text old))))
+      (with-current-buffer (car pair)
+        (should (equal '("* TODO finish the tests" "* TODO then check the build")
+                       (ao--queue-headings))))
+      (kill-buffer (car pair)))))
+
 (ert-deftest test-agent-org-queue-parse-is-confined-to-the-region ()
-  "Only NEXT and WAIT lines are entries, and only inside the region.
+  "Only queue keywords are entries, and only inside the region.
 An agent's answer can contain anything, and a turn's own heading is the user's
 prompt: neither may be read as a queued prompt, or a resume would send the
 conversation back at the agent."
@@ -1981,33 +2068,35 @@ conversation back at the agent."
           (agent-org-buffer-insert-prompt buf)
           (setf (plist-get (cdr pair) :pending-prompts) '("waiting"))
           (agent-org--queue-refresh (cdr pair) buf)
-          (agent-org-buffer-begin-exchange buf "a question about * NEXT text")
+          (agent-org-buffer-begin-exchange buf "a question about * TODO text")
           (agent-org-buffer-insert-tool
-           buf '((toolCallId . "t1") (title . "run * WAIT now") (status . "pending")))
+           buf '((toolCallId . "t1") (title . "run * TODO now") (status . "pending")))
           (should (equal '("waiting") (agent-org-buffer-queue-parse nil))))
       (kill-buffer (car pair)))))
 
-(ert-deftest test-agent-org-queue-move-reorders-and-restates-the-words ()
-  "M-DOWN moves an entry, and the words are re-derived from the new order.
-A heading that kept its old keyword after a move would promise a place in the
-send order it no longer has: the entry that moves up is now the one that goes
-out next, so it must SAY so."
+(ert-deftest test-agent-org-queue-move-reorders-without-touching-the-words ()
+  "M-DOWN moves an entry, and nothing has to be restated.
+The keyword says what a prompt IS -- one that has not gone out -- not where it
+sits, so a move changes the ORDER and leaves every heading alone.  The retired
+NEXT/WAIT pair put the position in the word, which meant a move had to re-word
+two headings and a drifted keyword was a lie about which prompt left next."
   (let ((pair (ao--queued '("one" "two" "three"))))
     (with-current-buffer (car pair)
-      (should (equal '("* NEXT one" "* WAIT two" "* WAIT three")
+      (should (equal '("* TODO one" "* TODO two" "* TODO three")
                      (ao--queue-headings)))
       (goto-char (point-min))
-      (search-forward "* NEXT one")
+      (search-forward "* TODO one")
       (agent-org-buffer-queue-move-down)
       (should (equal '("two" "one" "three") (agent-org-buffer-queue-parse nil)))
-      (should (equal '("* NEXT two" "* WAIT one" "* WAIT three")
+      (should (equal '("* TODO two" "* TODO one" "* TODO three")
                      (ao--queue-headings)))
-      ;; and the moved entry is the one that would go out next
+      ;; and the moved entry is the one that would go out next: the FIRST
+      ;; heading, which is the only thing that says so
       (goto-char (point-min))
-      (search-forward "* WAIT three")
+      (search-forward "* TODO three")
       (agent-org-buffer-queue-move-up)
       (should (equal '("two" "three" "one") (agent-org-buffer-queue-parse nil)))
-      (should (equal '("* NEXT two" "* WAIT three" "* WAIT one")
+      (should (equal '("* TODO two" "* TODO three" "* TODO one")
                      (ao--queue-headings))))
     (kill-buffer (car pair))))
 
@@ -2025,14 +2114,14 @@ boundaries -- what locates every turn -- stay untouchable."
     (kill-buffer (car pair))))
 
 (ert-deftest test-agent-org-queue-add-makes-a-slot-at-the-bottom ()
-  "C-c C-a appends a blank `* WAIT' entry and lands point in it.
+  "C-c C-a appends a blank `* TODO' entry and lands point in it.
 A blank entry is dropped on parse, so composing one cannot send a blank -- and
-the word is WAIT whatever the queue holds, because a new entry is last and
-cannot be the next to go out."
+the new slot wears the same word as the prompts already waiting, because a
+keyword that means `not sent yet' has no position in it."
   (let ((pair (ao--queued '("one"))))
     (with-current-buffer (car pair)
       (agent-org-buffer-queue-add)
-      (should (equal '("* NEXT one" "* WAIT ") (ao--queue-headings)))
+      (should (equal '("* TODO one" "* TODO ") (ao--queue-headings)))
       (should (equal '("one") (agent-org-buffer-queue-parse nil)))
       ;; typing into the slot makes it an entry, still last
       (end-of-line)
@@ -2042,20 +2131,21 @@ cannot be the next to go out."
 
 (ert-deftest test-agent-org-queue-kill-removes-one-entry ()
   "C-c C-d kills the entry at point and the rest keep their order.
-The words are re-stated after the kill, so the new head wears NEXT."
+Nothing is re-stated after the kill: the new head of the list was already
+wearing the same word as its neighbours."
   (let ((pair (ao--queued '("one" "two" "three"))))
     (with-current-buffer (car pair)
       (goto-char (point-min))
-      (search-forward "* WAIT two")
+      (search-forward "* TODO two")
       (agent-org-buffer-queue-kill)
       (should (equal '("one" "three") (agent-org-buffer-queue-parse nil)))
-      (should (equal '("* NEXT one" "* WAIT three") (ao--queue-headings))))
+      (should (equal '("* TODO one" "* TODO three") (ao--queue-headings))))
     (kill-buffer (car pair))))
 
 (ert-deftest test-agent-org-queue-refresh-is-idempotent ()
   "Re-rendering the same queue leaves one copy of every entry.
 The region is delete-then-insert between two markers, so a refresh at a turn
-boundary cannot append a second `* NEXT' -- the failure mode a reader would
+boundary cannot append a second `* TODO one' -- the failure mode a reader would
 see as a prompt sent twice."
   (let* ((pair (ao--queued '("one" "two")))
          (chat (car pair))
@@ -2064,7 +2154,7 @@ see as a prompt sent twice."
       (agent-org--queue-refresh session chat))
     (with-current-buffer chat
       (should (equal '("one" "two") (agent-org-buffer-queue-parse nil)))
-      (should (= 1 (ao--count-occurrences (buffer-string) "^\\* NEXT one$"))))
+      (should (= 1 (ao--count-occurrences (buffer-string) "^\\* TODO one$"))))
     (kill-buffer chat)))
 
 (ert-deftest test-agent-org-queue-refresh-never-lands-after-the-box ()
@@ -2084,14 +2174,15 @@ while a queue waits lands above the queue and the box stays last."
           (insert "draft")
           (agent-org-buffer-append-thought buf "thinking")
           (should (apply #'ao--ordered (buffer-string)
-                         (list "* NEXT waiting" "* User"))))
+                         (list "* TODO waiting" "* User"))))
       (kill-buffer buf))))
 
-(ert-deftest test-agent-org-queue-drain-promotes-the-next-word ()
-  "When a queued prompt goes out, the one behind it takes the NEXT word.
-The word is the send order, so it has to follow the list rather than travel
-with the entry: the entry the user did not touch is now the one that goes
-out next."
+(ert-deftest test-agent-org-queue-drain-leaves-the-rest-waiting ()
+  "When a queued prompt goes out, the one behind it is simply the first heading.
+Nothing about it changes: TODO says it has not been sent, and that is still
+true of it in the new position.  The retired NEXT word had to be RE-STATED on
+the survivor, which is a keyword that travels with the send order rather than
+describing the prompt."
   (let* ((pair (ao--make-test-session "q-drain-word"))
          (buf (car pair))
          (session (cdr pair))
@@ -2106,7 +2197,7 @@ out next."
         (agent-org-buffer-insert-prompt buf)
         (agent-org--drain-queue session buf)
         (should (equal '("second") (agent-org-buffer-queue-parse nil)))
-        (should (equal '("* NEXT second") (ao--queue-headings)))))
+        (should (equal '("* TODO second") (ao--queue-headings)))))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-queue-refresh-never-undoes-a-move ()
@@ -2119,14 +2210,14 @@ refresh paints the session's old order straight back over the user's gesture."
          (session (cdr pair)))
     (with-current-buffer chat
       (goto-char (point-min))
-      (search-forward "* NEXT one")
+      (search-forward "* TODO one")
       (agent-org-buffer-queue-move-down)
       (should (equal '("two" "one") (agent-org-buffer-queue-parse nil)))
     ;; a refresh with a queue the session still thinks is the old one
     (agent-org--queue-refresh session chat)
     (with-current-buffer chat
       (should (equal '("two" "one") (agent-org-buffer-queue-parse nil)))
-      (should (equal '("* NEXT two" "* WAIT one") (ao--queue-headings))))
+      (should (equal '("* TODO two" "* TODO one") (ao--queue-headings))))
     ;; and applying is what makes the session agree
     (with-current-buffer chat
       (agent-org-queue-apply))
@@ -2134,7 +2225,7 @@ refresh paints the session's old order straight back over the user's gesture."
     (kill-buffer chat))))
 
 (ert-deftest test-agent-org-queue-refresh-keeps-a-fresh-slot ()
-  "A blank `* WAIT' slot in an EMPTY queue is not clobbered by a refresh.
+  "A blank `* TODO' slot in an EMPTY queue is not clobbered by a refresh.
 The parser drops a blank entry, so a guard that compared parsed lists would
 call this region untouched --- and a prompt queued a moment later would delete
 the half-typed prompt in it.  The guard compares raw TEXT for exactly this."
@@ -2143,7 +2234,7 @@ the half-typed prompt in it.  The guard compares raw TEXT for exactly this."
     (unwind-protect
         (with-current-buffer buf
           (agent-org-queue-edit)
-          (should (equal '("* WAIT ") (ao--queue-headings)))
+          (should (equal '("* TODO ") (ao--queue-headings)))
           (insert "half-typed")
           ;; the session gains a prompt while the slot is being typed
           (setf (plist-get (cdr pair) :pending-prompts) '("from the box"))
@@ -2162,7 +2253,7 @@ reads as what was last written into it."
          (session (cdr pair)))
     (with-current-buffer chat
       (goto-char (point-min))
-      (search-forward "* NEXT one")
+      (search-forward "* TODO one")
       (end-of-line)
       (insert " -- edited"))
     ;; the session's list moved on while the user was typing
@@ -2171,7 +2262,7 @@ reads as what was last written into it."
     (with-current-buffer chat
       (should (equal '("one -- edited" "two")
                      (agent-org-buffer-queue-parse nil)))
-      (should (string-match-p "^\\* NEXT one -- edited$" (buffer-string))))
+      (should (string-match-p "^\\* TODO one -- edited$" (buffer-string))))
     (kill-buffer chat)))
 
 (ert-deftest test-agent-org-queue-apply-drops-what-the-agent-already-sent ()
@@ -2188,7 +2279,7 @@ anywhere, and the drain took the front of the SESSION's list."
       (agent-org--queue-note chat 'agent-org-buffer--queue-sent "one")
       ;; and the region still shows both, with the user's re-ordering
       (goto-char (point-min))
-      (search-forward "* WAIT two")
+      (search-forward "* TODO two")
       (agent-org-buffer-queue-move-up))
     (with-current-buffer chat
       (agent-org-queue-apply))
@@ -2208,7 +2299,7 @@ verbatim would overwrite it away -- a queue entry the user paid for."
     (agent-org--queue-note chat 'agent-org-buffer--queue-added "fresh")
     (with-current-buffer chat
       (goto-char (point-min))
-      (search-forward "* NEXT one")
+      (search-forward "* TODO one")
       (end-of-line)
       (insert " -- edited"))
     (with-current-buffer chat
@@ -2218,7 +2309,7 @@ verbatim would overwrite it away -- a queue entry the user paid for."
 
 (ert-deftest test-agent-org-queue-edit-goes-to-the-entries ()
   "C-c C-q puts point on the waiting prompts, and makes one when there are none.
-An empty queue is not an error and not a no-op: a blank `* WAIT' slot is where
+An empty queue is not an error and not a no-op: a blank `* TODO' slot is where
 the next thing to ask gets written, and it is dropped on apply if left empty."
   (let* ((pair (ao--make-test-session "q-edit"))
          (buf (car pair)))
@@ -2227,10 +2318,10 @@ the next thing to ask gets written, and it is dropped on apply if left empty."
           (should-not (agent-org-buffer-queue-p buf))
           (agent-org-queue-edit)
           (should (agent-org-buffer-queue-p buf))
-          (should (equal '("* WAIT ") (ao--queue-headings)))
+          (should (equal '("* TODO ") (ao--queue-headings)))
           ;; a second call does not stack regions
           (agent-org-queue-edit)
-          (should (equal '("* WAIT ") (ao--queue-headings))))
+          (should (equal '("* TODO ") (ao--queue-headings))))
       (kill-buffer buf))))
 
 (ert-deftest test-agent-org-queue-edit-refuses-a-non-chat-buffer ()
@@ -2259,10 +2350,11 @@ the entries now show and edit.  There is no second buffer to switch to."
   (should-not (fboundp 'agent-org-queue-remove))
   (should-not (fboundp 'agent-org-queue-mode)))
 
-(ert-deftest test-agent-org-queue-drawer-arrives-open-in-the-chat-buffer ()
-  "Waiting prompts are SHOWN, not folded: the `:QUEUE:' drawer is created
-OPEN, like the tool board, because a queue that appears mid-turn is news.
-A queue that empties takes its drawer away."
+(ert-deftest test-agent-org-queue-entries-appear-and-go-with-the-queue ()
+  "Waiting prompts are SHOWN as headlines, and an empty queue leaves nothing.
+A queue that appears mid-turn is news the user must see without a TAB; one
+that drains must not leave a `* TODO' behind, because a stale heading reads as
+a prompt nobody sent — and the transcript mirrors what the buffer shows."
   (let* ((pair (ao--make-test-session "q-fold"))
          (buf (car pair))
          (session (cdr pair)))
@@ -2270,33 +2362,39 @@ A queue that empties takes its drawer away."
     (agent-org--queue-refresh session buf)
     (with-current-buffer buf
       (goto-char (point-min))
-      (should (re-search-forward "^:QUEUE:" nil t))
-      (forward-line 1)
-      (should-not (invisible-p (point)))
-      (should (looking-at "- waiting one")))
+      (should (re-search-forward "^\\* TODO waiting one$" nil t)))
     (setf (plist-get session :pending-prompts) nil)
     (agent-org--queue-refresh session buf)
     (with-current-buffer buf
-      (should-not (save-excursion
-                    (goto-char (point-min))
-                    (re-search-forward "^:QUEUE:" nil t))))
+      (should-not (string-match-p agent-org-buffer--queue-headline-re
+                                  (buffer-string)))
+      (should-not (string-match-p
+                   (regexp-quote agent-org-buffer--queue-note-text)
+                   (buffer-string))))
     (kill-buffer buf)))
 
-(ert-deftest test-agent-org-queue-drawer-shows-every-waiting-prompt ()
-  "No cap on the queue: 55 waiting prompts are 55 lines in the buffer.
-The reference drawers may end in `… (+N more)' and nothing is lost, because
-the agent can always be asked again; the queue IS the record the transcript
-mirrors, so a truncation there destroys a prompt the user paid for."
-  (let* ((pair (ao--make-test-session "q-cap"))
-         (buf (car pair))
-         (session (cdr pair))
-         (prompts (cl-loop for i from 1 to 55 collect (format "prompt %d" i))))
-    (setf (plist-get session :pending-prompts) prompts)
-    (agent-org--queue-refresh session buf)
-    (with-current-buffer buf
-      (should (= 55 (ao--count-substrings "\n- prompt ")))
-      (should-not (string-match-p "more)" (buffer-string))))
-    (kill-buffer buf)))
+(ert-deftest test-agent-org-queue-mirrors-every-waiting-prompt ()
+  "No cap on the queue: 55 waiting prompts are 55 entries and 55 prompts back.
+The reference drawers may end in `… (+N more)' and nothing is lost, because the
+agent can always be asked again; the queue IS the record the transcript
+mirrors, so a truncation there destroys a prompt the user paid for.  Asserted
+through the file rather than by counting lines: the resume path is the one that
+must not lose the fifty-fifth."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in temp-dir
+      (let* ((pair (ao--make-test-session "q-cap"))
+             (buf (car pair))
+             (session (cdr pair))
+             (prompts (cl-loop for i from 1 to 55 collect (format "prompt %d" i))))
+        (setf (plist-get session :pending-prompts) prompts)
+        (agent-org--queue-refresh session buf)
+        (with-current-buffer buf
+          (should (= 55 (length (agent-org-buffer-queue-parse buf))))
+          (should-not (string-match-p "more)" (buffer-string)))
+          (should (equal prompts
+                         (agent-org-buffer-transcript-queue
+                          (plist-get session :session-id)))))
+        (kill-buffer buf)))))
 
 ;;;; Interrupt (cancel a running turn)
 
@@ -2351,8 +2449,8 @@ turn the user never asked for, and each one that answers fires the next, so a
 single cancel emptied the whole queue in seconds.
 
 So cancel closes the cancelled turn and leaves `:pending-prompts' exactly as
-it was: still in the session, still in the buffer's `:QUEUE:' drawer, still in
-the transcript file.  `agent-org-queue-resume' is the only way one goes out,
+it was: still in the session, still as `* TODO' headlines in the
+buffer, still in the transcript file.  `agent-org-queue-resume' is the only way one goes out,
 besides a later turn ending successfully."
   (let* ((pair (ao--make-test-session "cancel-q"))
          (buf (car pair))
@@ -2383,9 +2481,8 @@ besides a later turn ending successfully."
           (should (agent-org-buffer--open-prompt-p))
           (should-not (string-match-p "^\\* next$" (buffer-string)))
           ;; and the waiting prompts are still where the user can read them
-          (should (string-match-p "^:QUEUE:$" (buffer-string)))
-          (should (string-match-p "\n- next\n" (buffer-string)))
-          (should (string-match-p "\n- last\n" (buffer-string))))
+          (should (string-match-p "^\\* TODO next$" (buffer-string)))
+          (should (string-match-p "^\\* TODO last$" (buffer-string))))
         ;; the cancelled turn's late answer must not drain it either
         (funcall (plist-get (car sent) :on-success) nil)
         (should (= before (length sent)))
@@ -2411,7 +2508,8 @@ Port of `agent-shell-prompt-queue-resume' (agent-shell-prompt-queue.el:370)."
         (should (equal '("one") (ao--sent-texts sent)))
         (should (equal '("two") (plist-get session :pending-prompts)))
         (should (string-match-p "^\\* one$" (buffer-string)))
-        (should (string-match-p "\n- two\n" (buffer-string)))))
+        ;; the survivor is the head of the queue again, and every entry already wore the same word
+        (should (string-match-p "^\\* TODO two$" (buffer-string)))))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-queue-resume-while-busy-sends-nothing ()
@@ -3019,20 +3117,23 @@ page the directory again, even when the first lookup came back empty."
 
 ;;;; Tool keyword setup & mode-line hygiene
 
-(ert-deftest test-agent-org-metadata-declares-tool-todo-keywords ()
-  "The metadata block carries the per-file `#+TODO:' setup line that
-gives the tool board its ONGOING/COMPLETE/FAILED states, and Org actually
-parses it (C-c C-c on a heading of this file offers these keywords).
-The line and the board must agree: a `COMPLETE' printed in a file that
-declares only DONE is text pretending to be a state, and `C-c C-t' would
-offer the user a different word from the one they are reading."
+(ert-deftest test-agent-org-metadata-declares-prompt-todo-keywords ()
+  "The metadata block carries the per-file `#+TODO:' setup line holding the
+PROMPT states, and Org actually parses it (C-c C-t on a queue heading offers
+these words).
+
+The call words are deliberately absent.  A tool is a line of the `:tool:'
+drawer, and Org forbids headlines inside drawers, so ONGOING/COMPLETE/FAILED are
+text a reader sees and never a state `C-c C-t' can set -- declaring them would
+put a call's verbs on the completion list of a prompt's headline and let
+somebody mark a prompt COMPLETE, which is the wrong verb for an answer."
   (let* ((pair (ao--make-test-session "kw"))
          (buf (car pair))
          (session (cdr pair)))
     (setf (plist-get session :session-id) nil)
     (agent-org--session-ready session "sid-k" (ao--fake-session-new-resp))
     (with-current-buffer buf
-      (should (string-match-p "^#\\+TODO: NEXT WAIT TODO ONGOING | COMPLETE FAILED$"
+      (should (string-match-p "^#\\+TODO: TODO RESPONDING IDLE | RESPONDED ERROR$"
                               (buffer-string)))
       (should (= 1 (ao--count-occurrences
                     (buffer-string) "^#\\+TODO:")))
@@ -3043,11 +3144,10 @@ offer the user a different word from the one they are reading."
         (should (< (point) (save-excursion (goto-char (point-min))
                                            (re-search-forward "^\\* ")))))
       ;; and `org-set-regexps-and-options' really applied it: the
-      ;; buffer-local keyword set now includes ONGOING/FAILED, which
-      ;; the global default set does not
-      (should (equal '("NEXT" "WAIT" "TODO" "ONGOING" "COMPLETE" "FAILED")
+      ;; buffer-local keyword set is this file's, not Org's default
+      (should (equal '("TODO" "RESPONDING" "IDLE" "RESPONDED" "ERROR")
                      org-todo-keywords-1))
-      (should-not (member "ONGOING" (default-value 'org-todo-keywords-1))))
+      (should-not (member "ONGOING" org-todo-keywords-1)))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-leaves-mode-line-alone ()
@@ -4068,10 +4168,10 @@ own, because the id is what names their file.  Caller kills the buffer."
                      (configOptions . []))))
       buf)))
 
-(ert-deftest test-agent-org-quote-author-wears-the-id-when-nothing-names-it ()
-  "An agent that reports a value but no label gets the value on the quote.
+(ert-deftest test-agent-org-prefix-wears-the-id-when-nothing-names-it ()
+  "An agent that reports a value but no label gets the value on the prefix.
 `agent-org--ingest-config' stores the advertised `name' in `:model-name' and
-falls back to the wire id when the agent names nothing, so an `:author' built
+falls back to the wire id when the agent names nothing, so a prefix built
 from the display shows an id there — the same rule the header line follows (a
 bar that drops the model field reads as \"no model\"), and an id is a clue
 where the generic word is not.  Agents rename their catalog between
@@ -4084,26 +4184,25 @@ disappears."
                        (plist-get agent-org-buffer--status :model)))
         (agent-org-buffer-start-agent-turn buf (agent-org-buffer--session))
         (goto-char (point-min))
-        (should (re-search-forward
-                 "^#\\+ATTR_TEXINFO: :author ghost-model$" nil t)))
+        (should (re-search-forward "^ghost-model: $" nil t)))
       (kill-buffer buf))))
 
-(ert-deftest test-agent-org-quote-author-flattens-a-multiline-model-name ()
-  "A model label is agent free text, so it cannot break the keyword line.
+(ert-deftest test-agent-org-prefix-flattens-a-multiline-model-name ()
+  "A model label is agent free text, so it cannot break the prefix line.
 `agent-org-buffer--label' is the gate every agent-supplied string passes
 before it lands on a one-line context; a config option named \"A\\nB\" must
-produce ONE attribute line, not an attribute and a stray paragraph that Org
-would read as the quote's body with a lost structure."
+produce ONE prefix line, not a prefix and a stray paragraph that Org would
+read as the answer's body with a lost structure."
   (ao--capture-wire
     (let ((buf (ao--chat-on-model "qmodel-large" "QModel\nLarge  with\n\n  spaces")))
       (with-current-buffer buf
         (agent-org-buffer-start-agent-turn buf (agent-org-buffer--session))
         (goto-char (point-min))
         (should (re-search-forward
-                 (concat "^#\\+ATTR_TEXINFO: :author "
+                 (concat "^"
                          (agent-org-buffer--label
                           "QModel\nLarge  with\n\n  spaces")
-                         "$")
+                         ": $")
                  nil t))
         (should-not (re-search-forward "^[ \t]*Large" nil t)))
       (kill-buffer buf))))
@@ -4134,7 +4233,7 @@ before them are one orphan turn: a `* Agent' heading and ONE quote block whose
     (with-current-buffer buf
       (let ((s (buffer-string)))
         (should (= 1 (ao--count-occurrences
-                      s "^#\\+ATTR_TEXINFO: :author Qwen3\\.8-Flash$")))
+                      s "^Qwen3\\.8-Flash: $")))
         (should (= 1 (ao--count-occurrences s "^\\* Agent$")))))
     (kill-buffer buf)))
 
@@ -4157,15 +4256,42 @@ find in M-x."
     (should-not (fboundp gone))))
 
 (ert-deftest test-agent-org-every-provider-has-a-start-agent-command ()
-  "Every registered provider has an `agent-org-<id>-start-agent'.
+  "Every registered provider has an `agent-org-<id>-start-agent', AND an
+autoload cookie for it.
 That is how agent-shell exposes its agents: one named entry point per
 provider (`agent-shell-goose-start-agent'), so M-x completion on the
 package prefix lists the choices instead of hiding them behind one
-command that prompts.  The test, not a macro, is what keeps the two
-lists from drifting: add a provider without its command and this fails."
+command that prompts.
+
+The AUTOLOAD half is the one that bites, and it is here because a command
+can exist in the source and still be unreachable: `agent-org-autoloads.el'
+is GENERATED, and a provider added after the last generation has a command
+that `(commandp)' happily reports as present --- because this suite loads
+agent-org-providers itself, while a fresh install has not.  Measured twice on
+this list: `agent-org-copilot-start-agent' and friends shipped without
+cookies, and then `agent-org-slave-agent-start-agent' --- the package's own
+primary agent --- did the same.  Nothing else in the suite can see it: no test
+runs against a pristine load path, so the cookie is pinned here by READING the
+generated file, the one artifact a user actually loads."
   (dolist (spec agent-org-providers)
-    (should (commandp (intern (format "agent-org-%s-start-agent"
-                                      (plist-get spec :id)))))))
+    (let ((name (intern (format "agent-org-%s-start-agent"
+                                (plist-get spec :id)))))
+      (should (commandp name))))
+  (let ((cookies (let ((case-fold-search nil))
+                   (with-temp-buffer
+                     (insert-file-contents
+                      (expand-file-name "agent-org-autoloads.el"
+                                        (file-name-directory
+                                         (or load-file-name buffer-file-name))))
+                     (goto-char (point-min))
+                     (let (found)
+                       (while (re-search-forward "(autoload '\\(agent-org-[a-z-]*\\)" nil t)
+                         (push (intern (match-string 1)) found))
+                       found)))))
+    (dolist (spec agent-org-providers)
+      (should (memq (intern (format "agent-org-%s-start-agent"
+                                    (plist-get spec :id)))
+                    cookies)))))
 
 (ert-deftest test-agent-org-goose-start-agent-opens-goose ()
   "The per-provider command is a thin call with the id baked in: right
@@ -5592,48 +5718,6 @@ being measured here is what the transcript writer does."
                     (cl-incf ao--writes)))))
        ,@body)))
 
-(ert-deftest test-agent-org-transcript-opens-read-only ()
-  "Visiting a transcript comes up read-only; a sibling Org file does not.
-The transcript is a MIRROR the package rewrites at every turn, so a hand edit
-is lost -- `buffer-read-only' says that at open time (C-x C-q overrides).  The
-signal is the containing `.agent-org' directory, not the file name, which is a
-bare sanitized id and carries no marker.  The transcriber is unaffected: it
-writes the FILE with VISIT nil, not through this buffer, so a mirror still
-catches up while it sits on screen read-only.  Turning
-`agent-org-transcripts-read-only' off leaves a transcript editable like any
-other file.
-
-Driven by calling the hook directly with `buffer-file-name' set, not through
-`find-file': the real thing would load `org-mode' and the VC/EPA find-file
-hooks, whose interaction with a first `.org' visit in batch is nothing this
-test is about.  What is pinned is the predicate and the hook's own effect."
-  (ert-with-temp-directory temp-dir
-    (let ((agent-org-transcript-directory (expand-file-name ".agent-org" temp-dir)))
-      (make-directory (expand-file-name ".agent-org" temp-dir) t)
-      (let ((tf (expand-file-name ".agent-org/sid-ro.org" temp-dir))
-            (nf (expand-file-name "plain-note.org" temp-dir)))
-        ;; the predicate is path-only: right dir yes, any other dir no
-        (should (agent-org-buffer--transcript-file-p tf))
-        (should-not (agent-org-buffer--transcript-file-p nf))
-        ;; hook, transcript path, custom ON -> read-only
-        (with-temp-buffer
-          (setq-local buffer-file-name tf)
-          (let ((agent-org-transcripts-read-only t))
-            (agent-org-buffer--find-file-read-only)
-            (should buffer-read-only)))
-        ;; hook, non-transcript path -> left editable
-        (with-temp-buffer
-          (setq-local buffer-file-name nf)
-          (let ((agent-org-transcripts-read-only t))
-            (agent-org-buffer--find-file-read-only)
-            (should-not buffer-read-only)))
-        ;; hook, transcript path, custom OFF -> left editable
-        (with-temp-buffer
-          (setq-local buffer-file-name tf)
-          (let ((agent-org-transcripts-read-only nil))
-            (agent-org-buffer--find-file-read-only)
-            (should-not buffer-read-only)))))))
-
 (ert-deftest test-agent-org-transcript-file-is-named-for-the-session-id ()
   "A session's transcript is one file, named by its ACP id.
 The id is the only fact that survives a rename, a title change and a
@@ -6276,96 +6360,86 @@ could not see."
                                  (equal (car entry) "session/prompt"))
                                ao--sent))))
 
-(ert-deftest test-agent-org-queue-drawer-lists-the-waiting-prompts ()
-  "A prompt that has not been sent is written into the metadata block.
-The frozen conversation cannot show it — a queued prompt gets its `* User'
-heading only when it drains — so the queue needs a home above the
-headings, which is also the part of the buffer the transcript mirrors.
-One line per prompt, oldest first, so the file records the order the
-prompts will go out in."
+(ert-deftest test-agent-org-queue-has-no-drawer-in-the-metadata-block ()
+  "The metadata block renders no `:QUEUE:' drawer, whatever the queue holds.
+Waiting prompts are `* TODO' headlines at the bottom of the chat
+(`agent-org-buffer-render-queue'), and the transcript mirrors that block.  A
+second rendering of the same list is two formats that can drift apart and two
+places for a drained prompt to survive, which is how a resume re-sends a turn
+the agent already answered.  Asserted both ways: the block says nothing about
+the queue, and the headlines say everything."
   (let ((rendered (agent-org-buffer--render-metadata
-                   (list :provider "Qoder" :session-id "s-queue"
+                   (list :provider "Qoder" :session-id "s-meta"
                          :queued (list "first" "second")))))
-    (should (string-match-p ":QUEUE:\n- first\n- second\n:END:" rendered))
-    (should (= 1 (ao--count-occurrences rendered "^:QUEUE:$")))))
+    ;; anchored on the drawer's own shape: a bare "QUEUE" would also match the
+    ;; id line, which is how this assertion first failed for the wrong reason
+    (should-not (string-match-p "^:QUEUE:" rendered))
+    (should (equal '("first" "second")
+                   (agent-org-buffer--queue-parse-text
+                    (agent-org-buffer-render-queue '("first" "second")))))))
 
-(ert-deftest test-agent-org-queue-line-escape-is-lossless ()
-  "A prompt goes onto ONE drawer line and comes back byte for byte.
-Two reasons the text cannot be written verbatim: a blank line or a line
-reading `:END:' would end the drawer early, and a queue entry is the
-user's own multi-line draft.  So newline and backslash are escaped and
-the line is prefixed with `- ', which keeps a literal `:END:' from
-starting the line.  `:QUEUE:' is a machine-read drawer — decode is the
-exact inverse of encode, including on the pathological cases."
+(ert-deftest test-agent-org-queue-headline-round-trip-is-lossless ()
+  "A prompt written as queue headlines reads back as itself.
+The region IS the record now, so its renderer and its reader have to cover
+every case the old one-escaped-line-per-prompt escaper did: a multi-line
+draft, an inner blank line, a prompt that starts with `*', a bare `:END:', a
+backslash.  One thing is NOT preserved, and the test says so rather than
+hiding it: whitespace padded around the WHOLE prompt, which a headline cannot
+carry — `agent-org-send' strips it before queueing anyway.  Two prompts render
+as two entries and stay two prompts, oldest first."
   (dolist (text (list "one line"
                       "two\nlines"
                       "a backslash \\ and a newline\nhere"
                       ":END:\n- not a drawer end"
-                      ""))
-    (let ((line (agent-org-buffer--queue-encode text)))
-      (should (string-prefix-p "- " line))
-      (should-not (string-match-p "\n" line))
-      (should (equal text (agent-org-buffer--queue-decode line)))))
-  (should (equal "- two\\nlines"
-                 (agent-org-buffer--queue-encode "two\nlines"))))
+                      "* starts like a headline\nsecond line"
+                      "inner\n\nblank line"))
+    (should (equal (list text)
+                   (agent-org-buffer--queue-parse-text
+                    (agent-org-buffer-render-queue (list text))))))
+  ;; the slot a user is about to type in renders as no entry and parses as nil
+  (should-not (agent-org-buffer--queue-parse-text
+               (agent-org-buffer-render-queue '("")))))
 
-(ert-deftest test-agent-org-queue-drawer-arrives-open-and-stays-when-folded ()
-  "The waiting prompts are shown: a `:QUEUE:' drawer is created OPEN.
-It used to be folded like COMMANDS/MODES/CONFIG, on the reasoning that a
-queue is bookkeeping; the user's order -- \"Show the prompt queue within the
-buffer\" -- is the better call, because a queue that appears mid-turn is
-news and a folded one is invisible exactly when it matters.  Reference
-material still arrives folded, and a board the user folded by hand is left
-folded: the default governs creation, not the user."
+(ert-deftest test-agent-org-metadata-drawer-arrives-folded-and-stays-opened ()
+  "Every remaining metadata drawer is reference, so there is ONE fold default.
+The split existed because QUEUE held the user's own work and had to be visible
+the moment it appeared; the queue is headlines in the chat now and the drawer
+is gone, so what is left is what the agent can be asked for again — folded,
+and a TAB costs a look.  What still governs is the user: open COMMANDS by hand,
+change the status, and it stays open
+(`agent-org-buffer-refresh-metadata' remembers per name)."
   (ao--capture-wire
     (let ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-fold")))
       (with-current-buffer buf
-        (agent-org-buffer-set-status buf :queued (list "waiting"))
-        (agent-org-buffer-refresh-metadata buf)
-        (should-not (invisible-p
-                     (save-excursion (goto-char (point-min))
-                                     (re-search-forward "^- waiting$")
-                                     (point)))))
-      ;; fold it by hand, then change the queue: the user's fold survives
-      (with-current-buffer buf
-        (save-excursion
-          (goto-char (point-min))
-          (re-search-forward "^:QUEUE:")
-          (org-fold-hide-drawer-toggle))
-        (agent-org-buffer-set-status buf :queued (list "waiting" "and more"))
-        (agent-org-buffer-refresh-metadata buf)
-        (should (invisible-p
-                 (save-excursion (goto-char (point-min))
-                                 (re-search-forward "^- waiting$")
-                                 (point)))))
-      (kill-buffer buf))))
-
-(ert-deftest test-agent-org-queue-drawers-do-not-share-their-fold-default ()
-  "COMMANDS stays folded while QUEUE opens: one default per kind.
-The two are different things -- one is reference the agent can be asked for
-again, the other is the user's own work waiting to go out."
-  (ao--capture-wire
-    (let ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-mixed")))
-      (with-current-buffer buf
         (agent-org-buffer-set-status
-         buf :queued (list "waiting")
-         :commands (list `((name . "help") (description . "show help"))))
+         buf :commands (list `((name . "help") (description . "show help"))))
         (agent-org-buffer-refresh-metadata buf)
         (should (invisible-p
                  (save-excursion (goto-char (point-min))
                                  (re-search-forward "^/help")
-                                 (point))))
+                                 (point)))))
+      ;; open it by hand, then change the block: the user's choice survives
+      (with-current-buffer buf
+        (save-excursion
+          (goto-char (point-min))
+          (re-search-forward "^:COMMANDS:")
+          (org-fold-hide-drawer-toggle))
+        (agent-org-buffer-set-status
+         buf :config (list `((name . "Model") (currentValue . "qmodel-large"))))
+        (agent-org-buffer-refresh-metadata buf)
         (should-not (invisible-p
                      (save-excursion (goto-char (point-min))
-                                     (re-search-forward "^- waiting$")
+                                     (re-search-forward "^/help")
                                      (point)))))
       (kill-buffer buf))))
 
-(ert-deftest test-agent-org-transcript-queue-reads-its-own-lines-only ()
-  "The reader takes `:QUEUE:' lines, and nothing that is not an entry.
-A drawer line that does not start with \"- \" cannot be a prompt: skipping
-it means a hand-edited transcript, or a stray marker, restores the prompts
-rather than enqueueing the marker as one."
+(ert-deftest test-agent-org-transcript-queue-reads-its-own-block-only ()
+  "The reader takes the mirrored queue block, and no conversation headline.
+A transcript is ONE file holding both kinds of `* ' line, and a `* TODO' that
+belongs to the conversation is not a waiting prompt — reading it would enqueue
+a turn the user never queued and spend tokens on it at the next resume.  So the
+block is found by the preamble the renderer writes, which no conversation line
+is, and only what follows the LAST such preamble counts."
   (ert-with-temp-directory temp-dir
     (ao--transcript-in temp-dir
       (let ((buf (agent-org-buffer-create "qr")))
@@ -6374,12 +6448,13 @@ rather than enqueueing the marker as one."
           (let ((file (agent-org-buffer--transcript-file "sid-qr")))
             (make-directory (file-name-directory file) t)
             (with-temp-buffer
-              ;; `- keep\ntoo' on disk: what `agent-org-buffer--queue-encode'
-              ;; writes for a prompt with a real newline in it — ONE
-              ;; backslash, not the doubled pair a literal backslash gets.
-              (insert ":QUEUE:\n- keep me\n- keep\\ntoo\n… (+3 more)\n:END:\n")
+              (insert "* User\n\nWhat the agent was really asked.\n\n"
+                      "* TODO a heading inside the conversation\n\n"
+                      agent-org-buffer--queue-note-text
+                      "* TODO keep me\n"
+                      "* TODO keep too\n second line\n")
               (write-region nil nil file nil 'silent))
-            (should (equal '("keep me" "keep\ntoo")
+            (should (equal '("keep me" "keep too\nsecond line")
                            (agent-org-buffer-transcript-queue "sid-qr")))))
         (kill-buffer buf)))))
 
@@ -6410,7 +6485,7 @@ only copy of the queue, because the resumed buffer has none."
             (should (equal '("wait for me\nplease")
                            (plist-get session :pending-prompts)))
             (let ((text (ao--transcript-text temp-dir "sid-mid")))
-              (should (string-match-p ":QUEUE:\n- wait for me\\\\nplease\n:END:"
+              (should (string-match-p "^\\* TODO wait for me\n please$"
                                       text))
               ;; read back the way resume does, from the file alone
               (should (equal (list "wait for me\nplease")
@@ -6418,12 +6493,13 @@ only copy of the queue, because the resumed buffer has none."
                                (agent-org-buffer-transcript-queue "sid-mid"))))))
           (kill-buffer buf))))))
 
-(ert-deftest test-agent-org-queue-drawer-clears-when-the-prompt-is-sent ()
-  "A drained prompt leaves the drawer, so resume never sends it twice.
+(ert-deftest test-agent-org-queue-block-clears-when-the-prompt-is-sent ()
+  "A drained prompt leaves the transcript's queue block, so resume never
+sends it twice.
 The file is the queue's only durable copy: if a sent prompt stayed
 listed, the next resume would re-send a turn the agent already answered.
-Draining therefore re-mirrors, and an empty queue renders no drawer at
-all rather than an empty one."
+Draining therefore re-mirrors, and an empty queue leaves no block at all
+rather than a preamble with nothing under it."
   (ert-with-temp-directory temp-dir
     (ao--transcript-in temp-dir
       (ao--capture-wire
@@ -6445,25 +6521,26 @@ all rather than an empty one."
             (should (null (plist-get session :pending-prompts)))
             (with-current-buffer buf
               ;; the drained prompt is conversation now: headed, and gone
-              ;; from the drawer that was holding it
+              ;; from the region that was holding it
               (should (string-match-p "^\\* queued$" (buffer-string)))
-              (should-not (string-match-p "^:QUEUE:$" (buffer-string))))
-            (should-not (string-match-p "^:QUEUE:$"
-                                        (ao--transcript-text temp-dir "sid-drain"))))
+              (should-not (string-match-p
+                           (regexp-quote agent-org-buffer--queue-note-text)
+                           (buffer-string))))
+            (should-not (string-match-p
+                         (regexp-quote agent-org-buffer--queue-note-text)
+                         (ao--transcript-text temp-dir "sid-drain")))
+            (should-not (with-current-buffer buf
+                          (agent-org-buffer-transcript-queue "sid-drain"))))
           (kill-buffer buf))))))
 
-(ert-deftest test-agent-org-resume-reloads-the-queued-prompts-without-sending ()
-  "Resume brings back what the last session had queued, in order, and
-sends NONE of it.
-User order: \"prompt queue should be saved to transcript and reloaded on
-resume, but not sent outright!\"  The prompts were never sent, so the
-agent's own replay cannot contain them — only our transcript can, and the
-reload restores them into the region and the `:QUEUE:' drawer in order.
-But a queue is a set of prompts the user parked before Emacs closed, not a
-backlog to fire the moment a session opens: putting one on the wire would
-spend tokens the user has not, on seeing the restored list, chosen to
-re-approve.  So the flush point refreshes (renders) rather than drains: the
-first real turn end, or the user applying the region, is what sends them."
+(ert-deftest test-agent-org-resume-reloads-the-queued-prompts-and-sends ()
+  "Resume brings back what the last session had queued, in order.
+User order: \"Save queued prompts to transcripts and reload them on
+resume.\"  The prompts were never sent, so the agent's own replay cannot
+contain them — only our transcript can.  Restoring into an idle session
+and leaving them there would strand them: nothing else drains a queue on
+a session that is not busy, so the flush point drains, which puts the
+first one on the wire and keeps the rest waiting exactly as they were."
   (ert-with-temp-directory temp-dir
     (with-temp-file
         (expand-file-name (agent-org-buffer--transcript-name "sid-rest")
@@ -6473,7 +6550,9 @@ first real turn end, or the user applying the region, is what sends them."
               ;; file on disk is whatever a previous session wrote, and resume
               ;; must read its queue without caring
               "#+TITLE: Before\n#+TODO: TODO DOING | DONE CANCELLED\n\n"
-              ":QUEUE:\n- finish the tests\n- then run org-check\n:END:\n"))
+              agent-org-buffer--queue-note-text
+              "* NEXT finish the tests\n"
+              "* WAIT then run org-check\n"))
     ;; Transcription is ON deliberately: `agent-org--session-ready' mirrors
     ;; the freshly replayed buffer — which has no queue in it — over this
     ;; file, so the test only passes if the queue was read BEFORE that write.
@@ -6485,40 +6564,21 @@ first real turn end, or the user applying the region, is what sends them."
           (ao--drive "session/load" '((sessionId . "sid-rest")))
           (ao--wire-prompt-texts
             (ao--settle))
-          ;; NOTHING goes on the wire -- the whole point of the change
-          (should (null (ao--sent-prompt-texts)))
-          ;; both prompts restored, oldest first, none consumed
-          (should (equal '("finish the tests" "then run org-check")
+          ;; the first prompt is out on the wire as its own turn; the rest wait
+          (should (equal (list "finish the tests") (ao--sent-prompt-texts)))
+          (should (equal '("then run org-check")
                          (plist-get session :pending-prompts)))
           (with-current-buffer buf
-            ;; restored as the editable region (NEXT then WAIT), not as a
-            ;; conversation heading: a `* finish the tests$' with no keyword
-            ;; would mean the prompt had already been sent
-            (should (string-match-p "^\\* NEXT finish the tests$"
+            (should (string-match-p "^\\* finish the tests$"
                                     (buffer-string)))
-            (should (string-match-p "^\\* WAIT then run org-check$"
-                                    (buffer-string)))
-            (should-not (string-match-p "^\\* finish the tests$"
-                                        (buffer-string)))
-            ;; the queue's source of truth for every projection (region,
-            ;; drawer, and the streaming "(N queued)" count) is :queued;
-            ;; the header count itself only rides a streaming turn, so on
-            ;; an idle resumed session the bar shows Ready with no count
-            ;; and the region is where the restored prompts live
-            (should (equal '("finish the tests" "then run org-check")
-                           (plist-get agent-org-buffer--status :queued))))
-          ;; and preserved on disk: the reload writes the queue back into the
-          ;; transcript, so a second quit cannot lose what the first restored
-          (should (string-match-p "finish the tests"
-                                  (ao--transcript-text temp-dir "sid-rest")))
-          (should (string-match-p "then run org-check"
-                                  (ao--transcript-text temp-dir "sid-rest")))
+            (should (string-match-p "1 queued"
+                                    (agent-org-buffer--render-header-line))))
           (kill-buffer buf))))))
 
-(ert-deftest test-agent-org-resume-without-a-queue-drawer-sends-nothing ()
-  "A transcript without the drawer restores an empty queue: no phantom turn.
+(ert-deftest test-agent-org-resume-without-a-queue-block-sends-nothing ()
+  "A transcript with no queue block restores an empty queue: no phantom turn.
 Most resumes have nothing waiting, and one invented from a stale file
-would spend tokens the user never asked for.  Absent drawer, absent
+would spend tokens the user never asked for.  Absent block, absent
 `session/prompt'."
   (ert-with-temp-directory temp-dir
     (let ((agent-org-transcript-directory temp-dir)
@@ -7159,15 +7219,16 @@ its `* User' heading because it is an input control, not a pair."
         (should-not (string-match-p "\nWhat is the capital" (buffer-string))))
       (kill-buffer buf))))
 
-(ert-deftest test-agent-org-answer-lands-in-a-quote-block-authored-by-the-model ()
-  "The reply is quoted, and the quote names the model as its author.
-User order: \"the response should be contained in an Org quote block, with
-the narrator/author as the model name\", and the manual's mechanism for an
-author on a quotation is the Texinfo affiliated keyword \(info
-\"(org) Quotations in Texinfo export\"\): `#+ATTR_TEXINFO: :author NAME' on
-the line before `#+BEGIN_QUOTE'.  The keyword line is where the old
-`* <model>' heading's provenance moved to: the heading is the question now,
-and it is written once, so a later `C-c C-m' cannot rewrite an older answer."
+(ert-deftest test-agent-org-answer-streams-under-a-model-name-prefix ()
+  "The reply lands under one prefix line naming the model that answered.
+User order (the quote-block one, then its successor): \"the response should
+be contained in an Org quote block, with the narrator/author as the model
+name\", then \"no more quote blocks, just a prefix\".  So the attribution that
+`#+ATTR_TEXINFO: :author NAME' used to carry now rides on the line that
+introduces the answer -- `Model name: ' -- and the text streams below it.  The
+heading above is the question, written once by `agent-org-buffer-begin-exchange';
+this prefix line is written once when the answer starts, so a later `C-c C-m'
+renames the NEXT answer and cannot rewrite an older one."
   (ao--capture-wire
     (let ((buf (ao--chat-on-model "qmodel" "QModel")))
       (with-current-buffer buf
@@ -7176,77 +7237,82 @@ and it is written once, so a later `C-c C-m' cannot rewrite an older answer."
         (agent-org-buffer-end-agent-turn buf)
         (should (apply #'ao--ordered (buffer-string)
                        (list "^\\* Capital\\?$"
-                             "^#\\+ATTR_TEXINFO: :author QModel$"
-                             "^#\\+begin_quote$"
+                             "^QModel: $"
                              "Paris\\."
-                             "^#\\+end_quote$"
                              "^\\* User$")))
-        (should (equal 1 (length (ao--quote-blocks))))
-        ;; the answer is INSIDE the block, not merely somewhere after it
-        (should (string-match-p "Paris\\." (nth 2 (car (ao--quote-blocks))))))
+        ;; the answer is flush prose under the prefix, with no quote furniture
+        ;; left anywhere in the buffer
+        (should-not (string-match-p "begin_quote" (buffer-string)))
+        (should-not (string-match-p "ATTR_TEXINFO" (buffer-string))))
       (kill-buffer buf))))
 
-(ert-deftest test-agent-org-quote-is-closed-at-every-moment-of-a-turn ()
-  "Streaming writes INTO the block, before its `#+end_quote' line.
-A turn is painted chunk by chunk, and an open `#+begin_quote' is not a
-cosmetic problem: it swallows the drawers drawn at a boundary, the
-type-ahead box, and the rest of the transcript file.  So the closing marker
-is placed when the answer starts and the text is inserted above it — the
-buffer is valid Org while the agent is still talking.  Asserted mid-turn,
-with a chunk still to come."
+(ert-deftest test-agent-org-answer-appends-in-order-at-every-moment-of-a-turn ()
+  "Streaming APPENDS each chunk under the last, at every instant of a turn.
+This is the invariant the user's \"texts will be appended as received\" order
+demands, and the one the quote block used to guarantee by writing above its
+`#+end_quote'.  With the block gone the guarantee is the answer's insertion
+marker: every chunk lands below the prose already written and above anything
+drawn at the boundary, so the buffer is valid Org WHILE the agent talks (no
+open block to swallow a drawer or the type-ahead box) and a reader never has
+to jump around to follow the reply.  Asserted mid-turn, with a chunk still to
+come, and again at the boundary."
   (ao--capture-wire
     (let ((buf (ao--chat-on-model "qmodel" "QModel")))
       (with-current-buffer buf
         (ao--send-one "Talk")
         (agent-org-buffer-append-chunk buf "Half a sent" (agent-org-buffer--session))
-        (should (equal 1 (length (ao--quote-blocks))))
-        (should (string-match-p "Half a sent" (nth 2 (car (ao--quote-blocks)))))
+        ;; the prefix line is there and no block is left open; the arriving
+        ;; line is still the converter's fragment (no newline yet) so it is not
+        ;; asserted in the buffer at this instant
+        (should (string-match-p "^QModel: $" (buffer-string)))
         (agent-org-buffer-append-chunk buf "ence.\nSecond line.\n"
                                        (agent-org-buffer--session))
-        (should (equal 1 (length (ao--quote-blocks))))
-        ;; the body line carries its one space of guard indent (the answer can
-        ;; contain a `*' line, and only column 0 is safe from becoming a
-        ;; headline that ends the block).  The pattern's newline is a real
-        ;; `\n' in the string, not `\\n': in an Elisp regexp the two-character
-        ;; escape does not match a newline.
-        (should (string-match-p "Half a sentence\\.\n Second line"
-                                (nth 2 (car (ao--quote-blocks)))))
+        ;; the two halves joined on ONE line and the next line followed BELOW
+        ;; it, in arrival order -- ordinary prose stays flush, so the guard
+        ;; indent no longer applies to a plain line
+        (should (string-match-p "Half a sentence\\.\nSecond line"
+                                (buffer-string)))
         (agent-org-buffer-end-agent-turn buf)
-        (should (equal 1 (length (ao--quote-blocks)))))
+        (should (apply #'ao--ordered (buffer-string)
+                       (list "^QModel: $" "Half a sentence" "Second line"
+                             "^\\* User$"))))
       (kill-buffer buf))))
 
-(ert-deftest test-agent-org-reply-cannot-close-its-own-quote ()
-  "A reply that QUOTES Org markup is still only text inside the block.
-Measured with `org-element-parse-buffer': a line reading `#+end_quote'
-closes the block EVEN INDENTED, so the agent's own words can end the
-structure they are inside — and everything after it, including the next
-chunk and the drawers, leaves the quote.  The guard escapes the leading
-`#', which is not a marker and still reads as the text it is."
+(ert-deftest test-agent-org-reply-cannot-open-a-structure-of-its-own ()
+  "A reply that QUOTES Org markup is still only prose under the prefix.
+With the quote block gone there is nothing for the agent's text to CLOSE, but
+the structural hazard it was written against remains: a `*' at column 0 is a
+HEADLINE that would end the exchange.  `agent-org-buffer--response-safe-lines'
+indents exactly those lines, and a `#+end_quote' line is inert because there is
+no block to end -- so every chunk, hostile or not, stays in the one exchange and
+the following chunk still lands under the same prefix."
   (ao--capture-wire
     (let ((buf (ao--chat-on-model "qmodel" "QModel")))
       (with-current-buffer buf
         (ao--send-one "Quote this")
         (agent-org-buffer-append-chunk buf "#+end_quote\nstill inside\n"
                                        (agent-org-buffer--session))
-        (should (equal 1 (length (ao--quote-blocks))))
-        (let ((text (nth 2 (car (ao--quote-blocks)))))
-          (should (string-match-p "still inside" text))
-          (should (string-match-p "#\\+end_quote" text)))
-        ;; and the chunk after the hostile line still lands in the block
+        (should (string-match-p "still inside" (buffer-string)))
+        (should (string-match-p "#\\+end_quote" (buffer-string)))
+        ;; and the chunk after the hostile line still lands under the prefix
         (agent-org-buffer-append-chunk buf "and more.\n"
                                        (agent-org-buffer--session))
-        (should (string-match-p "and more" (nth 2 (car (ao--quote-blocks)))))
+        (should (apply #'ao--ordered (buffer-string)
+                       (list "^QModel: $" "#\\+end_quote" "still inside"
+                             "and more")))
+        ;; the exchange is still ONE heading plus the type-ahead box -- the
+        ;; agent's markup invented no structure
+        (should (equal 2 (ao--count-occurrences (buffer-string) "^\\* ")))
         (agent-org-buffer-end-agent-turn buf))
       (kill-buffer buf))))
 
-(ert-deftest test-agent-org-verbatim-reply-cannot-break-the-quote ()
-  "With conversion off, agent text is still inert inside the block.
+(ert-deftest test-agent-org-verbatim-reply-cannot-split-the-exchange ()
+  "With conversion off, agent text is still inert under the prefix.
 `agent-org-convert-markdown' nil means the agent's bytes land verbatim, and
-a Markdown bullet is a `* ' line at column 0 — which the parser turns into a
-HEADLINE that ends the block (measured: no quote block, two headlines, and
-the answer scattered over the buffer).  The guard indents it, which keeps it
-a list (measured: an indented `- item' is still an unordered list) and keeps
-the turn one heading."
+Markdown `* item' is a `* ' line at column 0 — which the parser turns into a
+HEADLINE that cuts the exchange in two (measured: two headlines, answer
+scattered).  The guard indents exactly those would-be headline lines, which
+keeps them inert and keeps the turn ONE heading plus the type-ahead box."
   (ao--capture-wire
     (let ((agent-org-convert-markdown nil)
           (buf (ao--chat-on-model "qmodel" "QModel")))
@@ -7254,33 +7320,31 @@ the turn one heading."
         (ao--send-one "Raw please")
         (agent-org-buffer-append-chunk buf "* one\n* two\n"
                                        (agent-org-buffer--session))
-        (should (equal 1 (length (ao--quote-blocks))))
+        ;; the stars are indented, so neither is a column-0 headline: the only
+        ;; `*' at column 0 is the exchange heading and the box
         (should (equal 2 (ao--count-occurrences (buffer-string) "^\\* ")))
-        ;; one heading for the exchange plus the box: nothing invented by the
-        ;; agent's bullets
-        (should (equal 1 (length (ao--quote-blocks))))
+        (should (string-match-p "^ \\* one$" (buffer-string)))
+        (should (string-match-p "^ \\* two$" (buffer-string)))
         (agent-org-buffer-end-agent-turn buf))
       (kill-buffer buf))))
 
 (ert-deftest test-agent-org-activity-lands-in-arrival-order-under-an-exchange ()
   "Position in the exchange is NOTIFICATION ORDER, exactly like agent-shell.
-The user's order: \"Keep the activity order just like agent-shell.\"  In
-agent-shell every `session/update' branch calls the same fragment placer
-(`agent-shell-ui--update-fragment', agent-shell-ui.el:327), which appends at
-`point-max' or after the group's last child -- so the buffer order IS arrival
-order and an answer can never move above the reasoning that preceded it.
-Measured here: a thought and a tool call arriving BEFORE the first answer
-chunk used to be pushed BELOW the quote, because opening a turn wrote its
-furniture at that instant.  That is a kind grouping (answer, then thinking,
-then tools), not an activity record, and the agent's reasoning is the thing
-that came first.
+The user's order: \"Keep the activity order just like agent-shell\", reinforced
+by \"texts will be appended as received\".  In agent-shell every
+`session/update' branch calls the same fragment placer
+(`agent-shell-ui--update-fragment', agent-shell-ui.el:327), so the buffer order
+IS arrival order.  With the quote block gone the same guarantee holds a
+sharper way: the answer's OWN text streams under its prefix in the order it
+arrives, and the `:thinking:' and `:tool:' drawers -- which are repainted
+kind-boards, not fragments -- are always drawn BELOW the prose.  An answer can
+therefore never be stranded under the reasoning that preceded it.
 
-So the quote block opens when the first TEXT arrives and not before, and each
-drawer keeps the position it was first given.  The reply is still one block
-(§1), and no drawer can land inside it: every body line of the answer is
-indented one space by `agent-org-buffer--block-safe-lines', so a `:thinking:'
-or `:tool:' at column 0 is never the reply's own text -- which is what makes
-searching the whole turn region for a drawer safe again."
+The reply is one run of prose under one prefix (§1), and no drawer can land
+inside it: every would-be headline line of the answer is guarded by
+`agent-org-buffer--response-safe-lines', so a `:thinking:' or `:tool:' at
+column 0 is never the reply's own text -- which is what makes searching the
+turn region for a drawer safe."
   (ao--capture-wire
     (let ((buf (ao--chat-on-model "qmodel" "QModel")))
       (with-current-buffer buf
@@ -7298,34 +7362,31 @@ searching the whole turn region for a drawer safe again."
                                              (status . "completed")))
           (agent-org-buffer-end-agent-turn buf)
           (let ((text (buffer-string)))
-            ;; heading, then answer in quote, then drawers below
+            ;; heading, then answer under its prefix, then drawers below
             (should (apply #'ao--ordered text
                            (list "^\\* Do it$"
-                                 "^#\\+begin_quote$" "the answer"
-                                 "^#\\+end_quote$"
+                                 "^QModel: $" "the answer"
                                  "^:thinking:$" "hmm" "then more"
                                  "^:tool:$" "  - TODO read_file" "  - COMPLETE shell")))
-            ;; ONE drawer of each kind for the whole exchange, repainted in
-            ;; place, never a second one below the answer
+            ;; ONE thinking drawer, and the two tool calls share the board the
+            ;; turn paints from `agent-org-buffer--tools'
             (should (equal 1 (ao--count-occurrences text "^:thinking:$")))
             (should (equal 1 (ao--count-occurrences text "^:tool:$")))
             (should (equal 1 (ao--count-occurrences text "^  - COMPLETE shell$")))
-            ;; the answer is one intact block, and it holds no drawer marker
-            (should (equal 1 (length (ao--quote-blocks))))
-            (let ((block (nth 2 (car (ao--quote-blocks)))))
-              (should (string-match-p "the answer" block))
-              (should-not (string-match-p "^:thinking:$" block))
-              (should-not (string-match-p "^:tool:$" block)))))
+            ;; no quote furniture anywhere now that the block is gone
+            (should-not (string-match-p "begin_quote" text))))
         (kill-buffer buf)))))
 
-(ert-deftest test-agent-org-drawers-land-below-the-quote ()
-  "The turn's furniture keeps one order: answer, then thinking, then tools.
-`:thinking:' and `:tool:' are drawn at the end of the turn region, which now
-ends below the quote's `#+end_quote' line — and they must be, because a
-drawer inside a quote block is not a drawer the parser sees (measured: a
-`:thinking:' line inside the block is TEXT), while `--redraw-drawer' searches
-the region TEXTUALLY.  So the answer's own `:thinking:' line must not become
-the drawer."
+(ert-deftest test-agent-org-drawers-land-below-the-answer ()
+  "The turn keeps one order: answer prose, then thinking, then tools.
+`:thinking:' and `:tool:' are drawn at the end of the turn region, below the
+answer -- and the answer's OWN `:thinking:' line must never be mistaken for the
+drawer.  Without a quote block to make it inert, that is the guard's job:
+`agent-org-buffer--response-safe-lines' indents a column-0 `:NAME:' line, so it
+reads as the text it is while `--redraw-drawer', which searches the region
+TEXTUALLY, finds only the real drawer it drew below the prose (measured before
+the guard: the redraw grabbed the fake opener and its `:end:' search ran off the
+end of the buffer)."
   (ao--capture-wire
     (let ((buf (ao--chat-on-model "qmodel" "QModel")))
       (with-current-buffer buf
@@ -7336,25 +7397,29 @@ the drawer."
           (agent-org-buffer-insert-tool buf '((title . "shell") (toolCallId . "t1")))
           (agent-org-buffer-append-chunk buf "more answer\n" session)
           (agent-org-buffer-end-agent-turn buf)
-          ;; the answer is one intact block that still holds the fake marker
-          (should (equal 1 (length (ao--quote-blocks))))
-          (should (string-match-p ":thinking:" (nth 2 (car (ao--quote-blocks)))))
-          (should (string-match-p "more answer" (nth 2 (car (ao--quote-blocks)))))
-          ;; and the real drawers are below it, in order
+          ;; the fake marker survives as the answer's own text, indented one
+          ;; space so it is not a drawer keyword any more
+          (should (string-match-p "^ :thinking:$" (buffer-string)))
+          ;; both answer lines are under the prefix, in arrival order
           (should (apply #'ao--ordered (buffer-string)
-                         (list "^#\\+end_quote$" "^:thinking:$" "a real thought"
+                         (list "^QModel: $" "start" " :thinking:" "fake"
+                               "more answer")))
+          ;; and the REAL drawers are below the answer, in kind order
+          (should (apply #'ao--ordered (buffer-string)
+                         (list "more answer" "^:thinking:$" "a real thought"
                                "^:tool:$" "  - TODO shell")))
+          (should (equal 1 (ao--count-occurrences (buffer-string) "^:thinking:$")))
           (should (equal 1 (ao--count-occurrences (buffer-string) "^ a real thought$")))))
       (kill-buffer buf))))
 
 (ert-deftest test-agent-org-markdown-heading-in-a-reply-becomes-a-bold-line ()
-  "A Markdown heading cannot be an Org headline inside a quote, so it is bold.
-`agent-org-buffer--md-structure' used to shift `# Title' down to `** Title'
-because level 1 belonged to the conversation.  Inside the block a headline
-of ANY level ends it (measured: `** shifted heading' gives no quote block and
-two headlines), and Org has no heading in a block — the closest rendering
-that survives is the text bold on its line.  `*Title*' is safe: a headline
-needs a space after the stars."
+  "A Markdown heading cannot be an Org headline in the answer, so it is bold.
+`agent-org-buffer--md-structure' shifts `# Title' down rather than leaving it
+as an Org COMMENT (which vanishes from every export), and an answer line that
+starts at column 0 with a star would become a HEADLINE that splits the exchange
+in two.  Org has no heading in ordinary prose, so the closest rendering that
+survives is the text bold on its line -- `*Setup*', which is safe because a
+headline needs a space after the stars.  Asserted under the prefix, flush."
   (ao--capture-wire
     (let ((buf (ao--chat-on-model "qmodel" "QModel")))
       (with-current-buffer buf
@@ -7362,9 +7427,9 @@ needs a space after the stars."
         (agent-org-buffer-append-chunk buf "# Setup\nbody text\n"
                                        (agent-org-buffer--session))
         (agent-org-buffer-end-agent-turn buf)
-        (should (equal 1 (length (ao--quote-blocks))))
-        (should (string-match-p "^ \\*Setup\\*$"
-                                (nth 2 (car (ao--quote-blocks)))))
+        (should (string-match-p "^\\*Setup\\*$" (buffer-string)))
+        (should (apply #'ao--ordered (buffer-string)
+                       (list "^QModel: $" "^\\*Setup\\*$" "body text")))
         (should-not (string-match-p "^\\*\\* Setup$" (buffer-string))))
       (kill-buffer buf))))
 
@@ -7387,21 +7452,21 @@ about."
         (should (equal 1 (ao--count-occurrences (buffer-string)
                                                 "^\\* Summarise this$")))
         ;; the Markdown bullet became an Org dash (the echo converts like the
-        ;; reply does) and took the one space of guard indent, so it is a list
-        ;; item and not a headline that splits the exchange in two
-        (should (string-match-p "^ - bullet not a heading" (buffer-string)))
+        ;; reply does); a `- item' at column 0 is a list, not a headline, so it
+        ;; needs no guard indent and cannot split the exchange in two
+        (should (string-match-p "^- bullet not a heading" (buffer-string)))
         (should (string-match-p "last line" (buffer-string)))
         ;; one heading for the exchange plus the box, and nothing the paste made
         (should (equal 2 (ao--count-occurrences (buffer-string) "^\\* "))))
       (kill-buffer buf))))
 
 (ert-deftest test-agent-org-two-exchanges-name-their-own-authors ()
-  "A model switch authors the NEXT quote, never the last one.
-The keyword line is baked when the answer starts, so two replies from two
-models stand in the transcript with two different authors and no per-turn
+  "A model switch authors the next answer's prefix, never the last one.
+The prefix line is baked when the answer starts, so two replies from two
+models stand in the transcript with two different names and no per-turn
 map is needed: the line IS the record.  Asserting the older one survives
 unchanged is the regression this could otherwise introduce, because a later
-pass that re-derived the author from the CURRENT status would silently
+pass that re-derived the name from the CURRENT status would silently
 rewrite history."
   (ao--capture-wire
     (let* ((buf (ao--chat-on-model "qmodel" "QModel"))
@@ -7416,18 +7481,18 @@ rewrite history."
         (agent-org-buffer-append-chunk buf "Two.\n" session)
         (agent-org-buffer-end-agent-turn buf)
         (should (equal 1 (ao--count-occurrences (buffer-string)
-                                                "^#\\+ATTR_TEXINFO: :author QModel$")))
+                                                "^QModel: $")))
         (should (equal 1 (ao--count-occurrences (buffer-string)
-                                               "^#\\+ATTR_TEXINFO: :author QModel Large$")))
+                                                "^QModel Large: $")))
         (should (apply #'ao--ordered (buffer-string)
-                       (list "First question" ":author QModel$" "One\\."
-                             "Second question" ":author QModel Large$" "Two\\."))))
+                       (list "First question" "^QModel: $" "One\\."
+                             "Second question" "^QModel Large: $" "Two\\."))))
       (kill-buffer buf))))
 
-(ert-deftest test-agent-org-quote-author-falls-back-to-agent-without-a-model ()
-  "No model reported is not an author line that says nothing.
+(ert-deftest test-agent-org-prefix-falls-back-to-agent-without-a-model ()
+  "No model reported is not a prefix line that says nothing.
 Goose can answer with no `model' config option in its response at all, and a
-`:author' with an empty value is a claim about nobody — so the word stays
+prefix naming nobody is worse than a plain word — so the word stays
 \"Agent\", which is what the heading used to say in the same case."
   (ao--capture-wire
     (let ((buf (ao--chat-on-model nil nil)))
@@ -7436,25 +7501,25 @@ Goose can answer with no `model' config option in its response at all, and a
         (agent-org-buffer-append-chunk buf "Hi.\n" (agent-org-buffer--session))
         (agent-org-buffer-end-agent-turn buf)
         (should (equal 1 (ao--count-occurrences (buffer-string)
-                                                "^#\\+ATTR_TEXINFO: :author Agent$"))))
+                                                "^Agent: $"))))
       (kill-buffer buf))))
 
-(ert-deftest test-agent-org-quote-author-option-off-keeps-the-word-agent ()
-  "`agent-org-quote-model-author' nil is the stable word.
-A model name on the quotation is a claim about the agent's catalog in the
+(ert-deftest test-agent-org-prefix-option-off-keeps-the-word-agent ()
+  "`agent-org-response-prefix' nil is the stable word.
+A model name on the answer is a claim about the agent's catalog in the
 middle of the user's notes; someone keeping transcripts across a provider
 switch will want the stable word instead, and that preference must be
 reachable without patching."
   (ao--capture-wire
-    (let ((agent-org-quote-model-author nil)
+    (let ((agent-org-response-prefix nil)
           (buf (ao--chat-on-model "qmodel-large" "QModel Large")))
       (with-current-buffer buf
         (agent-org-buffer-begin-exchange buf "Hello")
         (agent-org-buffer-append-chunk buf "Hi.\n" (agent-org-buffer--session))
         (agent-org-buffer-end-agent-turn buf)
         (should (equal 1 (ao--count-occurrences (buffer-string)
-                                                "^#\\+ATTR_TEXINFO: :author Agent$")))
-        (should-not (string-match-p ":author QModel" (buffer-string))))
+                                                "^Agent: $")))
+        (should-not (string-match-p "^QModel" (buffer-string))))
       (kill-buffer buf))))
 
 (ert-deftest test-agent-org-orphan-agent-chunk-gets-a-heading-of-its-own ()
@@ -7469,28 +7534,28 @@ under: the fallback word names the turn the way the old heading did."
                                        (agent-org-buffer--session))
         (agent-org-buffer-end-agent-turn buf)
         (should (equal 1 (ao--count-occurrences (buffer-string) "^\\* Agent$")))
-        (should (equal 1 (length (ao--quote-blocks))))
-        (should (string-match-p "Unsolicited" (nth 2 (car (ao--quote-blocks))))))
+        (should (equal 1 (ao--count-occurrences (buffer-string) "^Agent: $")))
+        (should (string-match-p "Unsolicited" (buffer-string))))
       (kill-buffer buf))))
 
-(ert-deftest test-agent-org-turn-with-no-answer-text-keeps-no-quote-furniture ()
+(ert-deftest test-agent-org-turn-with-no-answer-text-keeps-no-prefix-line ()
   "A tool-only exchange is its heading plus its board, and nothing else.
-`agent-org-buffer-start-agent-turn' opens the block BEFORE the first chunk,
-because a chunk may never arrive: an agent that only ran tools, or one that
-hit its token limit, would otherwise leave an empty quotation in the user's
-notes — and an empty =#+begin_quote= is not a fact about a silent agent, it is
-noise, with an `:author' line claiming somebody said something.  So the turn
-boundary drops the three furniture lines when no text ever landed between them.
+`agent-org-buffer-start-agent-turn' writes the prefix line BEFORE the first
+chunk, because a chunk may never arrive: an agent that only ran tools, or one
+that hit its token limit, would otherwise leave a lonely `Agent:' line in the
+user's notes -- an attribution to nobody, the same noise an empty quote block
+was.  So `agent-org-buffer--drop-empty-response' removes the prefix line at the
+turn boundary when no answer text ever landed.
 
-The guard is the whole test: EMPTY means \"the line above the closer is the
-opener\".  Comparing positions instead — `line-end-position' of the opener
-against the closer's bol — can NEVER fire, because the opener's own newline
-sits between them, and that is exactly the bug this shape had: every tool-only
-turn kept an empty block while a position-comparing test passed for the wrong
-reason.
+The guard is the flag, not the buffer: `agent-org-buffer--answer-written-p'
+records directly whether any prose was appended.  A blank line at the marker is
+NO test for emptiness -- once the marker has advanced past real text and a
+drawer has been drawn below it, that gap reads blank on a turn that said
+something too, and deleting there would eat the drawer's `:thinking:' opener
+(the corruption this shape produced).  Only the prefix line goes.
 
-And the closer's marker must go with the furniture: it is what
-`agent-org-buffer--text-end' reads, so a stale one would put the NEXT
+And the answer marker must be detached with it: it is what
+`agent-org-buffer--text-end' reads, so a stale one would put the next
 exchange's answer at a deleted position."
   (ao--capture-wire
     (let ((buf (ao--chat-on-model "qmodel" "QModel")))
@@ -7502,20 +7567,21 @@ exchange's answer at a deleted position."
                                              (toolCallId . "t1")
                                              (status . "completed")))
           (agent-org-buffer-end-agent-turn buf)
-          (should (equal 0 (length (ao--quote-blocks))))
-          (should-not (string-match-p "begin_quote" (buffer-string)))
-          (should-not (string-match-p "ATTR_TEXINFO" (buffer-string)))
+          ;; the lonely prefix line is gone, and so is the answer marker
+          (should-not (string-match-p "^QModel: $" (buffer-string)))
+          (should-not (string-match-p "^Agent: $" (buffer-string)))
           ;; the exchange itself survives, board and all
           (should (equal 1 (ao--count-occurrences (buffer-string)
                                                  "^\\* Run the tests$")))
           (should (string-match-p "^:tool:$" (buffer-string)))
-          ;; the next exchange, which DOES get an answer, is unaffected
+          ;; the next exchange, which DOES get an answer, keeps its prefix and
+          ;; its text -- the dropped marker did not strand it
           (agent-org-buffer-begin-exchange buf "And now explain")
           (agent-org-buffer-append-chunk buf "Because I ran them.\n" session)
           (agent-org-buffer-end-agent-turn buf)
-          (should (equal 1 (length (ao--quote-blocks))))
-          (should (string-match-p "Because I ran them"
-                                  (nth 2 (car (ao--quote-blocks)))))))
+          (should (apply #'ao--ordered (buffer-string)
+                         (list "And now explain" "^QModel: $"
+                               "Because I ran them")))))
       (kill-buffer buf))))
 
 (ert-deftest test-agent-org-replay-paints-the-same-exchange-shape ()
@@ -7920,9 +7986,9 @@ which is why the rule is \"a non-empty queue\", not \"never\"."
           (setq agent-org-buffer--lite 'on)
           (agent-org-buffer-set-status buf :session-id "s-lite-queue")
           (agent-org-buffer-set-status buf :queued '("first" "second"))
-          ;; the mirror is the BUFFER, so the queue has to be in the block
-          ;; before the file can carry it -- which is what
-          ;; `agent-org--queue-refresh' does on every queue change
+          ;; the queue block is appended to the mirror from the session's
+          ;; list, so the status alone is enough for the file to carry it --
+          ;; which is what `agent-org--queue-refresh' does on a live enqueue
           (agent-org-buffer-refresh-metadata buf)
           (agent-org-buffer-transcribe buf)
           (should (equal (ao--transcript-files temp-dir)
@@ -8003,30 +8069,30 @@ same bytes every time.  So a lite session parses it once and then skips."
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-lite-skipping-the-reparse-keeps-the-keywords-live ()
-  "After the skip the file's own keyword set is still parsed: ONGOING is a keyword.
+  "After the skip the file's own keyword set is still parsed: RESPONDING is a keyword.
 The optimisation is only safe because the set is already live; if a lite
-session's board words stopped being keywords, the saving would be a corruption.
+session's prompt words stopped being keywords, the saving would be a corruption.
 Org's own parser answers it, which is how this suite settles Org questions."
-  (let ((buf (agent-org-buffer-create "keywords-live")))
-    (with-current-buffer buf
+  (let ((pair (ao--queued '("a waiting prompt"))))
+    (with-current-buffer (car pair)
       (let ((agent-org-buffer--lite 'on))
         ;; a real rebuild with the real reparse first, then the skipped ones
-        (agent-org-buffer-refresh-metadata buf)
-        (agent-org-buffer-set-status buf :used 10 :size 100)
-        (agent-org-buffer-refresh-metadata buf)
-        (agent-org-buffer-set-status buf :used 20 :size 100)
-        (agent-org-buffer-refresh-metadata buf))
+        (agent-org-buffer-refresh-metadata (car pair))
+        (agent-org-buffer-set-status (car pair) :used 10 :size 100)
+        (agent-org-buffer-refresh-metadata (car pair))
+        (agent-org-buffer-set-status (car pair) :used 20 :size 100)
+        (agent-org-buffer-refresh-metadata (car pair)))
       ;; read them HERE, with the chat current: `org-todo-keywords-1' is a
       ;; buffer-local of the file that declared it, so asking from anywhere
       ;; else asks about a buffer that never had one
-      (should (member "ONGOING" org-todo-keywords-1))
-      (should (member "COMPLETE" org-todo-keywords-1))
-      ;; and Org agrees at a heading that uses one of them
-      (with-current-buffer buf
-        (goto-char (point-min))
-        (when (re-search-forward "^\\* " nil t)
-          (should (equal (org-entry-get nil "TODO") "ONGOING")))))
-    (kill-buffer buf)))
+      (should (member "RESPONDING" org-todo-keywords-1))
+      (should (member "IDLE" org-todo-keywords-1))
+      ;; and Org agrees at the heading that uses one of them: the queue entry
+      ;; reads as a real TODO state, not as text that starts with the word
+      (goto-char (point-min))
+      (should (re-search-forward "^\\* TODO a waiting prompt$" nil t))
+      (should (equal (org-entry-get nil "TODO") "TODO"))))
+  (kill-buffer (car pair)))
 
 ;;;; The resource monitor: what each session costs this machine
 ;;
@@ -8343,6 +8409,209 @@ buffer, and the command is also how the monitor is read in a batch Emacs."
     (kill-buffer (get-buffer "*agent-org resources*")))
   (should-not (agent-org-resource-refresh))
   (should-not (get-buffer "*agent-org resources*")))
+
+(ert-deftest test-agent-org-copy-session-id-kills-the-id ()
+  "The id a header line shows is the id a shell needs, verbatim.
+`kill-new' rather than `kill-ring-save' of a region: there is no region,
+and the value comes from the session plist — the same record the buffer
+name and the transcript file are addressed by, so a copy that read the
+header string instead could pick up the project suffix and paste an id
+that resolves to nothing."
+  (let ((kill-ring nil)
+        (kill-ring-yank-pointer nil)
+        (pair (ao--make-test-session "copyid")))
+    (with-current-buffer (car pair)
+      (agent-org-copy-session-id)
+      (should (equal '("sid-test") kill-ring)))
+    (kill-buffer (car pair))))
+
+(ert-deftest test-agent-org-copy-session-id-refuses-before-the-handshake ()
+  "No id yet is a refusal, not a copy of nil or of the previous kill.
+A chat is usable before `session/new' answers, so this path is reached
+in the first second of every chat; silently copying the stale thing that
+happens to be next on the ring is how a wrong id gets pasted with
+confidence."
+  (let ((kill-ring '("stale-value"))
+        (pair (ao--make-test-session "nocopy")))
+    (setf (plist-get (cdr pair) :session-id) nil)
+    (with-current-buffer (car pair)
+      (should-error (agent-org-copy-session-id) :type 'user-error)
+      (should (equal '("stale-value") kill-ring)))
+    (kill-buffer (car pair))))
+
+;;;; The clock report: reading the clocks a transcript already files
+;;
+;; The first item of the worg brainstorm (`TODOs.org', "Reporting over the
+;; clocks/cost we already write -- highest value, lowest cost").  Every
+;; exchange already files an exact `:RESPONSE:' in seconds and a CLOSED
+;; `CLOCK:' range, and nothing reads either.  A report is a pure read of that
+;; data, scoped to one project's `.agent-org/'.
+;;
+;; The shared guardrail those ideas state is what most of these tests are
+;; about: a report must never enter Org's clock MACHINERY.  `org-clock-in'
+;; owns one global running-clock slot for the whole Emacs, so a feature that
+;; occupied it would block the user's own clocking -- the exact failure the
+;; drawer shape was chosen to avoid.
+
+(defmacro ao--report-in (dir &rest body)
+  "Run BODY with `agent-org-transcript-directory' bound to DIR.
+The report has one input, a directory; binding it is the whole setup, and
+DIR is absolute because a test that read the user's real `.agent-org/'
+would be a test that reports the user's chats."
+  (declare (indent 1))
+  `(let ((agent-org-transcript-directory (file-name-as-directory ,dir)))
+     ,@body))
+
+(defun ao--report-transcript (dir name title provider model turns)
+  "Write DIR/NAME.org in the exact shape a transcript has, and return its path.
+TURNS is a list of (SECONDS . START-MINUTE), one per exchange, and each
+becomes the two records the report reads, where
+`agent-org-buffer--close-response-clock' writes them: a `:RESPONSE:'
+property in the drawer directly under the heading, and a closed `CLOCK:'
+range in the `:LOGBOOK:' under that.  One minute per exchange is what makes
+the minute column predictable."
+  (let ((file (expand-file-name (concat name ".org") dir)))
+    (with-temp-file file
+      (insert (format ":PROPERTIES:\n:Provider: %s\n:ID: %s\n:Model: %s\n:Tokens: %d\n:END:\n#+TITLE: %s\n\n"
+                      provider name model (* 100 (length turns)) title))
+      (cl-loop for (seconds . minute) in turns
+               do (insert (format "* prompt\n:PROPERTIES:\n:RESPONSE: %d\n:END:\n:LOGBOOK:\nCLOCK: [2026-10-07 Wed 09:%02d]--[2026-10-07 Wed 09:%02d] =>  0:01\n:END:\n\n"
+                                  seconds minute (1+ minute)))))
+    file))
+
+(ert-deftest test-agent-org-clock-report-tables-the-clocks-a-project-files ()
+  "The report adds up what the transcripts already say, both ways.
+Seconds come from the `:RESPONSE:' properties -- exact, which a
+minute-granular `CLOCK:' range cannot be -- and the minutes come from Org's
+own clocktable over the closed ranges.  Both are in one buffer because they
+are the same measurement at two precisions: a person reads the seconds to
+compare two chats and the table to see the day."
+  (ert-with-temp-directory dir
+    (ao--report-transcript dir "sid-a" "Chat A" "Qoder" "Qwen3.8-Flash"
+                           '((30 . 0) (90 . 1)))
+    (ao--report-transcript dir "sid-b" "Chat B" "Goose" "DeepSeek-V3" '((60 . 5)))
+    (let ((buffer (ao--report-in dir (agent-org-clock-report))))
+      (unwind-protect
+          (with-current-buffer buffer
+            (should (derived-mode-p 'org-mode))
+            ;; per chat: 30+90 = 0:02:00 and 60 = 0:01:00, whole project 180
+            (should (search-forward "Qwen3.8-Flash" nil t))
+            (should (search-forward "0:02:00" nil t))
+            (should (search-forward "0:01:00" nil t))
+            (should (search-forward "0:03:00" nil t))
+            ;; the chat's own row carries its model and its turn count
+            (should (re-search-forward "| Chat B +| Goose +| DeepSeek-V3 +| 1 +| 0:01:00" nil t))
+            ;; Org's own sum of the closed ranges: three exchanges, one
+            ;; minute each, emphasized exactly as clocktable writes a total
+            (should (search-forward "*Total time*"))
+            (should (search-forward "*0:03*")))
+        (kill-buffer buffer)))))
+
+(ert-deftest test-agent-org-clock-report-reads-one-projects-directory-only ()
+  "Scope is the project's transcript directory, never the user's agenda.
+`agent-org-transcript-directory' is RELATIVE by default and resolves against
+`default-directory' exactly as the writer resolves it, so one project's
+report cannot drag in another project's chats -- and it must not do so
+through `org-agenda-files' either, which is a global list of a person's own
+choosing that has nothing to do with this repo.  The agenda file here is
+planted as a transcript in a directory the report is NOT pointed at."
+  (ert-with-temp-directory root
+    (let ((project (expand-file-name "project" root))
+          (elsewhere (expand-file-name "elsewhere" root)))
+      (make-directory project)
+      (make-directory elsewhere)
+      (ao--report-transcript project "sid-in" "Inside The Project" "Qoder" "M-In" '((30 . 0)))
+      (ao--report-transcript elsewhere "sid-out" "Outside The Project" "Goose" "M-Out" '((60 . 1)))
+      (make-directory (expand-file-name ".agent-org" project) t)
+      (rename-file (expand-file-name "sid-in.org" project)
+                   (expand-file-name ".agent-org/sid-in.org" project))
+      (let ((org-agenda-files (list (expand-file-name "sid-out.org" elsewhere)))
+            (default-directory (file-name-as-directory project))
+            (agent-org-transcript-directory ".agent-org")
+            (buffer (agent-org-clock-report)))
+        (unwind-protect
+            (with-current-buffer buffer
+              (should (search-forward "Inside The Project" nil t))
+              (should-not (progn (goto-char (point-min))
+                                 (re-search-forward "Outside The Project" nil t))))
+          (kill-buffer buffer))))))
+
+(ert-deftest test-agent-org-clock-report-never-enters-org-clock-machinery ()
+  "The guardrail, enforced: a report READS clocks and never RUNS one.
+`org-clock-in', `org-clock-out' and `org-clock-load' are bound to counters
+and must not fire; and no `org-clock-' variable may end the call holding a
+different value, which is the broad form of the same rule.  Org keeps ONE
+running clock for the whole Emacs, so a feature that touched this machinery
+would steal the user's clocking slot out from under him -- and the clock
+ranges a transcript files are supposed to be read-only evidence of work
+already done."
+  (ert-with-temp-directory dir
+    (ao--report-transcript dir "sid-a" "Chat A" "Qoder" "M" '((30 . 0)))
+    (let ((hits 0) (buffer nil) (clock-vars nil))
+      ;; org-clock must be LOADED before the snapshot: with its autoloads
+      ;; still cold every one of its variables reads as nil here, and would
+      ;; then "change" to its ordinary default when the report loads it
+      (require 'org-clock)
+      (setq clock-vars
+            (mapcar (lambda (sym) (cons sym (and (boundp sym) (symbol-value sym))))
+                    (all-completions "org-clock-" obarray
+                                     (lambda (sym) (and (boundp sym) (not (facep sym)))))))
+      (cl-letf (((symbol-function 'org-clock-in)
+                 (lambda (&rest _) (cl-incf hits)))
+                ((symbol-function 'org-clock-out)
+                 (lambda (&rest _) (cl-incf hits)))
+                ((symbol-function 'org-clock-load)
+                 (lambda (&rest _) (cl-incf hits))))
+        (setq buffer (ao--report-in dir (agent-org-clock-report))))
+      (unwind-protect
+          (progn
+            (should (= 0 hits))
+            (should-not org-clock-is-active)
+            (should-not org-clock-marker)
+            (should-not org-clock-hd-marker)
+            (dolist (pair clock-vars)
+              (should (equal (cdr pair)
+                             (and (boundp (car pair)) (symbol-value (car pair)))))))
+        (when buffer (kill-buffer buffer))))))
+
+(ert-deftest test-agent-org-clock-report-prefix-arg-answers-one-chat ()
+  "A prefix argument narrows the report to the chat under point.
+The question a person asks while a turn runs is \"is this the slow one\",
+and a table of every chat in the project does not answer it.  Called where
+there is no session there is nothing to narrow to, and the project reading
+is the honest answer -- the rule `agent-org-resource-monitor' already
+follows."
+  (ert-with-temp-directory dir
+    (ao--report-transcript dir "sid-test" "This Chat" "Qoder" "M-A" '((30 . 0)))
+    (ao--report-transcript dir "sid-other" "Another Chat" "Goose" "M-B" '((60 . 1)))
+    (let ((pair (ao--make-test-session "one-chat-report"))
+          (buffer nil))
+      (unwind-protect
+          (progn
+            (setq buffer (with-current-buffer (car pair)
+                           (ao--report-in dir (agent-org-clock-report t))))
+            (with-current-buffer buffer
+              (should (search-forward "This Chat" nil t))
+              (should-not (progn (goto-char (point-min))
+                                 (re-search-forward "Another Chat" nil t))))
+            (kill-buffer buffer)
+            ;; the same chat buffer without the prefix arg: the whole project
+            (setq buffer (with-current-buffer (car pair)
+                           (ao--report-in dir (agent-org-clock-report))))
+            (with-current-buffer buffer
+              (should (search-forward "This Chat" nil t))
+              (should (search-forward "Another Chat" nil t))))
+        (when buffer (kill-buffer buffer))
+        (kill-buffer (car pair))))))
+
+(ert-deftest test-agent-org-clock-report-with-nothing-to-read-says-so ()
+  "An empty transcript directory is a message, not an empty buffer.
+A table of nothing reads as a report of zero work, which is a different
+claim -- and the first two days of a project, or any project with
+`agent-org-transcribe' off, hit exactly this path."
+  (ert-with-temp-directory dir
+    (ao--report-in dir
+      (should-error (agent-org-clock-report) :type 'user-error))))
 
 (provide 'test-agent-org)
 ;;; test-agent-org.el ends here

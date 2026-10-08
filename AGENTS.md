@@ -104,17 +104,19 @@ emacs -Q --batch \
   would redraw the reply instead of the drawer.  The fact of whose turn it is
   lives with the BUFFER: `start-agent-turn' ignores its session argument so two
   callers that start a turn without one get the same heading.
-- Queued prompts: ONE surface — a region of `* NEXT'/`* WAIT' headings between
+- Queued prompts: ONE surface — a region of `* TODO' headings between
   the last exchange and the live `* User' box (`--render-end' answers with
-  `--queue-start', so a mid-queue turn lands above it).  NEXT/WAIT are per-file
-  keywords derived from POSITION on every render, never read back; an entry's
-  continuation lines carry one space (a `*' at column 0 would split the
-  prompt); the preamble comments sit ABOVE the first entry (a note after the
-  last would be parsed INTO it and sent).  `agent-org--queue-refresh' mirrors
-  `:pending-prompts' into region, `:QUEUE:' drawer and transcript (no line cap,
-  arrives open); the drawer regenerates from the SESSION, never from the
-  region.  Reconciliation on apply is BY TEXT — dropping by position resends an
-  answered prompt and loses an edited one.  §17, §20.
+  `--queue-start', so a mid-queue turn lands above it).  Every entry says
+  TODO: which one goes next is its ORDER in the region, never its keyword,
+  so a render does not have to restate a word and an edit cannot leave two
+  entries saying NEXT; an entry's continuation lines carry one space (a `*'
+  at column 0 would split the prompt); the preamble comments sit ABOVE the
+  first entry (a note after the last would be parsed INTO it and sent).
+  `agent-org--queue-refresh' mirrors `:pending-prompts' into the region and
+  the transcript; the transcript's block is re-rendered from the SESSION,
+  never copied from the region.  Reconciliation on apply is BY TEXT —
+  dropping by position resends an answered prompt and loses an edited one.
+  §17, §20.
 - The `* User' box is always last, always typeable; programmatic text carries
   `read-only' properties, and those must never reach the mode line:
   `which-function' copies heading text WITH properties and doom-modeline's ONE

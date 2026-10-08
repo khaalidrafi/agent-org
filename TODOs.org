@@ -976,6 +976,59 @@ and reported at the bottom for user monitoring."  So the =:IDLE:= property idea
 is GONE --- the indicator is the whole feature: transient overlay text, removed
 when the turn closes, nothing about it enters the buffer or the transcript.
 
+UPDATE 2026-10-07 (later in the same session, REVISES the above): the user now
+wants the lifecycle expressed as TODO keywords on the exchange heading, not an
+overlay (see the new entry below), so IDLE becomes a real keyword.
+
+** DONE The prompt vocabulary: one =#+TODO:= set on real headings
+CLOSED 2026-10-07
+Four user orders (2026-10-07), dictated as separate bullets:
+- "The 3 keywords for tool calls are: ONGOING|COMPLETE FAILED."
+- "Prompt TODO keywords: TODO RESPONDING IDLE | RESPONDED ERROR, besides other
+  status indicators moved from header line."
+- "And, failed prompts with no response needn't be clocked."
+- "Remove the EL comment before prompt.  Use a separator instead."  --- open,
+  see the last subitem below.
+
+What turned out to be needed, against the three-sequence reading this entry
+first took from those words:
+
+- *ONE set, not three.*  Only prompts are headings, so one per-file
+  =#+TODO:= covers every state a =C-c C-t= can reach; the two other vocabularies
+  are not Org states at all.  A =#+SEQ_TODO:= idea died with that observation.
+- Prompt set, declared by =agent-org-buffer--todo-setup=:
+  =TODO RESPONDING IDLE | RESPONDED ERROR=.  Three before the bar because all
+  three are unfinished work; the bar is where Org's =DONE= equivalent sits.
+- Tool-call set: *deliberately absent* from the declaration.  =TODO ONGOING
+  COMPLETE FAILED= live on =:tool:= drawer ITEMS, where a keyword is cosmetic
+  text --- =info "(org) Drawers"= forbids headlines inside a drawer, so a call
+  cannot be a heading and cannot cycle.  Declaring those words would put a
+  call's vocabulary on the same completion list as a prompt's and let somebody
+  mark a prompt =COMPLETE=, which is the wrong verb for a question.  So the
+  user's "3 keywords" is honoured as the drawer's own words, and
+  =agent-org-buffer--tool-keyword= is unchanged.
+- Queue set: =NEXT WAIT= are *retired*, and the queue is ONE word.  Every
+  entry renders =* TODO=: which prompt goes next is its ORDER in the region, so
+  the head no longer has to be re-worded on every render, reorder, drain or
+  edit --- the retired pair existed only to say "this one, next", a fact the
+  position already states.  =agent-org-buffer--queue-legacy-keywords= keeps
+  reading an old transcript's =* NEXT=/=* WAIT= (read, never written), so a
+  session recorded before this change restores its queue instead of silently
+  dropping it.
+
+Not done from the same four orders:
+- Turn lifecycle on the heading (=RESPONDING=/=IDLE=/=RESPONDED=/=ERROR=), and
+  what that removes from the header line --- below.
+- No clock for a failed prompt with no response --- below.
+- "Remove the EL comment before prompt.  Use a separator instead."  The region
+  still opens with the two =;;= lines of =agent-org-buffer--queue-note-text=,
+  which are now load-bearing twice over: the parser's entry boundary and the
+  transcript reader's block finder (=agent-org-buffer-transcript-queue= searches
+  for the LAST match).  A separator must therefore be something Org treats as a
+  comment-like line and the finder can still key on --- and the order's exact
+  target ("EL comment"?) needs one confirming word from the user before this is
+  swapped for something he did not ask for.
+
 ** TODO Hooks on the response boundary, and automation that answers the agent
 User order (2026-10-07): "add hooks for response completion, response exit with
 error/warning etc. and automation features to send a prompt on each exit or error
@@ -1067,7 +1120,7 @@ each capability onto machinery =agent-org= /already/ writes — its per-exchange
 header already accumulates (=:tokens= / =:cost-amount=, but /not/ yet filed
 per-exchange — the reporting ideas below are what would add that), the quote
 blocks that become =#+begin_src= on conversion (§15), the per-project
-=.agent-org/sid-<id>.org= transcript mirror (§14), the =* NEXT=/=* WAIT= queue
+=.agent-org/sid-<id>.org= transcript mirror (§14), the =* TODO= queue
 (§17/§20), and the per-turn =<agent-org-context>= block (§18).  None is
 scheduled work yet; the point is the option set.
 
@@ -1078,7 +1131,8 @@ scheduled work yet; the point is the option set.
 - The transcript is a mirror of point-min..=--render-end= written at boundaries —
   an archive/refile/export move must stay above the render end or be excluded,
   and must not disturb the auto-managed metadata block or the turn markers.
-- Queue NEXT/WAIT are DERIVED from position and reconciled BY TEXT on apply — any
+- Queue entries are ONE word (=TODO=) and their order is what dispatches;
+  reconciliation on apply is BY TEXT — any
   dependency/TODO-cycling idea drives =:pending-prompts=, never a TODO state-change
   hook owning dispatch (§17, §20).
 - This is a 4 GB Celeron: prefer ON-DEMAND dynamic blocks, columns, agenda and
@@ -1152,7 +1206,7 @@ scheduled work yet; the point is the option set.
   the right project's session as a ready-to-send prompt (source line rides in the
   context block).  (org-contrib/org-protocol.org §Setup Org protocol capture)
 - org-feed as INGEST, not just output: watch a CI/issue/error feed and auto-enqueue
-  new items as =* NEXT= prompts, using its =FEEDSTATUS= drawer for dedup — a
+  new items as =* TODO= prompts, using its =FEEDSTATUS= drawer for dedup — a
   pattern that drops straight into agent-org's drawer vocabulary.
   (org-contrib/org-feed.org :filter/:new-handler/FEEDSTATUS)
 - An Alfred/Raycast/emacsclient one-liner that resolves project→session and pushes
@@ -1186,12 +1240,16 @@ scheduled work yet; the point is the option set.
   (org-faq.org capture-template backquote trick; org-checklist.org; org-hacks.org
   "Integrate Org Capture with YASnippet")
 - Recurring checklist prompts that reset their boxes when the exchange is done, and
-  a statistics cookie =[3/5]= in a =* NEXT= heading auto-closing it via
+  a statistics cookie =[3/5]= in a queue heading auto-closing it via
   =org-checkbox-statistics-hook= (event-driven, not a poll).
   (org-checklist.org; org-syntax.org Statistics Cookies)
-- =C-c C-t= on a =* NEXT= to cycle NEXT→WAIT→(DONE = send now), with fast
-  tag-like selection — but it must drive =:pending-prompts= (guardrail above).
-  (orgcard.org TODO; org-faq.org fast todo selection)
+- =C-c C-t= as a way to send a queued prompt now — with ONE word on every
+  waiting entry this is no longer a keyword cycle: NEXT→WAIT said "you are next",
+  which is now the entry's POSITION, and a queue heading moved to =RESPONDING=
+  would claim a turn the agent never got.  So =C-c C-t= there is a design question,
+  not a shortcut: either disabled on queue entries, or it means
+  =agent-org-queue-resume= and must drive =:pending-prompts= (guardrail above),
+  never the TODO state.  (org-faq.org fast todo selection)
 - org-choose marks (CHOSEN/MAYBE/REJECTED) when an agent presents sibling plan
   options, kept scoped to a sub-region so it never rewrites the one-heading-per-
   exchange prompt or the queue keywords.  (org-contrib/org-choose.org)

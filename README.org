@@ -41,13 +41,19 @@ clock rather than a fabricated one (see CONVENTIONS.md §22).
 
 - Emacs 29.1+ (Org 9.0+ built in)
 - The ~acp~ package (e.g. from NonGNU ELPA)
-- An ACP agent binary on ~exec-path~: ~qoder --acp~ (1.1.58 tested),
+- An ACP agent binary on ~exec-path~: ~slave-acp~ (slave-agent, this
+  fork's own agent --- a standalone stdio server, not a CLI subcommand),
+  ~qoder --acp~ (1.1.58 tested),
   ~goose acp~ (1.50+ tested), ~opencode acp~ (1.18.29 tested) or
   ~mcode acp~ (MiniMax Code 0.4.5); plus four wired from ~agent-shell~
   but not yet run against a live agent here — ~copilot --acp~ (GitHub
   Copilot CLI, whose ACP server is in public preview), ~agent acp~ (Cursor;
   the CLI binary is ~agent~, not ~cursor~), ~codebuddy --acp~ (CodeBuddy)
   and ~cline --acp~ (Cline).
+  slave-agent keeps its keys in a ~.env~ inside its state dir and its model in
+  ~config.yaml~, both read by the adapter itself, so Emacs exports nothing for
+  it; set ~SLAVE_HOME~ in the environment Emacs was started with to bind a
+  specific profile's state dir.
   Qoder reads its credential from ~QODER_PERSONAL_ACCESS_TOKEN~ in the
   environment Emacs was started with, so export it before launching Emacs or
   the daemon.  OpenCode, MiniMax Code, Copilot, CodeBuddy and Cline keep their
@@ -76,6 +82,7 @@ The checkout ships ~agent-org-autoloads.el~, so lazy loading via
   :load-path "~/agent-org"
   :commands (agent-org-start agent-org-resume-session agent-org-send
              agent-org-set-session-model agent-org-transcript-sync
+             agent-org-slave-agent-start-agent
              agent-org-goose-start-agent agent-org-qoder-start-agent
              agent-org-opencode-start-agent agent-org-minimax-start-agent
              agent-org-copilot-start-agent agent-org-cursor-start-agent
@@ -175,17 +182,16 @@ NonGNU ELPA.
    (~agent-org-queue-when-busy~, on by default — agent-shell's type-ahead
    model): queued prompts go out FIFO as each turn ends successfully.
    What is waiting is shown /in the chat/, at the bottom: each waiting
-   prompt is a ~* NEXT~ or ~* WAIT~ heading above the live ~* User~ box, the
-   first one NEXT because it goes out when this turn ends and the rest WAIT
-   behind it.  ~C-c C-q~ (~agent-org-queue-edit~) takes you there; edit a
+   prompt is a ~* TODO~ heading above the live ~* User~ box — /every/ entry
+   says TODO, because which one goes next is its /position/, not its
+   keyword.  ~C-c C-q~ (~agent-org-queue-edit~) takes you there; edit a
    prompt in place, ~C-c C-a~ adds a blank one at the bottom to type into,
    ~C-c C-d~ kills one, ~M-UP~ / ~M-DOWN~ re-order (the order in the region
    /is/ the send order), and ~M-x agent-org-queue-apply~ (~agent-org-queue-apply~)
    is what puts the result on the wire.  Nothing is sent until you apply:
    a queue you are rearranging must not change under your hands, and the
-   same list is in the ~:QUEUE:~ drawer of the auto-managed block and on
-   disk in the transcript, so quitting Emacs mid-turn does not swallow a
-   prompt (see [[#transcript-file][Transcript file]]).
+   same list is mirrored into the transcript as these headings, so quitting
+   Emacs mid-turn does not swallow a prompt (see [[#transcript-file][Transcript file]]).
    ~C-c C-r~ (~agent-org-queue-resume~) sends the next one now, which is
    the escape hatch after ~C-c C-k~ cancelled the turn they were queued
    behind.
@@ -293,8 +299,9 @@ first page.  One candidate is used without prompting; the header line
 shows ~Restoring~ while the history is replayed, then ~Ready~ with a
 live ~* User~ prompt at the end, and you continue exactly where you
 left off — including prompts you had queued but never sent, which come
-back from the transcript's ~:QUEUE:~ drawer and go out in order (the
-agent's own replay cannot contain them, because it never saw them).
+back from the queue region at the bottom of the transcript and go out in
+order (the agent's own replay cannot contain them, because it never saw
+them).
 
 Resume is cheap on purpose (this is a 4 GB machine): the replayed
 ~session/update~ notifications are buffered while the load is in
@@ -502,16 +509,14 @@ refreshes itself as the session reports new facts:
   the agent has issued one, Mode, Model, Context, Cost, Tokens),
 - a ~#+TITLE:~ keyword line (provider — session title),
 - ~:COMMANDS:~ (available ~/slash-commands~), ~:MODES:~ and
-  ~:CONFIG:~ drawers listing everything the agent advertised, and
-  ~:QUEUE:~ listing the prompts waiting for their turn.
+  ~:CONFIG:~ drawers listing everything the agent advertised.
 
-No heading is used — ~* ~ lines belong to the conversation.  The
-reference drawers start folded, so the block is a few marker lines, and
-~TAB~ on a drawer line opens or closes it. ~:QUEUE:~ is the exception, and
-arrives open: what you typed and has not been answered yet is the one list
-worth reading without asking for it, and it is never shortened. The block is deleted and re-inserted
-on every update, so it never duplicates and never disturbs the
-conversation below it.
+No heading is used — ~* ~ lines belong to the conversation, and to the
+/queue/, which is a region of ~* TODO~ headings at the bottom of the chat
+rather than a drawer of this block.  The reference drawers start folded, so
+the block is a few marker lines, and ~TAB~ on a drawer line opens or closes
+it.  The block is deleted and re-inserted on every update, so it never
+duplicates and never disturbs the conversation below it.
 
 * Transcript file
 :PROPERTIES:
@@ -547,16 +552,15 @@ write is a note in the echo area, never a broken turn.
 One thing in the file is /not/ conversation: prompts you sent into a busy
 session, which are waiting their turn.  They have no heading yet, and the
 agent has never seen them, so its own history cannot give them back on a
-resume.  They are recorded one per line in the ~:QUEUE:~ drawer of the
-metadata block at the top of the transcript — every waiting prompt, with no
-length cap, because a queue is the one list you cannot afford to hear
-about — and ~agent-org-resume-session~
-reads them from there — reloading them and sending the first, the way the
-end of a turn would have.  An empty queue writes no drawer, which is what
-stops a prompt being sent twice.  The same prompts are in the transcript as
-the ~* NEXT~ / ~* WAIT~ headings of the chat's queue region, so a transcript
-read years later still shows what was waiting; the drawer is what the
-loader reads, and both are written from the session's one list.
+resume.  They are recorded in the transcript as the chat's own queue
+region: ~* TODO~ headings under two ~;;~ preamble lines, /re-rendered/ from
+the session's list by ~agent-org-buffer-transcribe~ rather than copied out
+of the buffer — the region is the user's text and may be half-edited.
+~agent-org-resume-session~ reads them back through the same parser,
+reloading them and sending the first, the way the end of a turn would have.
+The preamble is what finds the block — the LAST such block, since it is
+always the final thing in the file — and an empty queue writes no block at
+all, which is what stops a prompt being sent twice.
 
 In lite mode this is the ONE write lite mode does not skip: see
 the Resource monitor and lite mode section.

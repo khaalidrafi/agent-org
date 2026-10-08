@@ -70,9 +70,14 @@ state the user just tried to escape — so this closes the turn locally
 the moment the notification goes out, and the turn id in SESSION's
 `:turn' makes the late answer drop (`agent-org--send-turn').
 
-The session survives (unlike `agent-org-reload', which restarts the
-agent process); the prompt queue survives and is drained right away,
-because the turn that was holding it is gone." t)
+The session survives (unlike `agent-org-reload', which restarts the agent
+process).  The prompt queue survives and stays WAITING: a cancel is the user
+saying \"stop\", and the prompts behind the cancelled turn were queued to join
+the work being stopped.  Releasing them here put a turn on the wire nobody
+asked for, and each one that answered fired the next, so one cancel emptied
+the whole queue in seconds (live bug; the user's order: \"Cancelling turn
+should never resume queue\").  `agent-org-queue-resume' (C-c C-r) is the way
+back, and a later turn ending successfully drains FIFO as always." t)
 (autoload 'agent-org-reload "agent-org" "\
 Restart this chat's agent and replay the SAME session through resume.
 Port of `agent-shell-reload' (agent-shell.el:1604), which is exactly
@@ -196,7 +201,9 @@ document you can fold, align and re-read.
 
 The refresh timer runs only while this buffer is on display
 (`agent-org-resource-refresh-interval'); `agent-org-resource-refresh'
-redraws on demand, which is also how the monitor is read in a batch Emacs." t)
+redraws on demand, which is also how the monitor is read in a batch Emacs.
+
+(fn &optional ONLY-THIS)" t)
 (autoload 'agent-org-resource-refresh "agent-org" "\
 Redraw the resource monitor now.
 C-c C-c in the monitor, and the path `agent-org-resource-monitor' itself
@@ -214,6 +221,13 @@ that was never opened should not open one." t)
 
 ;;; Generated autoloads from agent-org-providers.el
 
+(autoload 'agent-org-slave-agent-start-agent "agent-org-providers" "\
+Start an interactive slave-agent agent-org chat.
+slave-agent is the master's own agent, so this is the command the package
+was written around: it opens on the model named in ~/.slave/config.yaml
+(no pin) and resumes the directory's earlier slave-agent sessions through
+`session/list'.  Run `slave-acp --check' in a shell if this fails to
+start -- that says whether the ACP extra is installed." t)
 (autoload 'agent-org-goose-start-agent "agent-org-providers" "\
 Start an interactive Goose agent-org chat." t)
 (autoload 'agent-org-qoder-start-agent "agent-org-providers" "\
