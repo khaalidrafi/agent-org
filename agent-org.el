@@ -296,7 +296,10 @@ the dead buffer, so both are unarmed on the way out too."
       ;; A kill is not a turn boundary, and the turn in flight has no
       ;; end coming: without this the last answer of every session — the
       ;; one the user stopped reading — is the one missing from the file.
-      ;; The buffer is still whole here, so the mirror is its real state.
+      ;; The converter holds the still-arriving line in `--md-fragment'
+      ;; and it is not in the buffer yet, so the mirror must flush it
+      ;; first or the very text this hook exists to save would slip.
+      (agent-org-buffer--markdown-flush-here)
       (agent-org-buffer-transcribe buf)
       ;; Shutdown first: it clears the client's handlers, so a late process
       ;; event cannot reach a buffer that is already going away.
@@ -3128,9 +3131,12 @@ them, so the first match is the right match by construction."
         (cl-incf turns)
         (cl-incf seconds (string-to-number (match-string 1))))
       (goto-char (point-min))
+      ;; `#+TITLE:' — the `+' is literal, so it must be escaped: an
+      ;; unescaped `#+' is the regex "one-or-more `#'" and never matches the
+      ;; keyword, silently falling the Chat column back to the file name.
       (list :file file
             :name (file-name-nondirectory file)
-            :title (or (and (re-search-forward "^#+TITLE:[ \t]*\\(.*\\)" nil t)
+            :title (or (and (re-search-forward "^#\\+TITLE:[ \t]*\\(.*\\)" nil t)
                             (match-string 1))
                        (file-name-nondirectory file))
             :provider (or provider "—")
@@ -3204,7 +3210,12 @@ data that only a turn boundary changes."
         ;; fills the block in place, the same call `C-c C-c' leads to; a
         ;; report nobody has to refresh by hand is the on-demand half of the
         ;; guardrail
-        (org-update-all-dblocks))
+        (org-update-all-dblocks)
+        ;; `org-update-all-dblocks' leaves point at the end of the block it
+        ;; filled; a report you open should read from its first line, so the
+        ;; top table (not the tail of a clocktable) is what you see and what
+        ;; the first `search-forward' from point finds.
+        (goto-char (point-min)))
       (display-buffer buffer)
       (message "[agent-org] Clock report: %d transcript(s) in %s"
                (length files) directory)

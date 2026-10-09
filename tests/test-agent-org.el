@@ -38,6 +38,13 @@
 ;; inside its own temp directory.
 (setq agent-org-transcribe nil)
 (load (expand-file-name "acp-mock.el" (file-name-directory load-file-name)))
+;; The package root, captured NOW: `load-file-name' is bound only while this file
+;; is being loaded, so a test that runs later (ert-run-tests-batch) sees it nil
+;; and cannot resolve the generated autoloads file through it.  Reading that file
+;; is the point — see `test-agent-org-every-provider-has-a-start-agent-command'.
+(defvar ao--package-root
+  (file-name-directory (directory-file-name (file-name-directory load-file-name)))
+  "Directory of the package sources, resolved while `load-file-name' is bound.")
 (require 'agent-org)
 (require 'agent-org-buffer)
 (require 'agent-org-loader)
@@ -463,7 +470,12 @@ state stays readable, and it is still exactly one segment."
 ;;;; Streaming (the hot path)
 
 (ert-deftest test-agent-org-buffer-streaming-lifecycle ()
-  "Append-chunk starts an Agent turn; end-turn clears the streaming flag."
+  "Append-chunk starts an Agent turn; end-turn clears the streaming flag.
+The streaming contract is LINE-granular and append-only: a chunk still
+arriving (no newline yet) is held in `--md-fragment' and never written, and
+the line lands flush under the answer prefix the instant its newline
+arrives.  (The quote-block era wrote every chunk raw the moment it came,
+which is what made the buffer hold each line twice once conversion joined.)"
   (let* ((buf (agent-org-buffer-create "stream"))
          (session (list :name 'test :buffer buf)))
     (with-current-buffer buf
@@ -471,13 +483,14 @@ state stays readable, and it is still exactly one segment."
     (agent-org-buffer-append-chunk buf "Hello " session)
     (with-current-buffer buf
       (should agent-org-buffer--streaming-p)
-      ;; the answer lands INSIDE the quote block, and a streaming chunk keeps
-      ;; no trailing space (the partial line is rewritten by the next chunk)
-      (should (string-match-p "^ Hello" (buffer-string)))
-      (should (string-match-p "\\* Agent" (buffer-string))))
-    (agent-org-buffer-append-chunk buf "world" session)
+      (should (string-match-p "\\* Agent" (buffer-string)))
+      ;; still arriving: no newline, so nothing has landed in the body yet
+      (should-not (string-match-p "Hello" (buffer-string))))
+    (agent-org-buffer-append-chunk buf "world\n" session)
     (with-current-buffer buf
-      (should (string-match-p "Hello world" (buffer-string))))
+      ;; the joined line is finished now, and it is appended flush — one space
+      ;; of indent was the quote-block body rule, not the prefix rule
+      (should (string-match-p "^Hello world$" (buffer-string))))
     (agent-org-buffer-end-agent-turn buf)
     (with-current-buffer buf
       (should-not agent-org-buffer--streaming-p))
@@ -490,12 +503,15 @@ state stays readable, and it is still exactly one segment."
   (let* ((buf (agent-org-buffer-create "dispatch"))
          (session (list :name 'test :client nil :buffer buf
                         :session-id nil :streaming t)))
-    ;; agent message chunk -> body + streaming status
+    ;; agent message chunk -> body + streaming status.  The line carries its
+    ;; newline so it is FINISHED: a chunk still arriving is held by the
+    ;; line-granular converter and would not have landed yet (see
+    ;; `test-agent-org-buffer-streaming-lifecycle').
     (agent-org--on-notification
      session
      `((method . "session/update")
        (params . ((update . ((sessionUpdate . "agent_message_chunk")
-                             (content . ((type . "text") (text . "hi there")))))))))
+                             (content . ((type . "text") (text . "hi there\n")))))))))
     (with-current-buffer buf
       (should (string-match-p "hi there" (buffer-string)))
       (should (equal (plist-get agent-org-buffer--status :state) 'streaming))
@@ -2386,6 +2402,11 @@ must not lose the fifty-fifth."
              (buf (car pair))
              (session (cdr pair))
              (prompts (cl-loop for i from 1 to 55 collect (format "prompt %d" i))))
+        ;; the writer keys on the BUFFER's status id, which in a live chat
+        ;; arrives with an update; `ao--make-test-session' binds the session
+        ;; plist but not the status, so install the id here the way a real
+        ;; `session_info_update' would, or there is no file to mirror into
+        (agent-org-buffer-set-status buf :session-id (plist-get session :session-id))
         (setf (plist-get session :pending-prompts) prompts)
         (agent-org--queue-refresh session buf)
         (with-current-buffer buf
@@ -2688,7 +2709,11 @@ redirect the load to it instead of replaying."
   (let ((buf (agent-org-buffer-create "props")))
     (with-current-buffer buf
       (agent-org-buffer-insert-prompt buf)
-      (agent-org-buffer-append-chunk buf "streamed" (list :buffer buf))
+      ;; the chunk carries its newline so the line is FINISHED and lands: an
+      ;; arriving line is held by the line-granular converter (see
+      ;; `test-agent-org-buffer-streaming-lifecycle'), and held text is not yet
+      ;; in the buffer to be read-protected
+      (agent-org-buffer-append-chunk buf "streamed\n" (list :buffer buf))
       (should (save-excursion
                 (goto-char (point-min))
                 (and (search-forward "streamed" nil t)
@@ -3292,9 +3317,9 @@ batched pass when the load response arrives."
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-render-replay-builds-history ()
-  "The batched replay paints one heading per question, its answer as a
-quote block, the tool drawer and the thinking drawer in history order,
-closes all turns, and leaves font-lock alone."
+  "The batched replay paints one heading per question, its answer under the
+model/`Agent' prefix, the tool drawer and the thinking drawer in history
+order, closes all turns, and leaves font-lock alone."
   (let* ((pair (ao--make-test-session "replay"))
          (buf (car pair))
          (session (cdr pair)))
@@ -3318,11 +3343,13 @@ closes all turns, and leaves font-lock alone."
       (with-current-buffer buf
         (let ((s (buffer-string)))
           ;; the two user chunks collapse into ONE heading with joined text,
-          ;; and the answer carries no heading of its own — it is a quote block
+          ;; and the answer carries no heading of its own — it streams under
+          ;; the prefix (no model on this replay session, so the word is Agent)
           (should (= 1 (ao--count-occurrences s "^\\* Hello world$")))
           (should (= 1 (ao--count-occurrences s "^\\* Next question$")))
           (should (= 0 (ao--count-occurrences s "^\\* Agent$")))
-          (should (= 1 (ao--count-occurrences s "^#\\+begin_quote$")))
+          (should (= 1 (ao--count-occurrences s "^Agent: $")))
+          (should (= 1 (ao--count-occurrences s "^Answer$")))
           (should (apply #'ao--ordered s
                          (list "Hello world" "Answer"
                                "^  - COMPLETE shell$"
@@ -3652,10 +3679,11 @@ history — before and after the response — lands in one pass."
 
 (ert-deftest test-agent-org-replay-paints-every-tool-call-of-a-turn ()
   "A replayed turn keeps the same shape as a typed one: one heading wearing
-the question, its answer a quote block, one `:tool:' drawer line per distinct
-toolCallId, thoughts folded in their own drawer, and an update rewriting its
-own line instead of adding a second.  Live qoder replayed 4 tool calls but the
-buffer showed 1 heading, so this pins the whole turn down at once."
+the question, its answer streaming under the model/`Agent' prefix, one
+`:tool:' drawer line per distinct toolCallId, thoughts folded in their own
+drawer, and an update rewriting its own line instead of adding a second.
+Live qoder replayed 4 tool calls but the buffer showed 1 heading, so this
+pins the whole turn down at once."
   (ao--capture-wire
     (let ((buf (agent-org-resume-session 'qoder "sid-tools")))
       (let ((session (agent-org--session-for-buffer buf)))
@@ -3694,7 +3722,9 @@ buffer showed 1 heading, so this pins the whole turn down at once."
         (let ((text (with-current-buffer buf (buffer-string))))
           (should (string-match-p "Do things" text))
           (should (equal 1 (ao--count-occurrences text "^\\* Do things$")))
-          (should (equal 1 (ao--count-occurrences text "^#\\+begin_quote$")))
+          (should (equal 1 (ao--count-occurrences text "^Agent: $")))
+          (should (equal 1 (ao--count-occurrences text "^working$")))
+          (should (= 0 (ao--count-occurrences text "^#\\+begin_quote$")))
           (should (equal 4 (ao--count-occurrences text "^  - ")))
           ;; the completed call was rewritten in place, the others stayed
           ;; pending
@@ -4281,8 +4311,7 @@ generated file, the one artifact a user actually loads."
                    (with-temp-buffer
                      (insert-file-contents
                       (expand-file-name "agent-org-autoloads.el"
-                                        (file-name-directory
-                                         (or load-file-name buffer-file-name))))
+                                        ao--package-root))
                      (goto-char (point-min))
                      (let (found)
                        (while (re-search-forward "(autoload '\\(agent-org-[a-z-]*\\)" nil t)
@@ -5775,7 +5804,7 @@ agent split its reply, the document is the reply."
               (should (apply #'ao--ordered text
                              (list "^:ID: sid-turn$"
                                    "^\\* align the columns$"
-                                   "^#\\+ATTR_TEXINFO: :author QModel Large$"
+                                   "^QModel Large: $"
                                    "tok tok"
                                    "^:thinking:$" "reasoning here"
                                    "^:tool:$" "^  - TODO grep -rn foo$")))
@@ -6533,14 +6562,16 @@ rather than a preamble with nothing under it."
                           (agent-org-buffer-transcript-queue "sid-drain"))))
           (kill-buffer buf))))))
 
-(ert-deftest test-agent-org-resume-reloads-the-queued-prompts-and-sends ()
-  "Resume brings back what the last session had queued, in order.
+(ert-deftest test-agent-org-resume-reloads-the-queued-prompts-without-sending ()
+  "Resume brings back what the last session had queued, in order, UNSent.
 User order: \"Save queued prompts to transcripts and reload them on
 resume.\"  The prompts were never sent, so the agent's own replay cannot
-contain them — only our transcript can.  Restoring into an idle session
-and leaving them there would strand them: nothing else drains a queue on
-a session that is not busy, so the flush point drains, which puts the
-first one on the wire and keeps the rest waiting exactly as they were."
+contain them — only our transcript can.  Restoring them and immediately
+firing the first on the wire would spend tokens the user has not, on
+seeing the restored list, chosen to re-approve (task #104): the flush
+point RESTORES the whole queue into `:pending-prompts' and repaints the
+region and drawer, and sends nothing.  The user then drains by applying
+the region, or the first real turn end does."
   (ert-with-temp-directory temp-dir
     (with-temp-file
         (expand-file-name (agent-org-buffer--transcript-name "sid-rest")
@@ -6564,15 +6595,26 @@ first one on the wire and keeps the rest waiting exactly as they were."
           (ao--drive "session/load" '((sessionId . "sid-rest")))
           (ao--wire-prompt-texts
             (ao--settle))
-          ;; the first prompt is out on the wire as its own turn; the rest wait
-          (should (equal (list "finish the tests") (ao--sent-prompt-texts)))
-          (should (equal '("then run org-check")
+          ;; Nothing fires on arrival: the queue is restored for review.
+          (should (null (ao--sent-prompt-texts)))
+          ;; BOTH prompts come back, in the order they were parked.
+          (should (equal '("finish the tests" "then run org-check")
                          (plist-get session :pending-prompts)))
           (with-current-buffer buf
-            (should (string-match-p "^\\* finish the tests$"
+            ;; each restored prompt shows as a `* TODO' queue entry, in order
+            (should (string-match-p "^\\* TODO finish the tests$"
                                     (buffer-string)))
-            (should (string-match-p "1 queued"
-                                    (agent-org-buffer--render-header-line))))
+            (should (string-match-p "^\\* TODO then run org-check$"
+                                    (buffer-string)))
+            ;; and the buffer's own queue mirror carries both.  The header
+            ;; count is deliberately NOT asserted: " (N queued)" only rides a
+            ;; `:message' while streaming/loading, and a resumed session is
+            ;; Ready, where the state label hides a bare message (the count
+            ;; would show once the user applies the region and a turn runs).
+            (should (equal '("finish the tests" "then run org-check")
+                           (plist-get (buffer-local-value 'agent-org-buffer--status
+                                                          buf)
+                                      :queued))))
           (kill-buffer buf))))))
 
 (ert-deftest test-agent-org-resume-without-a-queue-block-sends-nothing ()
@@ -6719,41 +6761,42 @@ divider in the buffer."
 
 (ert-deftest test-agent-org-markdown-conversion-off-leaves-text-verbatim ()
   "The switch is the way out: nil and the agent's markup bytes land as sent.
-Verbatim is a rendering sentence, not a licence to break the block, so the
-one-space indent that keeps a `*' from ending the quote still applies -- but
-`#' is never rewritten to a bold and the agent's own stars survive."
+Verbatim is a rendering sentence, not a licence to break the exchange, so the
+ONE structural guard still applies: a `*' at column 0 is a headline and would
+end the answer's own exchange, so `* item' takes a space.  But a `#' line is
+neither a headline nor a drawer keyword, so with the quote block gone it is
+left flush — the agent's `#' is never rewritten to a bold and its stars on a
+non-headline line survive untouched."
   (let ((agent-org-convert-markdown nil)
         (buf (agent-org-buffer-create "mdoff")))
     (agent-org-buffer-start-agent-turn buf nil)
     (agent-org-buffer-append-chunk buf "# Title\n* item\n" nil)
     (let ((text (with-current-buffer buf (buffer-string))))
-      (should (string-match-p "^ # Title$" text))
+      (should (string-match-p "^# Title$" text))
       (should (string-match-p "^ \\* item$" text)))
     (kill-buffer buf)))
 
-(ert-deftest test-agent-org-markdown-streaming-writes-every-chunk-once ()
-  "A line appears as it arrives and is converted when it stops being partial.
-Chunks stop wherever the model's tokenizer stopped, so `**bold' can end one and
-`**' open the next.  Holding the line until its newline (the first design) made
-a one-line reply invisible until the turn ended — the user watched an empty
-buffer while the agent answered.  So the last line is written as PROVISIONAL
-text and the next chunk rewrites that region: the stars are on screen only while
-they are still the whole truth, the converted form appears exactly once, and in
-the same place."
+(ert-deftest test-agent-org-markdown-streaming-writes-every-line-once ()
+  "A finished line is appended exactly once; the arriving line is held.
+The earlier shape rewrote a PROVISIONAL last line on every chunk, so a partial
+`**bold' sat on screen and the next chunk deleted and re-inserted it.  That is
+the back-and-forth the user rejected (\"I can't go back and forth to read what
+the agent said\"): append-only means nothing already written ever moves, which
+is only possible at LINE granularity.  So the still-arriving line is kept in
+`--md-fragment' and converted once when its newline lands — `**bold' split
+across two chunks still converts, because the JOINED line is what is converted.
+Nothing is written twice."
   (let ((buf (agent-org-buffer-create "mdsplit")))
     (agent-org-buffer-start-agent-turn buf nil)
     (agent-org-buffer-append-chunk buf "say **bold" nil)
     (with-current-buffer buf
-      ;; nothing waits for a newline: the answer is on screen mid-word
-      (should (string-match-p "say \\*\\*bold" (buffer-string))))
+      ;; still arriving: no newline yet, so the line is held, not half-shown
+      (should-not (string-match-p "bold" (buffer-string))))
     (agent-org-buffer-append-chunk buf "** alpha\n" nil)
     (with-current-buffer buf
-      (should (string-match-p "say \\*bold\\* alpha" (buffer-string)))
+      (should (string-match-p "^say \\*bold\\* alpha$" (buffer-string)))
       (should-not (string-match-p "\\*\\*bold\\*\\*" (buffer-string)))
-      ;; REWRITTEN, not appended: one copy of the words that were provisional.
-      ;; (`ao--count-substrings' is case-INsensitive, which is why the probe word
-      ;; is not something the buffer's own `#+TODO:' keyword line
-      ;; line contains.)
+      ;; APPENDED once, never rewritten: exactly one copy of each word
       (should (equal 1 (ao--count-substrings "say")))
       (should (equal 1 (ao--count-substrings "alpha"))))
     (kill-buffer buf)))
@@ -6773,19 +6816,22 @@ came back."
 
 (ert-deftest test-agent-org-markdown-turn-end-flushes-the-last-line ()
   "Nothing may be held when the turn closes, and an open fence must close.
-The final line of a reply usually arrives with no trailing newline, so a
-streaming-only rule would drop it; and a `#+begin_src' left open swallows
+The final line of a reply usually arrives with no trailing newline, so the
+line-granular converter is still holding it; the turn boundary must flush that
+fragment or the last line is lost.  And a `#+begin_src' left open swallows
 everything after it in the buffer AND in the transcript, which is the one
 corruption this feature must never cause."
   (let ((buf (agent-org-buffer-create "mdflush")))
     (agent-org-buffer-start-agent-turn buf nil)
     (agent-org-buffer-append-chunk buf "## Tail" nil)
+    (with-current-buffer buf
+      ;; still arriving: `## Tail' has no newline, so it is not in the body yet
+      (should-not (string-match-p "Tail" (buffer-string))))
     (agent-org-buffer-end-agent-turn buf)
-    ;; `##' is a markdown heading, which inside the reply's quote becomes the
-    ;; bold `*Tail*' (a headline of any level would end the block) -- and it is
-    ;; in the buffer BEFORE the turn closes, because a reply's last line usually
-    ;; never sends a newline.
-    (should (string-match-p "^ \\*Tail\\*$"
+    ;; `##' is a markdown heading, which in a reply becomes the bold `*Tail*'
+    ;; (a column-0 headline would end the exchange).  `*Tail*' has no space
+    ;; after the star, so it is emphasis, not a headline: it stays flush.
+    (should (string-match-p "^\\*Tail\\*$"
                             (with-current-buffer buf (buffer-string))))
     (agent-org-buffer-start-agent-turn buf nil)
     (agent-org-buffer-append-chunk buf "```sh\nls" nil)
@@ -6793,9 +6839,11 @@ corruption this feature must never cause."
     (let ((text (with-current-buffer buf (buffer-string))))
       ;; `\\+' because in an Emacs regexp `+' is an interval operator, so
       ;; "^#\\+begin" asks for one-or-more hashes and never matches the keyword.
-      ;; One leading space: the whole answer sits inside the quote block.
-      (should (string-match-p "^ #\\+begin_src sh$" text))
-      (should (string-match-p "^ #\\+end_src$" text))
+      ;; The fence lines are flush: a `#+begin_src' needs column 0 to open a
+      ;; real source block (an indent would make it a paragraph), and a code
+      ;; sample must keep its own `#' and `*' lines verbatim.
+      (should (string-match-p "^#\\+begin_src sh$" text))
+      (should (string-match-p "^#\\+end_src$" text))
       (with-current-buffer buf
         (should (org-element-map (org-element-parse-buffer) 'src-block
                   (lambda (e) t) nil 'first-match))))
@@ -6842,9 +6890,9 @@ contract."
     (agent-org-buffer-append-chunk buf "# Heading" nil)
     (agent-org-buffer-end-agent-turn buf)
     (with-current-buffer buf
-      (should (string-match-p "^ say this$" (buffer-string)))
-      (should (string-match-p "^ next that$" (buffer-string)))
-      (should (string-match-p "^ \\*Heading\\*$" (buffer-string)))
+      (should (string-match-p "^say this$" (buffer-string)))
+      (should (string-match-p "^next that$" (buffer-string)))
+      (should (string-match-p "^\\*Heading\\*$" (buffer-string)))
       (should-not (string-match-p "thisnext" (buffer-string))))
     (kill-buffer buf)))
 
@@ -6854,14 +6902,16 @@ one whole message, so its lines convert as it becomes the exchange heading
 and its body, and the agent still receives the markdown the user typed -- the
 conversion is rendering, never the wire.  `# Asking' cannot stay a headline
 (the conversation owns level 1), so it renders as the bold the reply's own
-headings use; `* please' is a bullet, which both syntaxes agree on."
+headings use; `* please' is a bullet, which converts to `- please' and reads
+flush -- the one-space guard is only for the lines that would re-shape the
+exchange (a column-0 `*' headline or a drawer keyword), not an ordinary list."
   (let ((buf (agent-org-buffer-create "mduser")))
     (agent-org-buffer-begin-exchange buf "# Asking\n* please")
     (let ((text (with-current-buffer buf (buffer-string))))
       (should (string-match-p "^\\* \\*Asking\\*$" text))
-      (should (string-match-p "^ - please$" text))
+      (should (string-match-p "^- please$" text))
       (should-not (string-match-p "^# Asking$" text))
-      (should-not (string-match-p "^\* please$" text)))
+      (should-not (string-match-p "^\\* please$" text)))
     (kill-buffer buf)))
 
 (ert-deftest test-agent-org-markdown-converted-text-is-still-frozen ()
@@ -6874,7 +6924,7 @@ not where or under what property."
     (agent-org-buffer-end-agent-turn buf)
     (with-current-buffer buf
       (goto-char (point-min))
-      (should (re-search-forward "^ \\*H\\*$" nil t))
+      (should (re-search-forward "^\\*H\\*$" nil t))
       (should (get-text-property (match-beginning 0) 'read-only)))
     (kill-buffer buf)))
 
@@ -7585,12 +7635,13 @@ exchange's answer at a deleted position."
       (kill-buffer buf))))
 
 (ert-deftest test-agent-org-replay-paints-the-same-exchange-shape ()
-  "A restored chat is headed by its questions and its answers are quoted.
-Replay carries the prompt: `session/load' sends `user_message_chunk' updates,
-which is what the heading is built from — so a restored transcript reads
-exactly like a live one, and the same primitives do both (no second
-renderer).  An agent chunk arriving BEFORE any user chunk is the orphan case,
-and it gets the fallback heading rather than eating the next question."
+  "A restored chat is headed by its questions and its answers stream under
+the model/`Agent' prefix.  Replay carries the prompt: `session/load' sends
+`user_message_chunk' updates, which is what the heading is built from — so a
+restored transcript reads exactly like a live one, and the same primitives do
+both (no second renderer).  An agent chunk arriving BEFORE any user chunk is
+the orphan case, and it gets the fallback heading rather than eating the next
+question."
   (ao--capture-wire
     (let ((buf (agent-org-resume-session 'qoder "sid-exch")))
       (let ((session (agent-org--session-for-buffer buf)))
@@ -7606,14 +7657,16 @@ and it gets the fallback heading rather than eating the next question."
           (agent-org--on-notification session (ao--update-notif update)))
         (ao--settle)
         (with-current-buffer buf
-          ;; two answers, so two blocks: the orphan's and the one that answers
-          ;; "Why?"  The question itself is a heading, never a block.
-          (should (equal 2 (ao--count-occurrences (buffer-string) "^#\\+end_quote$")))
+          ;; two answers, so two prefix lines: the orphan's and the one that
+          ;; answers "Why?"  The question itself is a heading, never a prefix,
+          ;; and no quote furniture survives the move off quote blocks.
+          (should (equal 2 (ao--count-occurrences (buffer-string) "^Agent: $")))
+          (should (equal 0 (ao--count-occurrences (buffer-string) "^#\\+begin_quote$")))
           (should (equal 1 (ao--count-occurrences (buffer-string) "^\\* Agent$")))
           (should (equal 1 (ao--count-occurrences (buffer-string) "^\\* Why\\?$")))
           (should (apply #'ao--ordered (buffer-string)
                          (list "^\\* Agent$" "Orphan answer"
-                               "^\\* Why\\?$" "^#\\+begin_quote$" "Because")))))
+                               "^\\* Why\\?$" "^Agent: $" "Because")))))
       (kill-buffer buf))))
 
 
@@ -7686,7 +7739,7 @@ second the suite runs in; the exact count lives in the property."
                        (list "^\\* Capital\\?$"
                              "^:PROPERTIES:$" ":RESPONSE: 4500$" "^:END:$"
                              "^:LOGBOOK:$" "^CLOCK: \\[" "^:END:$"
-                             "^#\\+begin_quote$" "Paris" "^#\\+end_quote$")))
+                             "^QModel: $" "^Paris\\.$")))
         ;; Org's own property reader finds it at the heading
         (save-excursion
           (goto-char (point-min))
@@ -8091,8 +8144,8 @@ Org's own parser answers it, which is how this suite settles Org questions."
       ;; reads as a real TODO state, not as text that starts with the word
       (goto-char (point-min))
       (should (re-search-forward "^\\* TODO a waiting prompt$" nil t))
-      (should (equal (org-entry-get nil "TODO") "TODO"))))
-  (kill-buffer (car pair)))
+      (should (equal (org-entry-get nil "TODO") "TODO")))
+    (kill-buffer (car pair))))
 
 ;;;; The resource monitor: what each session costs this machine
 ;;
@@ -8494,17 +8547,26 @@ compare two chats and the table to see the day."
       (unwind-protect
           (with-current-buffer buffer
             (should (derived-mode-p 'org-mode))
-            ;; per chat: 30+90 = 0:02:00 and 60 = 0:01:00, whole project 180
-            (should (search-forward "Qwen3.8-Flash" nil t))
-            (should (search-forward "0:02:00" nil t))
-            (should (search-forward "0:01:00" nil t))
-            (should (search-forward "0:03:00" nil t))
-            ;; the chat's own row carries its model and its turn count
-            (should (re-search-forward "| Chat B +| Goose +| DeepSeek-V3 +| 1 +| 0:01:00" nil t))
+            ;; per chat: 30+90 = 0:02:00 and 60 = 0:01:00, whole project 180.
+            ;; Rows are sorted by MODEL (DeepSeek-V3 before Qwen3.8-Flash), so
+            ;; these are PRESENCE checks, each from the top, not a walk in the
+            ;; order they happen to render.
+            (should (progn (goto-char (point-min))
+                           (search-forward "Qwen3.8-Flash" nil t)))
+            (should (progn (goto-char (point-min))
+                           (search-forward "0:02:00" nil t)))
+            (should (progn (goto-char (point-min))
+                           (search-forward "0:01:00" nil t)))
+            (should (progn (goto-char (point-min))
+                           (search-forward "0:03:00" nil t)))
+            ;; the chat's own row carries its title, provider, model and turn
+            ;; count, together on one line
+            (should (progn (goto-char (point-min))
+                           (re-search-forward "| Chat B +| Goose +| DeepSeek-V3 +| 1 +| 0:01:00" nil t)))
             ;; Org's own sum of the closed ranges: three exchanges, one
             ;; minute each, emphasized exactly as clocktable writes a total
-            (should (search-forward "*Total time*"))
-            (should (search-forward "*0:03*")))
+            (should (progn (goto-char (point-min)) (search-forward "*Total time*")))
+            (should (progn (goto-char (point-min)) (search-forward "*0:03*"))))
         (kill-buffer buffer)))))
 
 (ert-deftest test-agent-org-clock-report-reads-one-projects-directory-only ()
@@ -8525,10 +8587,14 @@ planted as a transcript in a directory the report is NOT pointed at."
       (make-directory (expand-file-name ".agent-org" project) t)
       (rename-file (expand-file-name "sid-in.org" project)
                    (expand-file-name ".agent-org/sid-in.org" project))
-      (let ((org-agenda-files (list (expand-file-name "sid-out.org" elsewhere)))
-            (default-directory (file-name-as-directory project))
-            (agent-org-transcript-directory ".agent-org")
-            (buffer (agent-org-clock-report)))
+      ;; `let*', not `let': a plain `let' evaluates every init form in the
+      ;; OUTER environment, so `(agent-org-clock-report)' would run BEFORE
+      ;; `default-directory' and `agent-org-transcript-directory' were bound
+      ;; and read the real repo's `.agent-org' instead of this project's.
+      (let* ((org-agenda-files (list (expand-file-name "sid-out.org" elsewhere)))
+             (default-directory (file-name-as-directory project))
+             (agent-org-transcript-directory ".agent-org")
+             (buffer (agent-org-clock-report)))
         (unwind-protect
             (with-current-buffer buffer
               (should (search-forward "Inside The Project" nil t))
@@ -8552,10 +8618,19 @@ already done."
       ;; still cold every one of its variables reads as nil here, and would
       ;; then "change" to its ordinary default when the report loads it
       (require 'org-clock)
+      ;; `all-completions' may hand the predicate a STRING or, on some
+      ;; Emacs, the interned SYMBOL itself; `boundp'/`symbol-value'/`facep'
+      ;; want a symbol, `intern' wants a string — so normalise to a symbol
+      ;; first.  Snapshot AFTER `require' so a cold autoload never
+      ;; masquerades as a change.
       (setq clock-vars
-            (mapcar (lambda (sym) (cons sym (and (boundp sym) (symbol-value sym))))
+            (mapcar (lambda (name)
+                      (let ((sym (if (symbolp name) name (intern name))))
+                        (cons sym (and (boundp sym) (symbol-value sym)))))
                     (all-completions "org-clock-" obarray
-                                     (lambda (sym) (and (boundp sym) (not (facep sym)))))))
+                                     (lambda (name)
+                                       (let ((sym (if (symbolp name) name (intern name))))
+                                         (and (boundp sym) (not (facep sym))))))))
       (cl-letf (((symbol-function 'org-clock-in)
                  (lambda (&rest _) (cl-incf hits)))
                 ((symbol-function 'org-clock-out)
@@ -8566,9 +8641,14 @@ already done."
       (unwind-protect
           (progn
             (should (= 0 hits))
-            (should-not org-clock-is-active)
-            (should-not org-clock-marker)
-            (should-not org-clock-hd-marker)
+            ;; a running clock parks these markers INSIDE the clocked heading's
+            ;; buffer; `require' initialises them as detached markers (a non-nil
+            ;; object that points at no buffer), so "no clock is running" is
+            ;; "the marker is in no buffer", NOT "the marker is nil".
+            (should-not (and (markerp org-clock-marker)
+                             (marker-buffer org-clock-marker)))
+            (should-not (and (markerp org-clock-hd-marker)
+                             (marker-buffer org-clock-hd-marker)))
             (dolist (pair clock-vars)
               (should (equal (cdr pair)
                              (and (boundp (car pair)) (symbol-value (car pair)))))))
@@ -8612,6 +8692,218 @@ claim -- and the first two days of a project, or any project with
   (ert-with-temp-directory dir
     (ao--report-in dir
       (should-error (agent-org-clock-report) :type 'user-error))))
+
+;;;; Activity blocks: order, no adjacent duplicates, and the two container options
+;;
+;; One message, four orders, all pinned here:
+;;   "the thinking drawer is above tool ones and being updated in place.  You
+;;    CAN have multiple thinking drawers."
+;;   "There CAN'T be another :tool: drawer right after a :tool: drawer.
+;;    Consecutive tool calls belong to the same drawer."
+;;   "Add options for not to wrap tool calls with :tool: drawers."
+;;   "Add another option to use TODO headings instead of drawers.  In this case,
+;;    we'll also use TODO heading for responses."
+
+(defun ao--drawer-bodies (text name)
+  "The body of every :NAME: drawer in TEXT, in buffer order.
+`ao--tool-drawer-bodies' does this for `:tool:' only; the thinking half of the
+order needs the same question asked of `:thinking:' -- WHICH drawer did this
+thought land in -- so the helper is general and that one stays as it is."
+  (let ((rest text) (bodies '())
+        (open (format "^:%s:$" name)))
+    (while (string-match open rest)
+      (let ((body-start (match-end 0)))
+        (if (string-match "^:end:$" rest body-start)
+            (progn
+              (push (substring rest body-start (match-beginning 0)) bodies)
+              (setq rest (substring rest (match-end 0))))
+          (setq rest nil))))
+    (nreverse bodies)))
+
+(ert-deftest test-agent-org-thought-below-a-new-board-opens-a-second-drawer ()
+  "A thinking run that lands below a fresh board gets its OWN drawer.
+The shape this replaces: one `:thinking:' drawer per turn, found by searching the
+turn and repainted in place.  Every thought of a long turn therefore piled into
+the FIRST drawer, which sat ABOVE every board drawn after it -- so the transcript
+read \"the agent thought everything, then did everything\", whatever happened in
+between, and the drawer grew without end.
+
+A thought now reuses its drawer only while nothing has been drawn BELOW it; once
+a new board has landed under the run, the next chunk starts a second drawer and
+a second segment of accumulated text."
+  (let ((buf (agent-org-buffer-create "thinks2")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool
+     buf '((toolCallId . "t1") (title . "one") (status . "completed")))
+    (agent-org-buffer-append-thought buf "first thought")
+    (agent-org-buffer-insert-tool
+     buf '((toolCallId . "t2") (title . "two") (status . "completed")))
+    (agent-org-buffer-append-thought buf "second thought")
+    (agent-org-buffer-append-thought buf "still the second")
+    (let ((text (with-current-buffer buf (buffer-string))))
+      (should (= 2 (ao--count-occurrences text "^:tool:$")))
+      (should (= 2 (ao--count-occurrences text "^:thinking:$")))
+      ;; the whole turn reads in the order the agent produced it
+      (should (apply #'ao--ordered text
+                     (list "^:tool:$" "  - COMPLETE one$"
+                           "^:thinking:$" " first thought"
+                           "^:tool:$" "  - COMPLETE two$"
+                           "^:thinking:$" " second thought"
+                           " still the second")))
+      ;; and the first drawer was NOT updated in place: it holds its own run only
+      (let ((bodies (ao--drawer-bodies text "thinking")))
+        (should (= 2 (length bodies)))
+        (should (string-match-p "first thought" (car bodies)))
+        (should-not (string-match-p "second" (car bodies)))
+        (should (string-match-p "second thought" (cadr bodies)))
+        (should-not (string-match-p "first" (cadr bodies)))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-no-adjacent-tool-drawers ()
+  "Two `:tool:' drawers never sit next to each other.
+The user's rule is structural, not cosmetic: \"There CAN'T be another :tool:
+drawer right after a :tool: drawer.\"  A drawer is opened at the END of the turn,
+so the only way two of the same kind touch is a seal that fired while nothing
+was written between the two runs -- and a REPLY CHUNK writes at the end of the
+answer text, which is always ABOVE every block of the turn (that is what keeps
+one answer readable in one place instead of scattered between boards).  Prose
+therefore separates nothing: only a block of the OTHER kind does."
+  (let ((buf (agent-org-buffer-create "adjacent")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool
+     buf '((toolCallId . "t1") (title . "ls") (status . "completed")))
+    (agent-org-buffer-append-chunk buf "now the tests" nil)
+    (agent-org-buffer-insert-tool
+     buf '((toolCallId . "t2") (title . "grep") (status . "completed")))
+    (agent-org-buffer-append-chunk buf "and one more" nil)
+    (agent-org-buffer-insert-tool
+     buf '((toolCallId . "t3") (title . "tree") (status . "completed")))
+    (let ((text (with-current-buffer buf (buffer-string))))
+      (should (= 1 (ao--count-occurrences text "^:tool:$")))
+      (should (= 1 (length (ao--tool-drawer-bodies text))))
+      (should (apply #'ao--ordered text
+                     (list "now the tests" "and one more"
+                           "^:tool:$" "  - COMPLETE ls"
+                           "  - COMPLETE grep" "  - COMPLETE tree"))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-activity-style-none-wraps-nothing ()
+  "With `agent-org-activity-style' `none' the turn's body holds bare list items.
+The option the user asked for: \"Add options for not to wrap tool calls with
+:tool: drawers.\"  Nothing to open, nothing to fold: every call is a line of the
+turn, its output under it, and a thinking run is a labelled paragraph.  The
+record and the redraw guard are unchanged, so a status update still rewrites the
+ONE line rather than adding another."
+  (let ((agent-org-activity-style 'none)
+        (buf (agent-org-buffer-create "bare")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool
+     buf `((toolCallId . "t1") (title . "ls") (status . "completed")
+           ,@(ao--tool-text-block "a.org")))
+    (agent-org-buffer-append-thought buf "weighing it")
+    (agent-org-buffer-insert-tool
+     buf `((toolCallId . "t2") (title . "grep") (status . "pending")))
+    (agent-org-buffer-insert-tool
+     buf '((toolCallId . "t2") (title . "grep") (status . "completed")))
+    (let ((text (with-current-buffer buf (buffer-string))))
+      (should-not (string-match-p "^:tool:$\\|^:thinking:$" text))
+      (should (= 2 (ao--count-occurrences text "^- ")))
+      (should (string-match-p "^- COMPLETE ls$" text))
+      (should (string-match-p "^- COMPLETE grep$" text))
+      (should-not (string-match-p "^- TODO grep$" text))
+      (should (= 1 (ao--count-occurrences text "^  a.org$")))
+      (should (string-match-p "^Thinking:$" text))
+      (should (string-match-p "^ weighing it$" text)))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-activity-style-headings-uses-todo-headlines ()
+  "With `agent-org-activity-style' `headings' a call IS a TODO headline.
+\"it shouldn't be lists, but TODO headings\" -- and the reason this is an option
+rather than a fix is that Org forbids a headline inside a drawer (info
+\"(org) Drawers\"): a call can be a `**' or it can be in a `:tool:' drawer, never
+both.  Folding is Org's own subtree fold from then on, which is why this mode
+needs no drawer code at all (see
+`test-agent-org-activity-style-headings-folds-with-org-cycle')."
+  (let ((agent-org-activity-style 'headings)
+        (buf (agent-org-buffer-create "heads")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool
+     buf `((toolCallId . "t1") (title . "ls") (status . "in_progress")
+           ,@(ao--tool-text-block "a.org")))
+    (agent-org-buffer-append-thought buf "weighing it")
+    (agent-org-buffer-insert-tool
+     buf '((toolCallId . "t1") (title . "ls") (status . "completed")))
+    (let ((text (with-current-buffer buf (buffer-string))))
+      (should-not (string-match-p "^:tool:$\\|^:thinking:$" text))
+      (should (string-match-p "^\\*\\* TODO Thinking$" text))
+      (should (string-match-p "^ weighing it$" text))
+      ;; the call's own keyword moved in place: no second headline for t1
+      (should (string-match-p "^\\*\\* COMPLETE ls$" text))
+      (should-not (string-match-p "^\\*\\* ONGOING ls$" text))
+      (should (= 1 (ao--count-occurrences text "^\\*\\* COMPLETE ls$")))
+      (should (string-match-p "^  a.org$" text))
+      ;; and the words are REAL keywords: the file declares the tool set beside
+      ;; the prompt set, so `COMPLETE' here is a state, not text
+      (should (string-match-p "^#\\+TODO: TODO ONGOING | COMPLETE FAILED$" text)))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-activity-style-headings-makes-the-response-a-heading ()
+  "In headings mode the answer opens with a TODO headline and closes as done.
+The user's condition on the option: \"In this case, we'll also use TODO heading
+for responses.\"  So the prefix line that reads `MiniMax M3: ' in every other
+mode reads `** RESPONDING MiniMax M3' here, and `agent-org-buffer-end-agent-turn'
+settles it to RESPONDED -- the answer's own state, in the same vocabulary the
+prompt headings use.
+
+A turn that answered with tools only keeps no such headline: the empty response
+is dropped before the boundary, exactly as in the other modes."
+  (let ((agent-org-activity-style 'headings)
+        (buf (agent-org-buffer-create "headresp")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-append-chunk buf "here is the fix" nil)
+    (with-current-buffer buf
+      (should (string-match-p "^\\*\\* RESPONDING " (buffer-string)))
+      (should (string-match-p "here is the fix" (buffer-string))))
+    (agent-org-buffer-end-agent-turn buf)
+    (let ((text (with-current-buffer buf (buffer-string))))
+      (should (string-match-p "^\\*\\* RESPONDED " text))
+      (should-not (string-match-p "^\\*\\* RESPONDING " text))
+      ;; the prose is still the answer node's body, not a stray heading
+      (should (apply #'ao--ordered text (list "^\\*\\* RESPONDED " "here is the fix"))))
+    (kill-buffer buf))
+  (let ((agent-org-activity-style 'headings)
+        (buf (agent-org-buffer-create "headtoolonly")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool
+     buf '((toolCallId . "t1") (title . "ls") (status . "completed")))
+    (agent-org-buffer-end-agent-turn buf)
+    (let ((text (with-current-buffer buf (buffer-string))))
+      (should-not (string-match-p "^\\*\\* RESPOND" text))
+      (should (string-match-p "^\\*\\* COMPLETE ls$" text)))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-activity-style-headings-folds-with-org-cycle ()
+  "Folding in headings mode is Org's own: no drawer machinery is involved.
+\"Org's folding functions and variables should be enough for us to handle
+default folding behavior.\"  A call's output is the body of its headline, so TAB
+on that headline hides it the way it hides any subtree -- which is the whole
+folding story in this mode, and why it ships with no fold code of its own."
+  (let ((agent-org-activity-style 'headings)
+        (buf (agent-org-buffer-create "headfold")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool
+     buf `((toolCallId . "t1") (title . "ls") (status . "completed")
+           ,@(ao--tool-text-block "a.org")))
+    (with-current-buffer buf
+      (let ((out (save-excursion (goto-char (point-min))
+                                 (re-search-forward "^  a.org$")
+                                 (point))))
+        (should-not (invisible-p out))
+        (goto-char (point-min))
+        (re-search-forward "^\\*\\* COMPLETE ls$")
+        (org-cycle)
+        (should (invisible-p out))))
+    (kill-buffer buf)))
 
 (provide 'test-agent-org)
 ;;; test-agent-org.el ends here

@@ -222,6 +222,16 @@ sign in once outside Emacs (see https://cline.bot/cli) before starting."
   (interactive)
   (agent-org-start 'cline))
 
+(defun agent-org--env-value (var)
+  "The value of environment VAR, or nil when unset OR empty.
+`getenv' answers \"\" for a `VAR=' entry, which is non-nil: forwarding that
+would set the child's VAR to blank and OVERRIDE the agent's own credential
+resolution (its login, its ~/.…/.env) with nothing.  Every provider here is
+pass-through-or-nothing, so a blank is the same as absent."
+  (let ((value (getenv var)))
+    (when (and value (not (string-empty-p value)))
+      value)))
+
 (defun agent-org-slave-agent-environment ()
   "Return environment variables for the slave-agent ACP client.
 Nothing is exported by default: the adapter loads ~/.slave/.env itself, so
@@ -229,25 +239,24 @@ the credential store is out of Emacs's hands.  `SLAVE_HOME' is the state
 dir the agent binds, and one slave-agent process may serve many profiles,
 so passing it through is how an Emacs chat opens against a specific
 profile's home rather than the launch default."
-  (let ((home (getenv "SLAVE_HOME")))
+  (let ((home (agent-org--env-value "SLAVE_HOME")))
     (when home
       (list (format "SLAVE_HOME=%s" home)))))
 
 (defun agent-org-goose-environment ()
   "Return environment variables for the Goose ACP client.
 Uses OPENAI_API_KEY from the environment if present."
-  (let ((key (getenv "OPENAI_API_KEY")))
-    (if key
-        (list (format "OPENAI_API_KEY=%s" key))
-      nil)))
+  (let ((key (agent-org--env-value "OPENAI_API_KEY")))
+    (when key
+      (list (format "OPENAI_API_KEY=%s" key)))))
 
 (defun agent-org-opencode-environment ()
   "Return environment variables for the OpenCode ACP client.
 OpenCode keeps its own credential store (`opencode auth login'), so
 nothing has to be exported and this returns nil by default; a MINIMAX_API
 key in the environment is passed through for configs that read it."
-  (let ((key (or (getenv "MINIMAX_API_KEY")
-                 (getenv "MINIMAX_CODE_KEY"))))
+  (let ((key (or (agent-org--env-value "MINIMAX_API_KEY")
+                 (agent-org--env-value "MINIMAX_CODE_KEY"))))
     (when key
       (list (format "MINIMAX_API_KEY=%s" key)))))
 
@@ -257,7 +266,7 @@ MiniMax Code keeps its own login (`mcode login', or `mcode acp login') in
 `~/.minimax/auth', so nothing has to be exported and this returns nil by
 default; a MINIMAX_API_KEY in the environment is passed through for
 configs that read it."
-  (let ((key (getenv "MINIMAX_API_KEY")))
+  (let ((key (agent-org--env-value "MINIMAX_API_KEY")))
     (when key
       (list (format "MINIMAX_API_KEY=%s" key)))))
 
@@ -265,17 +274,16 @@ configs that read it."
   "Return environment variables for the Qoder ACP client.
 Passes QODER_PERSONAL_ACCESS_TOKEN through when the environment has
 it; otherwise the CLI's own stored login (`qoder login') is used."
-  (let ((token (getenv "QODER_PERSONAL_ACCESS_TOKEN")))
-    (if token
-        (list (format "QODER_PERSONAL_ACCESS_TOKEN=%s" token))
-      nil)))
+  (let ((token (agent-org--env-value "QODER_PERSONAL_ACCESS_TOKEN")))
+    (when token
+      (list (format "QODER_PERSONAL_ACCESS_TOKEN=%s" token)))))
 
 (defun agent-org-copilot-environment ()
   "Return environment variables for the GitHub Copilot ACP client.
 Copilot keeps its own login (the device flow), so nothing is exported by
 default; COPILOT_GITHUB_TOKEN is passed through when the environment has
 it, which is the CLI's documented non-interactive credential."
-  (let ((token (getenv "COPILOT_GITHUB_TOKEN")))
+  (let ((token (agent-org--env-value "COPILOT_GITHUB_TOKEN")))
     (when token
       (list (format "COPILOT_GITHUB_TOKEN=%s" token)))))
 
@@ -286,10 +294,12 @@ CURSOR_API_KEY (preferred) or CURSOR_AUTH_TOKEN is passed through when the
 environment carries one.  These are the same two secrets agent-shell's
 `agent-shell-cursor-authentication' accepts, minus its optional ACP
 `cursor_login' handshake, which agent-org does not drive."
-  (cond ((getenv "CURSOR_API_KEY")
-         (list (format "CURSOR_API_KEY=%s" (getenv "CURSOR_API_KEY"))))
-        ((getenv "CURSOR_AUTH_TOKEN")
-         (list (format "CURSOR_AUTH_TOKEN=%s" (getenv "CURSOR_AUTH_TOKEN"))))))
+  (cond ((agent-org--env-value "CURSOR_API_KEY")
+         (list (format "CURSOR_API_KEY=%s"
+                       (agent-org--env-value "CURSOR_API_KEY"))))
+        ((agent-org--env-value "CURSOR_AUTH_TOKEN")
+         (list (format "CURSOR_AUTH_TOKEN=%s"
+                       (agent-org--env-value "CURSOR_AUTH_TOKEN"))))))
 
 (defun agent-org-codebuddy-environment ()
   "Return environment variables for the CodeBuddy ACP client.
