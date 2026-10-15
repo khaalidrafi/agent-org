@@ -50,6 +50,14 @@ it holds every request we sent and every response and notification that
 came back, including the ones no part of agent-org consumes.
 
 (fn &optional BUFFER)" t)
+(autoload 'agent-org-copy-session-id "agent-org" "\
+Put this chat's ACP session id on the kill ring.
+The id is in the header line and in the buffer's `:ID:' property, but
+both mean retyping it — into `agent-org-resume-session', into a shell,
+into a bug report — and an id read off a mode line is an id retyped by
+hand, which is how ids get mistyped.  Refuses while the handshake has
+not finished, rather than copying nil or whatever was on the ring
+before." t)
 (autoload 'agent-org-resume-session "agent-org" "\
 Resume an existing session with PROVIDER, replaying its history.
 With no prefix argument PROVIDER is `agent-org-default-provider'; one
@@ -76,7 +84,7 @@ saying \"stop\", and the prompts behind the cancelled turn were queued to join
 the work being stopped.  Releasing them here put a turn on the wire nobody
 asked for, and each one that answered fired the next, so one cancel emptied
 the whole queue in seconds (live bug; the user's order: \"Cancelling turn
-should never resume queue\").  `agent-org-queue-resume' (C-c C-r) is the way
+should never resume queue\").  `agent-org-queue-resume' (C-c a r) is the way
 back, and a later turn ending successfully drains FIFO as always." t)
 (autoload 'agent-org-reload "agent-org" "\
 Restart this chat's agent and replay the SAME session through resume.
@@ -92,7 +100,7 @@ and id, so it comes back looking like the one that was replaced.
 The old buffer must be gone before the load: `agent-org--load-session'
 refuses to `session/load' an id a live buffer already holds and would
 switch to it instead.  A prompt that was queued but never sent comes
-back, because it lives in the transcript's =:QUEUE:= drawer rather than
+back, because it lives in the transcript's queue block rather than
 in the buffer, and a restart goes through resume: the fresh agent gets
 the prompts the old one never saw.  Worth knowing before restarting a
 session you want to leave alone." t)
@@ -107,9 +115,9 @@ MiniMax included; `agent-org-providers' pins one per provider instead.
 
 (fn MODEL)" t)
 (autoload 'agent-org-send "agent-org" "\
-Send what is typed in the live `* User' box to the agent.
-Idle, the draft becomes a frozen User heading above the box and goes on
-the wire; the box stays open, so the next prompt can be typed right away.
+Send what is typed in the live `* PROMPT' box to the agent.
+Idle, the draft becomes a frozen exchange heading above the box and goes
+on the wire; the box stays open, so the next prompt can be typed right away.
 While a turn streams the same act merely queues the draft -- see
 `agent-org-queue-when-busy' -- and it goes out, FIFO, when the running
 turn ends successfully.  This type-ahead model is agent-shell's: the
@@ -141,12 +149,40 @@ skip FORCE does not override, so the command says so rather than writing a
 file the user turned off.
 
 (fn &optional ALL)" t)
+(autoload 'agent-org-queue-enqueue "agent-org" "\
+Queue TEXT for this session without leaving where you are.
+Port of `agent-shell-prompt-queue' (agent-shell-prompt-queue.el:346), and it
+copies that command's one surprising decision: it ALWAYS queues, idle or not.
+agent-shell queues because the verb must not change its mind with the agent's
+mood, and the same reason is stronger here -- `agent-org-send' is the verb that
+asks for an answer now, and a second one that sometimes sends and sometimes
+waits would be a coin toss in muscle memory.  Send it now with
+`agent-org-queue-resume' (C-c a r).
+
+(fn TEXT)" t)
+(autoload 'agent-org-queue-remove "agent-org" "\
+Drop one waiting prompt by the NUMBER it is shown with, or all of them.
+Port of `agent-shell-prompt-queue-remove' (agent-shell-prompt-queue.el:385) down
+to its two courtesies: the picker lists `1: <prompt>' in queue order with a
+`Remove all' choice, and either answer asks before deleting -- a queued prompt
+is text somebody typed, and a stray return on \"all\" is the loss worth making
+impossible.
+
+WHICH nil reads the number from the picker; a string naming a number takes it
+directly, and `all' drops the whole queue.  Both halves of the queue move
+together: the entry is killed from the chat's region
+(`agent-org-buffer-queue-kill-text') AND taken out of the session's list
+(`agent-org-queue--set'), because a region the user has edited is not repainted
+from the list, so a removal that touched only the list would leave the prompt
+on the page and put it back on the queue at the next apply.
+
+(fn &optional WHICH)" t)
 (autoload 'agent-org-queue-edit "agent-org" "\
 Go to this session's queued prompts, at the bottom of the chat.
-The entries are `* NEXT'/`* WAIT' headings above the live `* User' box: type
-into them, add more with `C-c C-a', kill one with `C-c C-d', reorder with
+The entries are `* NEXT' headings above the live `* PROMPT' box: type
+into them, add more with `C-c a a', kill one with `C-c a d', reorder with
 `M-UP'/`M-DOWN', and put the result on the wire with `M-x agent-org-queue-apply'
-(bound to `C-c C-a' nowhere on purpose: in a chat, `C-c C-a' is the user's own
+(bound to a key nowhere on purpose: in a chat, `C-c a a' is the user's own
 \"add one here\").
 
 Nothing is written to the session until the apply.  That is the whole contract
@@ -155,22 +191,34 @@ and the reason the region is never repainted over an edit
 change under his hands, and a transcript must never claim a prompt the agent
 was not sent.
 
-An EMPTY queue is not an error and not a no-op either: one blank `* WAIT' entry
+An EMPTY queue is not an error and not a no-op either: one blank `* NEXT' entry
 is created and point lands in it, because \"add a prompt to the queue\" and
 \"write down the next thing to ask\" are the same gesture here, and a blank
 entry is dropped on apply so composing one cannot send a blank." t)
 (autoload 'agent-org-queue-apply "agent-org" "\
 Make the queue entries in this buffer the session's queue, everywhere.
-Reconciliation, in this order: prompts the agent sent while you were editing are
-removed BY TEXT (`agent-org--queue-drop-sent'), then prompts that arrived while
-you were editing go back on the end, in arrival order.  So the region is never
-the sole writer of a list it has not seen -- and an entry you edited AFTER it
-went out is the one case that does get sent again, because the agent never saw
-those words.
+One reconciliation: a prompt the agent SENT while you were editing is removed BY
+TEXT (`agent-org-buffer--queue-minus'), because the drain took the front of the
+SESSION's list and you may have moved that entry anywhere.  Nothing else is
+carried -- an arrival is on the page the moment it happens
+(`agent-org-buffer-refresh-queue'), so the region is the whole queue and
+there is no invisible backlog to merge.  An entry you edited AFTER it went out
+is the one case that gets sent again, because the agent never saw those words.
 
 The order in the region IS the send order, so an `M-UP'/`M-DOWN' in here
 re-orders the queue: that is the feature the separate editor existed for, and
 it is now the region's own property." t)
+(autoload 'agent-org-queue-list "agent-org" "\
+Show this session's waiting prompts, numbered, in the echo area.
+Port of agent-shell's queue display (agent-shell-prompt-queue.el:99 and the
+echo-area table at :128), as a command rather than a fragment some other
+command prints.  It exists because the entries live at the BOTTOM of a long
+chat: \"what is still queued?\" should cost one keystroke, not an
+end-of-buffer.  The numbers are the ones `agent-org-queue-remove' asks for, and
+one line each -- agent-shell truncates its listing at 80 columns for exactly
+this reason, and a queued prompt is often a whole paragraph.
+
+Empty is a message, not an error: this reports, it does not act." t)
 (autoload 'agent-org-queue-resume "agent-org" "\
 Send the next prompt waiting in this session's queue, now.
 Port of `agent-shell-prompt-queue-resume' (agent-shell-prompt-queue.el:370),
@@ -183,6 +231,66 @@ FIFO on their own.  While a turn runs nothing goes out: the agent is busy and
 the queue already drains when it finishes, so agent-shell's own answer is a
 message rather than an error, and this copies it.  An empty queue is an error,
 though: the person calling this believes there is a prompt in it." t)
+(autoload 'agent-org-queue-restore "agent-org" "\
+Rebuild this chat's queue region from the queue the session is running.
+The way out of a messed-up page.  The edit guard
+(`agent-org-buffer--queue-shown') is what makes editing the entries safe: a
+refresh never repaints text the user touched, because a repaint mid-word
+would delete a half-typed prompt.  The guard is also how a STALE entry
+survives -- delete or re-order by hand and the region keeps advertising a
+queue the session is not running, while the header line counts something
+else, and there was no way back except typing every prompt again.
+
+So this is the ONE path allowed to overrule the guard, and it is a command
+rather than something that happens to his text: the region is discarded and
+`:pending-prompts' is rendered from the top, NEXT/WAIT keywords and all.
+The direction matters and is the whole design: restore makes the PAGE agree
+with the QUEUE.  When he means the other one -- his edits are the queue he
+wants -- that is `agent-org-queue-apply', and the killed region is on the
+kill ring meanwhile, so a restore he regrets is `C-y' away.
+
+The transcript is re-mirrored here rather than left for a turn boundary: the
+file is what a RESUME reads, and leaving the stale words in it would put
+them back on the page next session." t)
+(autoload 'agent-org-queue-prepend "agent-org" "\
+Queue TEXT as the NEXT prompt out, ahead of everything already waiting.
+`agent-org-queue-enqueue' puts a prompt at the BACK of the queue; this puts
+it at the FRONT, and the difference only matters once the queue is longer
+than one: the drain takes the head (`agent-org--drain-queue'), so a prompt
+that must be answered BEFORE the ones already sitting there has to be
+inserted before them rather than dragged up with `M-UP' at the bottom of a
+long chat.
+
+It queues, it does not send: the queue is the surface for \"later, in this
+order\", and `agent-org-queue-resume' (C-c a r) is the verb that means
+now.  Everything still goes through `agent-org-queue--set', the one writer
+of the list, so the entries, the header count and the transcript move
+together.
+
+(fn TEXT)" t)
+(autoload 'agent-org-interrupt-and-send "agent-org" "\
+Stop the agent now and send what is in the prompt box, in one gesture.
+Idle, this is `agent-org-send'.  Busy, it cancels the running turn and then
+sends, which is the point: the thing you typed beside a running turn is the
+answer to a question the agent has not asked yet, and waiting for the drain
+means waiting out a task you have already decided to stop.
+
+Two decisions inside it, both measured against the alternative:
+
+  - the draft is taken BEFORE the cancel.  `agent-org-cancel-turn' closes
+    the turn and re-opens the live `* PROMPT' box, so reading the box
+    afterwards would read whatever it holds once the new turn is ready --
+    and an empty box raises, which is the wrong error for \"you stopped a
+    turn to send nothing\".
+  - the prompt goes out as its OWN exchange, not as a queue entry.  A
+    queued prompt waits for a turn that ends SUCCESSFULLY, and this turn is
+    being stopped precisely because it is not going to end well;
+    `agent-org-cancel-turn' also releases nothing that was queued behind it,
+    on the user's order, so an interrupting prompt that were queued here
+    would sit waiting forever.
+
+The cancelled turn keeps its heading and its CANCELLED word, and the
+interrupting prompt gets the next one; nothing on the queue moves." t)
 (autoload 'agent-org-resource-monitor "agent-org" "\
 Show the resource monitor: what each open session costs this machine.
 ONLY-THIS non-nil -- a prefix argument -- scopes the sessions table to the
@@ -206,16 +314,45 @@ redraws on demand, which is also how the monitor is read in a batch Emacs.
 (fn &optional ONLY-THIS)" t)
 (autoload 'agent-org-resource-refresh "agent-org" "\
 Redraw the resource monitor now.
-C-c C-c in the monitor, and the path `agent-org-resource-monitor' itself
+C-c a g in the monitor, and the path `agent-org-resource-monitor' itself
 takes when it is displayed: a hidden monitor has nothing to show anybody, so
 the timer skips it and this command is how it catches up when it comes back.
 A no-op when there is no monitor buffer yet, because \"refresh\" on a monitor
 that was never opened should not open one." t)
+(autoload 'agent-org-clock-report "agent-org" "\
+Show the clock report: how long this project's agent chats have taken.
+ONLY-THIS -- a prefix argument -- narrows the report to the current chat's
+own transcript.  From a buffer with no session there is nothing to narrow
+to, and the project reading is the honest answer, which is exactly the call
+`agent-org-resource-monitor' makes for the same reason.
+
+Two tables of the same measurement, because they answer different questions.
+The first is agent-org's own: one row per chat, its provider and model, its
+turn count and its response time in EXACT seconds summed from the
+`:RESPONSE:' properties, plus the tokens the agent reported.  The second is
+Org's clocktable over the closed `CLOCK:' ranges every exchange files, which
+is the minute-granular view Org's own clock tools read, per file and per
+turn.  Neither writes to a transcript.
+
+`C-c C-c' with point on the clocktable re-runs it (`org-update-dblock'), and
+typing this command again rebuilds both tables from the files on disk, so a
+report is never stale in the way a cached summary is: it is a fresh read of
+data that only a turn boundary changes.
+
+(fn &optional ONLY-THIS)" t)
 (register-definition-prefixes "agent-org" '("agent-org-"))
 
 
 ;;; Generated autoloads from agent-org-buffer.el
 
+(autoload 'agent-org-refresh-todo-keywords "agent-org-buffer" "\
+Re-derive this buffer's TODO keywords from the three option lists.
+Edit `agent-org-prompt-todo-keywords', `agent-org-tool-todo-keywords' or
+`agent-org-plan-todo-keywords' -- `M-x customize-variable' or Lisp -- and an
+open chat still holds the words it was created with, because Org derived its
+regexps once (`agent-org-buffer--install-todo-keywords').  Run this after the
+edit.  Nothing else needs it: a new chat and a visited transcript both install
+the sets as they start." t)
 (register-definition-prefixes "agent-org-buffer" '("agent-org-"))
 
 

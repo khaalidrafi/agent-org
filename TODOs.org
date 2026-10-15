@@ -96,8 +96,9 @@ answers.  agent-org answers the same notification, but an agent that
 never does would keep the buffer frozen in Streaming forever -- exactly
 the state the cancel was for.
 
-Ported as =agent-org-cancel-turn= (bound to C-c C-k in
-=agent-org-mode-map=): sends =session/cancel= with the live session id,
+Ported as =agent-org-cancel-turn= (bound to C-c a k in
+=agent-org-mode-map=; it was C-c C-k until the keys moved off Org's own
+chords): sends =session/cancel= with the live session id,
 then closes the turn locally -- end the heading, =Ready (turn
 cancelled)= in the header, live prompt back.  A per-turn id
 (=agent-org--send-turn''s =:turn=) makes the agent's late answer to the
@@ -426,6 +427,88 @@ prefix argument in two tiers, the same 16-and-up rule
 halves of the claim: the wire answers oldest-first so the pick proves the
 sort, and =ao--never-prompt= fails the test if anything asks.
 
+** DONE =latest= is the default, and =C-u= is the chooser
+User order: "Add session strategy that will automatically open latest
+session, but will prompt like before with =C-u=.  This will be default."
+The per-call tiers above made =latest= a keypress; this makes it the
+/no/keypress case — =agent-org-session-strategy= now defaults to =latest=,
+so =M-x agent-org-start= reopens the chat you were just in.
+
+That flip moved the chooser out of the default path, so the prefixes were
+re-ordered rather than merely re-labelled: =C-u= now forces =prompt= (what
+the default used to be) and =C-u C-u= forces =new=.  The tiers stay
+ordered by how much of the decision they hand back, and =New session= is
+still the chooser's first candidate, so =C-u RET= is exactly the old plain
+start.  =agent-org-start= keeps its one =>= 16= test, which is the same
+reading =agent-org-resume-session= uses for its second tier.
+
+Five tests went red on a green build, all for one reason: they exercised
+the =prompt= path by /inheriting/ the default.  They now bind
+=agent-org-session-strategy= explicitly, and the binding has to be in an
+/enclosing/ =let= — in =let= the value forms run before any of its
+variables is bound, so =(let ((agent-org-session-strategy 'prompt) (buf
+(agent-org-start 'qoder))) …)= starts with the global default and silently
+tests =latest=.  That is the "read the strategy when the command runs"
+rule of CONVENTIONS.md §10 arriving from the test side, and it is written
+into AGENTS.md so the next test does not rediscover it.
+
+Testing: =test-agent-org-session-strategy-is-a-named-choice= pins the new
+default and the accepted order; =…-start-default-opens-the-latest-chat-unasked=
+is the shipped path (listing answered, newest picked, =ao--never-prompt=
+guarding, no =session/new=); =…-start-prefix-arg-reaches-the-prompt= and
+=…-start-double-prefix-forces-a-new-session= pin both tiers.  Byte-compile
+clean with =byte-compile-error-on-warn=, full suite green (412).
+
+** DONE The prompt you are reading stays pinned at the top
+User order: "Add feature to stick prompt headings to the top as buffer is
+scrolled down.  They will be contained in one line and truncated when scrolled
+down."  One heading per exchange means the question IS the heading, so
+scrolling into a long answer loses the line that says what the answer answers.
+
+Emacs has no sticky-line facility to build on — =sticky= in the manuals is a
+text property (=rear=/=front-nonsticky=) or a frame parameter, and neither is a
+display line — so this is the =header-line=, which is already the package's own
+surface (§6).  =window-scroll-functions= runs per window with the new top
+position as its argument, which is the whole input: the buffer-local entry
+=agent-org-buffer--sticky-update= searches backward from there for a level-1
+headline and stores the result in the buffer-local
+=agent-org-buffer--sticky-heading=, and =agent-org-buffer--render-header-lines=
+concatenates it AFTER the status row.  The bar is therefore two rows when a pin
+is up, the status never moves, and nothing is written into the body — §14's byte
+mirror and §17's repaint markers read bytes, so a pinned copy of a line would
+have been a corruption, not a decoration.
+
+Three decisions worth re-litigating: the pin is /nil/ while the heading is on
+screen (a duplicate of what you can already see), only level-1 headlines pin (an
+=ONGOING= part changes every few seconds while the agent works, the prompt does
+not), and the line is truncated to =(window-body-width window)= with =…=
+rather than allowed to wrap — a wrapped bar would push the status row off the
+screen.  =^\\* = as a plain string search is sound because §3.2 keeps every
+agent-supplied line indented one space, so a =*= can never start a line inside
+an answer.  One pin per /buffer/, not per window: the value lives in the buffer,
+so two windows on one chat share it and the row follows whichever scrolled last.
+
+=agent-org-sticky-heading= (default =t=) is read by the updater per scroll, not
+only at mode entry, so turning it off clears a pin already showing instead of
+waiting for the next chat; =agent-org-mode='s OFF branch removes the hook and
+kills the variable, so a buffer that stops being a chat stops pinning.  A
+queue entry is also a level-1 heading (§20), so scrolling into the queue pins
+that prompt's text — recorded as an open judgement in AI-REVIEW.org, not fixed
+here.
+
+Testing: eleven tests against a two-exchange fixture
+(=ao--sticky-buffer=, a MACRO — the fixture is a =with-temp-buffer= buffer, and
+a function returning it hands back a dead one).  They pin: the body-on-screen
+case, the heading-visible case (=nil=), one row truncated to width, level 2 not
+pinned, an indented agent =*= not mistaken for a headline, no buffer mutation
+and no match-data left behind, the hook installed buffer-locally, the updater
+writing and the option deleting the pin, the pin sitting BELOW the status row,
+the default and the =custom-type=, and a real =agent-org-mode= chat rendering
+two rows.  Clean rebuild zero warnings, full suite green (423).  Live: a real
+=set-window-start= into the streaming exchange fired the hook and produced one
+truncated =org-level-1= row with a 2-row bar (=window-body-height= read over
+=emacsclient= lags a redisplay by one, so trust the row count, not the height).
+
 ** DONE Persist the prompt queue, and reload it on resume
 User order: "Save queued prompts to transcripts and reload them on
 resume."  Nothing else in the package can do this: a queued prompt was
@@ -681,13 +764,13 @@ User order: "Add a complete queue editing feature where I can edit each
 prompt in the queue and re-order them.  Show the prompt queue within the
 buffer."  The three commands that existed could list, drop and re-read one
 entry --- nothing could re-order, and =queue-edit= was a minibuffer pull.
-They are deleted; =agent-org-queue-edit= (=C-c C-q=) is one command that
+They are deleted; =agent-org-queue-edit= (=C-c a q=) is one command that
 opens the queue in its own buffer, where each waiting prompt is one Org
 subtree:
 
 - edit the body, =M-UP= / =M-DOWN= to re-order (=org-move-subtree-up/down=),
-  =C-c C-a= to add an entry, =C-c C-d= to kill one, =C-c C-c= to apply,
-  =C-c C-k= to abandon.
+  =C-c a a= to add an entry, =C-c a d= to kill one, and
+  =M-x agent-org-queue-apply= to put the result on the wire.
 - A separate buffer because the chat's =:QUEUE:= drawer cannot be edited in
   place: =refresh-metadata= deletes and re-inserts the whole block on every
   usage update, and tokens arrive per chunk.  One writer per region.
@@ -721,7 +804,7 @@ only), an Org buffer of tables: one row per open session --- label, state,
 lite scope, the agent's process, its CPU since the last refresh, its
 resident memory, the chat's characters, the transcript's size --- over a
 machine row (Emacs RSS, how many agents are alive, their total RSS, the load
-average).  ~C-c C-c~ redraws, ~q~ closes.
+average).  ~C-c a g~ redraws, ~q~ closes.
 
 - *A buffer, not a bar segment.*  CONVENTIONS.md 6 gives the header line
   exactly one status string, and a bar that redrew on a timer in every open
@@ -738,7 +821,7 @@ average).  ~C-c C-c~ redraws, ~q~ closes.
   the ~comm~ field, because ~\(Web Content)~ is a real process name and a
   naive split reads the wrong two numbers without saying so.
 
-*Lite mode* = ~C-c C-l~ on one session, ~C-u C-c C-l~ on the global
+*Lite mode* = ~C-c a l~ on one session, ~C-u C-c a l~ on the global
 (=agent-org-lite-mode=).  Three gates, none of them a rendering change:
 
 - no transcript write --- EXCEPT while a prompt is queued, which is the one
@@ -782,8 +865,8 @@ BUFFER is gone; the region in the chat is the surface.
   with `string-prefix-p` rather than a regexp, because a pattern with a group
   in it can lose its closing paren --- which it did, once, and every entry
   then came back with its first line swallowed.
-- *Editing in place* is the contract the editor had: `C-c C-a` adds a blank
-  `* WAIT` slot at the bottom (dropped by the parser if left empty), `C-c C-d`
+- *Editing in place* is the contract the editor had: `C-c a a` adds a blank
+  `* TODO` slot at the bottom (dropped by the parser if left empty), `C-c a d`
   kills one onto the kill ring, `M-UP`/`M-DOWN` reorder --- narrowed to the
   region by `agent-org-buffer--queue-only`, because the conversation's
   headings still have to be untouchable --- and `agent-org-queue-apply` is
@@ -841,7 +924,7 @@ kill-ring the current session id.  One-liner for agent-org.
 
 ** TODO Model selection menu
 =agent-shell-set-session-model= completion over =agent-shell--get-available-models=.
-agent-org already has =agent-org-set-session-model= (C-c C-m) over
+agent-org already has =agent-org-set-session-model= (C-c a m) over
 =:want-model= values; add the model NAMES to the candidates so the
 user never sees bare ids.
 
@@ -849,7 +932,7 @@ user never sees bare ids.
 User order: "Add a way for agents to know the currently selected model,
 session id and agent name."  An agent asked "which model are you?" answers
 from the default in its own system prompt, which stops being true the moment
-=C-c C-m= selects another model --- the ordinary case for MiniMax served by
+=C-c a m= selects another model --- the ordinary case for MiniMax served by
 OpenCode --- and a session id is a value only the client holds.  So every
 prompt now goes out as TWO ACP text blocks:
 
@@ -894,7 +977,7 @@ Shipped in agent-org-buffer.el:
   attaches =(":author MiniMax M3")= as =:attr_texinfo= and a Texinfo export
   emits =@author= inside =@quotation=.  =agent-org-quote-model-author= (default
   t) is the knob; off, or no model reported, gives the word =Agent=.
-  Provenance is written once, at turn start, so a later =C-c C-m= renames the
+  Provenance is written once, at turn start, so a later =C-c a m= renames the
   quotes after it --- the same discipline the old model heading had.
 - =agent-org-buffer--block-safe-lines= guards the body: =*= at column 0 ENDS a
   quote block (measured with =org-element-parse-buffer=: zero quote blocks and
@@ -933,12 +1016,11 @@ measurement; the range is for Org's clock tools.  Full rule in CONVENTIONS.md §
 The "mustn't block" order is satisfied by /form/, not by hooking around Org: we
 never call =org-clock-in=, =org-clock-out= or =org-clock-load= and never touch
 any =org-clock-*= variable (Org's one global "running clock" slot stays free),
-we write ONLY a closed range (an OPEN =CLOCK:= line is the single form
-=org-clock-load= would mistake for a running clock), and our timing is a
-buffer-local =--turn-start= spent at the boundary.  A test loads the transcript
-into a plain =org-mode= buffer, runs a REAL =org-clock-in=/=org-clock-out= on a
-clocked exchange, and confirms the user's clock is accepted while our
-=:RESPONSE:= and closed range survive untouched.
+we write an open =CLOCK:= ONLY while the activity actually runs and every
+boundary shuts it, and our timing is a buffer-local =--turn-start= spent at the
+boundary.  A test loads the transcript into a plain =org-mode= buffer, runs a
+REAL =org-clock-in=/=org-clock-out= on a clocked exchange, and confirms the
+user's clock is accepted while our =:RESPONSE:= and range survive untouched.
 
 Two measured traps fixed along the way: this Org's =org-time-stamp-formats= is
 =(("%Y-%m-%d %a" . "%Y-%m-%d %a %H:%M"))= --- its CAR is date-ONLY and neither
@@ -950,6 +1032,187 @@ internally consistent.  Also: =org-clock-parse-clock-line= and
 through =org-element= (counting =clock= nodes) and =org-clock-is-active=.
 
 Scope for this unit, per the user: the automatic per-exchange recording only.
+
+** DONE The clock opens with the activity and closes at the boundary
+CLOSED 2026-10-11
+User order: "You shouldn't insert the whole =CLOCK:= in the end.  Start by
+adding the beginning timestamp.  Then, add the ending time with duration in
+the end."
+
+The previous shape wrote nothing until the answer finished, so a running turn
+showed no clock at all and the boundary inserted a whole drawer.  Both halves
+moved: =agent-org-buffer-begin-exchange= now lays the =:PROPERTIES:= /
+=:LOGBOOK:= block under the heading the moment the question goes out, with
+=:RESPONSE: 0= and an OPEN =CLOCK: [start]= (=agent-org-buffer--clock-open-lines=),
+and =agent-org-buffer--clock-complete= rewrites those two lines IN PLACE at the
+boundary --- the open range becomes =[start]--[end] =>  H:MM= and the property
+takes the exact seconds.  An insert-at-the-end was never possible mid-stream:
+everything that arrives after the heading (thoughts, the tool drawer, the answer)
+shifts the text below it, so a second block would land wrong or double-bill the
+exchange in every Org total.  =agent-org-buffer--clock-lines= (the whole block)
+stays as the fallback for a heading with no open block of our shape --- a turn
+caught by a hot-reload, or a buffer opened by an older definition.
+
+Answer PARTS are clocked the same way: under =agent-org-activity-style= 'headings
+a thought, a call or the prose opens =:SECONDS: 0= with its own open line and
+shuts it at the same boundary the exchange does.
+
+§22's refusal of open =CLOCK:= lines was measured and found wrong, which is what
+made this safe: with an open line in an =org-mode= buffer on this Org 9.7.11,
+=org-clock-is-active= is nil, =org-clock-load= does not adopt it, =org-clock-in=
+on another heading still succeeds, and =org-clock-sum= counts it as 0 minutes.
+An open line is unfinished, not running.  What it must never do is survive the
+activity, so every boundary shuts it and a test asserts no open line remains
+anywhere after the turn.
+
+Two bugs found while testing it, both worth remembering:
+
+1. =let= evaluates EVERY init form before it binds ANY of them, so
+   =(let ((inhibit-read-only t) (closed (… buffer edit …)))= ran the edit with
+   =inhibit-read-only= still nil and signalled =text-read-only= on the
+   read-only furniture.  The completion path is a =let*=.
+2. =insert= RETURNS NIL.  The completion was an =(and search (let … edit)
+   search2 … t)= chain, so the first successful edit made the whole chain answer
+   nil and every caller fell through to the whole-block fallback --- four
+   =CLOCK:= lines where two belonged.  Both matches are now located BEFORE
+   anything is edited, and the later line is written first so the earlier one's
+   position stays valid.
+
+New tests: =test-agent-org-exchange-opens-its-clock-under-the-heading=,
+=test-agent-org-turn-boundary-completes-the-open-clock-line= (same start stamp,
+one drawer, one =clock= node, and a second completion edits no byte),
+=test-agent-org-open-clock-does-not-block-org-clocking= and
+=test-agent-org-part-opens-its-clock-while-it-streams=.
+
+** DONE Clocked seconds shown in the headings: a fork of =org-clock-display=
+CLOSED 2026-10-11
+User orders: "Does Org support clocking seconds?  If not, add that support to
+agent-org with custom functions." and "Also fork org-clock-display command and
+enable it by default which will show total clocked time with seconds in headings"
+
+Answer to the first question, by measurement on this Org (9.7.11): *no, and it
+will not even read them.*  Three findings decided the design —
+
+- =org-clock-sum= over a 45-second clock answers 0 *whole minutes*, and
+  =org-duration-from-minutes= turns that into ="0:00"=.  The arithmetic is
+  minute-granular end to end.
+- A =CLOCK:= line that carries seconds — in the stamps *or* in the duration —
+  parses to ZERO =clock= nodes (=org-clock-line-re= plus
+  =org-parse-time-string=, which drops the seconds field outright).  So a
+  second-precise line would look like a clock to the eye and be invisible to
+  =org-clock-sum=, a clocktable and =org-clock-load=.
+- =org-clock-display= itself is the upstream command that puts ranges on
+  headings, and it formats from minutes too.
+
+Hence: the exact seconds ride in the property (=:RESPONSE:= for a whole
+exchange, =:SECONDS:= for a clocked part — §22), the =CLOCK:= range stays in
+Org's canonical minute shape so Org's own tools keep working, and *the display*
+is ours: =agent-org-clock-display= (=C-c a c=, on by default through
+=agent-org-clock-display-default=) forks =org-clock-display= to show
+=" [H:MM:SS]"= per heading plus the level-1 total.
+
+What the fork changes, and why each choice is not cosmetic:
+
+- *Overlays, never buffer text.*  The transcript mirror copies bytes from
+  =point-min= to =--render-end=, the queue is parsed from the region, and the
+  repaint markers locate =#+end_quote= — a number inserted in the heading would
+  be transcribed, re-queued and searched for.  An =after-string= is invisible to
+  all three.
+- *Seconds come from the property, and from stamps that carry seconds when the
+  user filed one by hand.*  =agent-org-clock--heading-seconds= prefers
+  =:RESPONSE:=/=:SECONDS:=, and =agent-org-clock--stamp-time= parses a bracketed
+  stamp itself rather than through =org-parse-time-string= — which is how a
+  12-second =CLOCK:= line the user typed shows " [0:00:12]" instead of "
+  [0:00:00]".
+- *Silent.*  =--draw= sets =inhibit-read-only= and never moves point, because
+  §6 keeps status out of the body and a redisplay must not fight the user for
+  the cursor.  A level-1 subtree's total is the sum of its own parts, computed in
+  the same pass.
+- *Bounded and lite-aware.*  One pass over headings per call, cheap fast path
+  (= :PROPERTIES: =/= :LOGBOOK:  = on the next line), and =agent-org-lite-p=
+  declines the per-boundary refresh — §19's scope, so a lite session shows no
+  totals until lite is switched off.
+- *A minor mode of ours, not a global one.*  =agent-org-clock-display-mode= is
+  turned on by =agent-org-mode= per chat buffer; a global =org-clock-display=
+  would decorate every Org file on the machine.
+
+Tests: nine new ones (per-heading total, level-1 sum, user-filed clocks in three
+shapes, the =C-c a c= key hanging under the one free prefix, lite skip, toggle
+via =C-u=, and that switching the mode off removes every overlay).  Rule written
+in CONVENTIONS.md §22.1.
+
+** DONE Seconds in the CLOCK stamps, and our own =C-c C-c=
+CLOSED 2026-10-14
+User orders: "Seconds no longer showing up in clock timestamps" and "We also
+need our own C-c C-c, which won't delete seconds from CLOCK line".
+
+The old §22 rule ("the line stays minute-granular") rested on a measurement that
+was TOO BROAD: seconds in a =CLOCK:= line break Org's parser only when they are
+in the ==>= DURATION.  Re-measured on 2026-10-14 on Org 9.7.11 AND 9.8.10, a
+second-precise STAMP still parses as ONE =clock= node and still sums (a 135 s
+range answers 2 minutes).  So the three writers
+(=agent-org-buffer--clock-open-lines=, =--clock-complete=, =--clock-lines=) now
+write =[%Y-%m-%d %a %H:%M:%S]= stamps; the ==>= duration and the property are
+unchanged.  Why it matters: the transcript is a plain Org file that draws no
+overlay, so the stamps are the ONLY place the seconds can show there.
+
+=C-c C-c= (=org-ctrl-c-ctrl-c=) on a clock line calls
+=org-clock-update-time-maybe=, which re-parses the stamps through
+=org-parse-time-string= (SECONDS DROPPED) and rewrites them minute-granular —
+measured, =[00:30:12]--[00:30:57]= came back =[00:30]--[00:30]=.  New
+=agent-org-ctrl-c-ctrl-c= (=C-c C-c= in a chat) refreshes only the ==>= duration
+on a =CLOCK:= line and delegates to =org-ctrl-c-ctrl-c= everywhere else, so
+refreshing a clocktable and editing a block still work — it WRAPS Org, it does
+not steal the command, which is why =C-c C-c= joins the guard keys in the
+key-scheme drift test.
+
+Tests: =test-agent-org-clock-stamps-carry-seconds= (both stamps carry HH:MM:SS,
+property still exact, one =clock= node) and
+=test-agent-org-ctrl-c-ctrl-c-keeps-clock-seconds= (a wrong ==>= is recomputed
+while the stamps survive; off a clock line the command delegates).
+=ao--clock-line-p= now requires the seconds.  Rule in CONVENTIONS.md §22.
+
+** DONE The context block announces a model change
+CLOSED 2026-10-14
+User order: "Add model change alert in context informing the model that this turn
+changed the model from earlier turns".
+
+A harness hands a freshly switched model the whole transcript and no fact about
+who wrote it, so it answers "I did that" about another model's turns.  When this
+turn's model differs from the one the last block named, =<agent-org-context>=
+carries a final line naming both models in the same =NAME (ID)= spelling as the
+fact line, placed AFTER the three facts so their quoted order is unchanged.
+=agent-org--last-context-model= is BUFFER state, not a session-plist key: the
+fact is about a chat (a resumed session in a new buffer must not alert), and
+=setf (plist-get session :new-key)= appends to a local plist copy the caller
+never sees — the bug the first attempt had.  One alert per change; the condition
+is a change between two KNOWN models, compared on the id.
+
+Tests: =test-agent-org-context-block-alerts-a-model-that-inherited-a-transcript=
+and =…-alerts-once-per-model-change=.  Rule in CONVENTIONS.md §18.
+
+** TODO The clock display must survive a stale =org-element= cache (live Org 9.8.10)
+Found while honouring /update ALL running buffers/: in the live
+=Qoder:agent-org= chat, =agent-org-clock--draw= signalled
+=wrong-type-argument number-or-marker-p nil= on /every/ heading, while a
+byte-identical copy in a fresh buffer drew 1855 headings cleanly and the suite
+was green.  The cause is not our furniture — =(org-element-at-point)= alone
+errored, =org-entry-get= goes through it, and =(org-element-cache-reset)= cured
+the buffer at once (the draw then reported 1890 headings / 5188 s).
+
+Two things this pins for the package:
+- the batch suite runs the BUILT-IN Org (9.7.11) and the user's Emacs runs ELPA
+  =org= 9.8.10, so an Org interaction is only proven twice by a test /plus/ a
+  live check;
+- Org 9.8's new property-drawer spelling (=RESPONSE: v=, no leading colon) still
+  READS our =:RESPONSE: v=, so our output is compatible — measured, not assumed.
+
+The open decision, with the three options written out in AI-REVIEW.org: read the
+drawer line by regexp (loses =org-entry-get='s inheritance, which is why the
+docstring says it was chosen), guard the boundary draw with a
+=condition-case=/reset/retry, or leave =C-c a c= to fail in a stale session.  The
+/dev/ refresh path already does the second; the streaming boundary — which is
+exactly when the buffer is being edited under the cache — does not.
 
 ** TODO Separate interactive response-clocking commands (based on Org's code)
 Deferred from the "make separate commands for response clocking" order.  The
@@ -1028,6 +1291,44 @@ Not done from the same four orders:
   comment-like line and the finder can still key on --- and the order's exact
   target ("EL comment"?) needs one confirming word from the user before this is
   swapped for something he did not ask for.
+
+** DONE The bar says what the agent calls its permission mode
+CLOSED 2026-10-11
+
+The user's order: /"Permission mode name should reflect what the agent calls it,
+e.g. for Qoder, not =yolo=, but =Bypass Permissions= should show in header
+line."/.  Qoder was showing the wire id.
+
+ACP hands a mode object as =id= + =name= (+ =description=), the same pair a config
+option holds as =value= + =name=, so the fix is the model rule applied to the mode:
+- =:mode= stays the id — the only thing a request could send back, and the fact
+  the agent actually reported;
+- =:mode-name= is the label, and =agent-org-buffer--mode-display= (agent-org-buffer.el)
+  renders it with the id as fallback, exactly like =--model-display=; the header
+  segment and the =:Mode:= property both go through it.
+- =agent-org--session-ready= has the advertised list so it pairs them there.  The
+  interesting half is =current_mode_update=: the notification carries ONLY
+  =currentModeId=, so the name must be looked up in the =:modes-list= the status
+  already holds — =agent-org--session-modes=, the same one-copy rule as
+  =agent-org--session-config= (a list in the session plist could drift from what
+  the bar shows).
+
+Why the existing suite could not have caught this: goose names each mode with the
+same word it ids it with (=auto=/=auto=), so =ao--fake-session-new-resp= passes
+whichever field a reader asks for.  The new
+=test-agent-org-header-shows-the-mode-name-not-its-id= uses a Qoder-shaped fake
+where the two differ — and asserts the bar shows =Bypass Permissions=, that the
+=id= is still the status's own fact (=plist-get :mode=), and that the body keeps
+both spellings (=Bypass Permissions (id: yolo)= in the =:MODES:= drawer).
+=test-agent-org-mode-name-falls-back-to-the-id= pins the three degenerate lists
+(no entries, an entry with no =name=, no list at all) and
+=test-agent-org-current-mode-update-carries-the-name= drives the real notification
+path, which is the one that can lose the label.
+
+Tests: 3 new, red first (all three =void-function agent-org--mode-name= / wrong
+field), then green; 45/45 over the =header=/=metadata=/=mode= selector; full suite
+401 tests, 365 expected, the same 36 keyword-drift failures as before.  Clean
+rebuild, zero warnings.  CONVENTIONS.md §6 carries the rule next to the model's.
 
 ** TODO Hooks on the response boundary, and automation that answers the agent
 User order (2026-10-07): "add hooks for response completion, response exit with
@@ -1111,6 +1412,264 @@ those functions carry =;;;###autoload= but were never scraped into the generated
 file.  Left alone here to keep this unit non-conflicting with concurrent work; a
 dedicated "regenerate provider autoloads" pass should close it.
 
+** DONE The chat's keys moved under =C-c a=, so Org keeps its own
+CLOSED: [2026-10-09 Fri]
+*** Why this was a bug, not a taste
+User order: "Don't overlap default Org bindings.  Change =C-c C-c= for
+example."  A chat buffer is an Org buffer, so every package chord on an
+Org =C-c C-<letter>= steals a command the user can otherwise reach only
+there.  Measured against a fully loaded =org-mode-map= (Org 9.7.11):
+=C-c C-c= was =org-ctrl-c-ctrl-c= --- the ONLY gesture Org offers for
+refreshing a clocktable or editing a block, both of which a chat contains
+(the monitor is a buffer of clocktables, and a reply can carry a
+=#+begin_src=) --- =C-c C-m= PARSES as =C-c RET= = =org-ctrl-c-ret=, and
+=C-c C-q=/=-r=/=-k=/=-l=/=-a=/=-d= are tags, reveal, kill-note, link,
+attach and deadline.  Nine stolen commands.
+*** What was built
+ONE prefix: first =C-c C-g=, the single =C-c C-<letter>= slot Org leaves free
+(=C-c C-h= is the global =help-command=), moved to =C-c a= on 2026-10-11 because
+the user asked for shorter keys and =org-mode-map= leaves =C-c a= free too.  A
+sub-map on =C-c a= holding =s= send, =k= cancel, =i= interrupt-and-send, =l=
+lite, =m= model, =q= queue goto, =Q= restore, =r= resume, =a= add, =d= delete,
+=e= enqueue, =n= prepend, =x= remove, =v= list; the monitor's refresh is =C-c a
+g= and keeps =q=.  The cost of the shorter prefix is recorded in
+CONVENTIONS.md §7: in the user's own config the /global/ =C-c a= is gptel's
+prefix, and a minor-mode map outranks the global map, so gptel is unreachable
+from a chat buffer.  The
+structural guards stay taken over ON PURPOSE --- =M-RET=, =M-LEFT=/=M-RIGHT=,
+=S-UP=/=S-DOWN=, =C-c C-t=, =C-c -= refuse with a =user-error=, and
+=M-UP=/=M-DOWN= reorder the queued prompt at point --- because those Org
+commands write through =read-only= text properties and would corrupt a
+heading boundary mid-stream.
+*** Testing
+=test-agent-org-mode-map-shadows-no-org-binding= walks BOTH keymaps
+(=ao--keymap-paths= reports a prefix as its children, so every entry is a
+full sequence) and asserts three things per binding: it names a command,
+it collides with Org only if it is one of the declared guards, and a
+non-guard key hangs under =C-c a=.  The collision test asks
+=(commandp (lookup-key org-mode-map path))=, NOT merely non-nil: =C-c=
+alone resolves to a keymap, so =lookup-key= answers with the integer 2
+for every longer =C-c= sequence, bound or not.  The last loop pins the
+rule as a measurement by asserting that the eight chords the package used
+to bind ARE Org commands, so a future Org that stops binding them shows up
+here rather than silently changing the premise.
+*** The second half of the order: making the change reach the live editor
+The user said the same thing twice — "Don't overlap Org default bindings, e.g.,
+=C-c C-c=" — because /the file was fixed and the running Emacs was not/.  A clean
+hot load left both live chats answering =C-c C-c= with =agent-org-send=: =defvar=
+skips an already-bound symbol, so the initform that built the keymap never
+re-ran, and =minor-mode-map-alist= holds the keymap /OBJECT/ a buffer activated
+on, so even =setq= on the variable cannot reach a buffer already on.  Both maps
+are therefore one object that a builder fills in place (=(setcdr map nil)= then
+=(build map)= at load), pinned by
+=test-agent-org-reload-rebinds-a-live-chat=, which poisons a live buffer's map,
+re-=load=s the source and asserts Org owns =C-c C-c= again.  Writing it as
+=(build (setcdr map nil))= is the trap that found the design: =setcdr= returns
+the new cdr, the builder receives nil and =define-key= signals at load time.
+*** Verification
+Clean rebuild (four files, =byte-compile-error-on-warn t=) with zero warnings;
+354 offline tests, 347 expected and the 7 unexpected all belonging to the
+activity-style work still in flight; =test-agent-org-mode-map-shadows-no-org-binding=
+and the reload test green; then the hot load into the running Emacs and the
+before/after binding table in AI-REVIEW.org, measured in /both/ live chats.
+
+** DONE Every queued prompt shows, and the queue verbs you can reach from anywhere
+
+The live complaint (2026-10-09, dogfooding this very chat): /All prompts in queue
+are not showing at the bottom. Only one shows, but the header line says "3
+queued"./  The header's count and the region's headings are both rendered from
+=(plist-get session :pending-prompts)=, so the list was never the problem: the
+/display/ was.  =agent-org-buffer-refresh-queue= refused to repaint a region the
+user had changed, and obeying that rule meant a prompt arriving mid-edit was not
+drawn at all.  The guard's promise -- your half-typed words are never rewritten --
+was worth keeping; the silence attached to it was not.
+
+A dirty region now /takes appends/: the newcomers are
+=prompts - (parse(region) ∪ --queue-shown)=, matched by TEXT through
+=agent-org-buffer--queue-minus=, inserted below whatever you have there.  The same
+reconciliation rule =agent-org-queue-apply= already used (§17), so an entry you
+typed, edited or deleted never returns as a duplicate, a re-ordered queue keeps
+its order, and an arrival you edited in place is accounted for by the baseline
+instead of drawn twice.  Two measurements along the way: the region's END marker is
+where typing left it, so an append must open a line or it welds two prompts into
+one heading; and =agent-org-buffer-queue-insert-entry= returning =point-max= left
+the added heading empty, so the words typed after it landed as a body line and the
+parser dropped the entry.
+
+The second half of the order -- /add ALL basic queue commands from agent-shell,
+and use them in your queue apply command/ -- is =agent-org-queue-enqueue=
+(=C-c a e=), =agent-org-queue-remove= (=C-c a x=, completes over
+=1..N= plus =Remove all (N)=, confirms, and kills from the page /and/ the list) and
+=agent-org-queue-list= (=C-c a v=), ported from
+=/home/khalid/agent-shell/agent-shell-prompt-queue.el:346, :385, :99=.  What is
+NOT ported is honest to say: =agent-shell-prompt-steer= needs the advertised
+=steering.supported= capability and a =_session/steering= request this client does
+not implement.  "Use them in your queue apply command" became a structural rule
+rather than a call graph: =agent-org-queue--set= is the ONE writer of
+=:pending-prompts= (enqueue, remove, apply, the drain and the resume restore all go
+through it) and it repaints the region, the =:QUEUE:= drawer, the header and the
+transcript in the same breath -- so no verb can update one projection and forget
+another.
+
+*** Verification
+Clean rebuild (four files, =byte-compile-error-on-warn t=) with zero warnings; 359
+offline tests, 352 expected, the 7 unexpected all the activity-style work owned by
+the other session; five new queue tests green
+(=test-agent-org-queue-shows-every-prompt-that-arrives-mid-edit= and the
+=enqueue=/=remove=/=remove-all=/=list= verbs), plus the two rewritten ones
+(=-refresh-keeps-a-fresh-slot=, =-apply-keeps-what-arrived-mid-edit=) alongside the
+pre-existing =-refresh-leaves-an-edit-alone= and =-refresh-never-undoes-a-move=,
+which is how the append rule stayed honest.  The new test was then measured
+AGAINST the old guard: redefining =agent-org-buffer-refresh-queue= back to
+pristine-or-nothing at runtime turns it red, so the suite really does own this
+regression.  Then hot-loaded into the running Emacs (buffer file first,
+=agent-org.el= after, no turn in flight) and measured in the live chat: the
+header's number and the heading count are both 2, and the two prompts on the page
+are byte-identical to the session's list in the same order.
+
+** DONE A drained prompt leaves an edited queue: the guard is per entry
+CLOSED: [2026-10-11 Sun 09:45]
+
+The live complaint (2026-10-11, again from this very chat): /Prompt queue is not
+updating automatically./  The append rule above fixed what a dirty region could
+not /show/; this was what it could not /lose/.  The edit guard covers the whole
+region, so the first touch — a re-order, a stray space at the end of a heading —
+froze the surface for the rest of the session: the drain took its prompt out of
+=:pending-prompts= and left the heading sitting at the bottom of the chat as a
+prompt still waiting, and =agent-org-buffer--queue-shown= went on naming every
+answered prompt, so the baseline =--queue-minus= compares arrivals against was a
+lie.  Measured in the live chat, after both prompts had been answered: session
+queue =nil=, =--queue-shown= still two long texts, the region still alive with
+259 bytes of border and preamble and /no/ entries in it, =:pristine= nil — a
+surface that could never repaint again.
+
+The fix makes the guard /per entry/.  =agent-org-buffer--queue-stale= takes the
+region's entries that the session no longer holds /and/ that are still
+word-for-word what the last paint wrote; =agent-org-buffer--queue-reap= deletes
+exactly those, re-arms keywords and markers through
+=agent-org-buffer-queue-restate=, and drops the reaped texts from
+=--queue-shown=.  An entry you rewrote matches neither half of that rule — it is
+no longer a text this package ever wrote — so the promise the guard was bought
+for still holds, and =-refresh-leaves-an-edit-alone= stayed green without being
+rewritten.  Once the reaped entries are gone the region is byte-identical to the
+renderer's output again, i.e. PRISTINE, so ordinary repaints resume with nobody
+having to type =agent-org-queue-restore=.  A region left with no session queue
+and no entry or blank slot on it is now retired outright, which is what clears
+the 259-byte residue.
+
+A reap is deliberately not =agent-org-buffer-queue-kill-entry=: that is the
+interactive verb, and its courtesies are wrong for something the agent causes at
+a turn end — a prompt already answered must not be =C-y= reachable, an undo
+resurrecting one would put it back on the queue at the next apply, and §6 keeps
+a silent =--draw=-style path (no echo area).  So the reaper deletes with
+=delete-region= under =buffer-undo-list t=.
+
+*** The last entry's bounds were the same bug wearing a hat
+While building the reaper: =agent-org-buffer-queue-entry-bounds= ended the last
+entry at =point-max=, which is where Org's own subtree walk genuinely does put
+it — the entries are level-1 headings and so is the =* PROMPT= box below them.
+Measured: =C-c a d= on the bottom prompt signalled =text-read-only= in the
+frozen box and killed nothing at all, and =M-DOWN= on the same entry moved the
+prompt /below/ the box, out of the region, off the page and out of what the
+parser can read.  The end is now the next headline or the region's own end, which
+is also the bound the reaper deletes through
+(=test-agent-org-queue-kill-of-the-last-entry-keeps-the-box=).
+
+*** Verification
+Four new tests, each written red first against the old code and green after:
+=-drain-reaps-the-sent-entry-from-a-dirty-region= (the complaint),
+=-drain-clears-a-dirty-region-when-the-queue-empties= (reap, then self-heal back
+to pristine, then no region at all), =-queue-refresh-drops-a-region-holding-nothing=
+(the exact live residue, built by hand-deleting the entries), and
+=-queue-kill-of-the-last-entry-keeps-the-box=.  Clean rebuild, four files, zero
+warnings; the offline suite 394 tests / 359 expected, the 35 unexpected all the
+=* PROMPT= → =* NEXT=/=* RESPONDING= spelling drift owned by the keyword work
+(unchanged in count and in cause).  Hot-loaded into the running Emacs (buffer
+file first) and the stuck live chat re-refreshed: region gone, =--queue-shown=
+=nil=, header and page both saying nothing is waiting.
+
+** DONE The prompt box is editable at the line under the heading
+User order, escalated four times: /"The prompt area MUST be editable. NOT
+read-only.  And, heading should be =PROMPT="/" then /"Fix other prompt box too"/
+then /"The heading must be =PROMPT=.  Not READONLY.  Not =RESPONDED=.  Not
+RESPONDING."/  Three different causes, each of which looked like the same frozen
+box:
+
+- /the detector=/  =PROMPT= became a real keyword of the prompt TODO set, so
+  =org-get-heading t t t t= stripped it and =agent-org-buffer--open-prompt-p=
+  answered nil for a perfectly good box — every send then died with /Nothing to
+  send; type your prompt under the PROMPT heading/, 188 tests at once.  The
+  detector now compares the heading line's BYTES against ="* " = --prompt-word=;
+  the box's heading is never a state word, only an exchange's is.
+- /the box's own shape=/  it used to end with a blank line inside the frozen
+  prefix, so the first keystroke landed two lines below the heading — exactly the
+  report.  It now ends at the heading's OWN newline, with =rear-nonsticky= on
+  that last frozen character: the line directly under =* PROMPT= is the prompt,
+  the heading itself still refuses to be renamed.
+- /the freeze reaching sideways/  a byte inserted at the end of frozen text
+  INHERITS =read-only=, so the queue region arrived unreadable, and a turn
+  rendered over an existing region re-infected the region's first byte from the
+  character above it.  =--queue-editable= clears what was inherited and un-sticks
+  the byte above the region; =--protect= un-sticks wherever its END is the
+  region's start.  A frozen block never owns the editable text after it.
+
+One trap on the way: the =rear-nonsticky= line became =--protect='s last form, so
+the function answered nil, =--clock-complete='s success path looked like a failure
+and the caller's fallback painted a SECOND =:PROPERTIES:/=:LOGBOOK= block over a
+live turn.  =--protect= now returns =t= explicitly, and the un-stick is narrowed to
+the queue edge.
+
+*** Verification
+406 tests / 406 as expected, clean rebuild with warnings-as-errors.  The one
+failing test was the test: it asserted the position after the LAST queue entry is
+typeable, and that position is =(cdr region)= — the box's frozen heading — which
+its own comment says is frozen on purpose; it now asserts both halves of that
+edge (typeable strictly inside, refused at the end).  Live, in the running Emacs:
+every chat's box reads =* PROMPT=, the byte under the heading takes a keystroke
+(tried with =inhibit-read-only= nil and undone), and the heading's bytes still
+refuse one.  No duplicate metadata drawer was found — the 253 =:PROPERTIES:= lines
+in the big live chat belong to the other session's per-part headings, and
+=agent-org-buffer-refresh-metadata= writes one block.
+
+** DONE A prompt may contain headings
+User report: /"Can't use headings inside prompts"/.  The ordinary shape of a
+multi-line ask is a star bullet list — =Refactor these:= then =* auth=, =* db= —
+and in Org a =*= at column 0 IS a level-1 headline, so the user's own lines
+became headings of the chat.  Nothing crashed: the box was then located by
+walking back from =point-max= to the nearest headline, which is whichever bullet
+was typed last, so =agent-org-buffer--open-prompt-p= answered nil for a healthy
+box and =C-c a s= refused with /Nothing to send; type your prompt under the
+PROMPT heading/.
+
+- =agent-org-buffer--prompt-box-heading= (new) finds the box from its OWN
+  =--prompt-anchor=: the first headline at or after the anchor is always the
+  box's, whatever the draft contains below it.  The anchor is rear-advancing and
+  sits on the frozen rule line, so neither a typed bullet nor a render can move
+  it out from under the search.
+- =agent-org-buffer-take-draft= reads from the LINE AFTER the heading instead of
+  =org-end-of-meta-data=.  The box writes no drawer and no cookie there, so the
+  old call could only ever eat the user's text — a first line of =#+TITLE: notes=
+  was skipped out of the prompt.
+- The draft reaches the agent VERBATIM, bullets and all; rendering is what keeps
+  the chat's structure honest, and =agent-org-buffer-begin-exchange= already
+  indents a continuation line that looks like a headline (or converts it to a
+  =-= bullet when =agent-org-convert-markdown= is on).  One prompt, one headline.
+- The queue region needed NO change, and that is worth knowing rather than
+  assuming: =--queue-entry= indents every continuation line by one space and
+  =--queue-headline-re= recognises only keyword headlines, so a heading inside a
+  queued prompt was already one prompt.  Measured, not inferred.
+
+*** Verification
+Two tests, the first written red against the broken code and driven with real
+=self-insert-command= typing (=ao--type=) rather than an =insert=, because the
+bug is in what Org makes of what a person types:
+=test-agent-org-a-draft-containing-headings-still-sends= (box still open, whole
+draft including the star lines, box empty afterwards, one headline afterwards) and
+=test-agent-org-draft-takes-a-first-line-that-looks-like-markup=.  Clean rebuild,
+zero warnings, 408 tests all as expected.  Hot-loaded into the running Emacs and
+re-run there: the box stayed open with the bullets typed in it, the draft came
+back whole, and one headline was left.
+
 * Brainstorm from worg — feature ideas (read =/home/khalid/docs/worg/=, 2026-10-07)
 User order: "Read ~/docs/worg/ and brainstorm feature ideas for this package and
 add them to TODOs.org."  What follows are ideas mined by actually reading the
@@ -1163,7 +1722,7 @@ scheduled work yet; the point is the option set.
   (doc.org §org-set-effort, §org-effort-durations)
 
 ** Executing and applying the agent's code (babel)
-- =C-c C-c= on a =#+begin_src= inside a quote runs it with =org-babel-execute-src-block=
+- =C-c C-c= on a =#+begin_src= inside a quote runs it with =org-babel-execute-src-block= (Org's own key: the package does not bind it)
   and writes =#+RESULTS:= between =--quote-end= and =--render-end= (never the User
   box) — a "does this work?" loop on the spot.
   (org-contrib/babel/intro.org "Executing Code Blocks"; org-eval-light.org)
@@ -1283,4 +1842,225 @@ scheduled work yet; the point is the option set.
   since the last wire event → flag) as the STALL signal the response-boundary hooks
   (#90) alone cannot fire, reported on the header line per the one-status rule.
   (org-contrib/org-watchdoc.org Commentary/Usage)
+
+* HANDOFF 2026-10-15 --- resumed in the cloud from =ai/main=
+This branch was committed as ONE pile on the user's explicit order ("Commit ALL
+changes and PUSH"), so it contains two agents' un-committed work at once: the
+cross-agent design below, and another session's =agent-org-review-teach.el=
+(24 tests, green).  Verified before pushing: clean rebuild with
+=byte-compile-error-on-warn t= (zero warnings, five files), main suite
+=Ran 429 tests, 429 as expected, 0 unexpected=, teach suite =Ran 24, 24 as
+expected=.
+
+** DONE The model-change alert in the context block (shipped, working live)
+User order: "Add model change alert in context informing the model that this turn
+changed the model from earlier turns."  Live proof: the block now opened this very
+turn with
+
+#+begin_quote
+model change: this turn runs on Qwen3.8-Flash (default) (qfmodel); the turn before
+ran on kilo/stepfun/step-5-preview-free (…). The earlier turns of this session are
+that model's work, not yours — do not describe them as your own or assume your
+behaviour carried over.
+#+end_quote
+
+Shape: =agent-org--context-facts' keeps its three lines (agent, model, session) in
+the quoted order, and the alert is appended as the LAST line, so the reader code and
+the §18 pins never move.  Comparison is on the model =:model= ID when both sides
+have one, else on the rendered =NAME (ID)= value --- a harness RENAMING a model
+(same id, new label) is not a switch, and the reverse is.  An unknown side alerts
+nothing (a model the client never named cannot be the one it replaced).
+The memory of the previous model is =defvar-local agent-org--last-context-model=,
+written by the block builder, so a change alerts for exactly ONE turn.
+- GOTCHA that cost a debugging cycle: =setf (plist-get session :new-key)= on an
+  /absent/ key rebinds only the local variable --- plists are values, so the first
+  version silently never armed an alert.  Buffer state is the right home anyway.
+- GOTCHA: an Elisp regexp literal ="\(qmodel\)"= is a GROUP; a literal paren needs
+  ="[(]qmodel[)]"=.
+- Four tests: =test-agent-org-context-block-alerts-a-model-that-inherited-a-transcript=,
+  =…-alerts-once-per-model-change=, =…-never-alerts-a-model-it-never-knew= and
+  =test-agent-org-model-change-compares-ids-not-labels=.
+- Docs still to fold in (NOT done): the §18 bullet in AGENTS.md and CONVENTIONS.md,
+  README.org, AI-REVIEW.org.
+
+** TODO Cross-agent sessions --- Qoder ⇄ Codebuddy (the urgent one; design DONE, code NOT started)
+User order, verbatim: "Urgently add a feature for cross-agent session handling by
+mapping the session IDs for EACH agent, for a cross-agent session… You'll take the
+Org transcript, confirm it's synced, then convert it to another agent's session
+file. Then, you will store the two session IDs somewhere… if I started a Qoder
+session… I can convert that session to Codebuddy for example, and continue there.
+Then… I should be able to continue back in Qoder and it will update Qoder's session
+file with the latest session data from Codebuddy. Start implementing this for Qoder
+and Codebuddy."
+
+Tracker: #183 (parser) → #184 (index) → #185 (writers) → #186 (commands + docs).
+Tests FIRST, per the global rule.  Nothing of this is written yet --- the four units
+below are the whole plan, with the measurements already taken so nobody re-takes them.
+
+*** The two on-disk formats (measured from the shipped bundles, not guessed)
+- *Qoder*: =~/.qoder/projects/<slug>/<uuid>.jsonl=, slug = the cwd with =/=→=-= and
+  the leading dash KEPT (=/home/khalid/agent-org= → =-home-khalid-agent-org=).
+  Claude/Anthropic-shaped lines: ={type: "user"|"assistant", uuid, timestamp
+  (ISO-8601 ms UTC), message: {role, content: [{type:"text", text}]},
+  parentUuid, isSidechain:false, sessionId, cwd, userType, entrypoint,
+  version, gitBranch}=.  The resume validator needs =uuid=, =timestamp= and a
+  plain-object =message=; history is sorted by =timestamp= and =isSidechain=
+  records are excluded; the tree is walked from the active leaf by =parentUuid=,
+  and with no =active-leaf= record it falls back to the last timestamp --- so
+  /omit/ =active-leaf=: a =leafUuid= that matches no record throws
+  =TRANSCRIPT_ACTIVE_LEAF_INVALID=.
+- *Codebuddy*: =~/.codebuddy/projects/<slug>/<uuid>.jsonl=, slug = the same but
+  WITHOUT the leading dash.  Lines: ={id, parentId, timestamp (epoch MILLISECONDS),
+  type: "message", role: "user"|"assistant", content: [{type:
+  "input_text"|"output_text", text}], providerData: {agent: "cli"}, sessionId,
+  cwd}=.  Its tail reader (=deserializeSessionFromPath= → =readLinesFromEnd= →
+  =getActiveHistory=) walks =parentId= from =lastMessageId= and returns /no/ history
+  without one, and per-line =JSON.parse= failures are dropped, not fatal.
+  Tool use is TOP-LEVEL (=function_call= with =arguments= as a JSON /string/, then
+  =function_call_result=), reasoning is ={type:"reasoning", rawContent:[…]}=, the
+  title comes from a ={type:"summary"|"ai-title"}= record.
+- Neither agent needs an index file to LIST a session: both =readdir= the project
+  dir for =*.jsonl= (Qoder accepts a basename matching
+  =/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/=, and treats =agent-*.jsonl= as subagents ---
+  never name a cross file that way).  Codebuddy's =<id>.meta.json= sibling and both
+  agents' sidecar dirs (=state.json=, encrypted, and =<id>/tool-results/*.txt=) are
+  optional: absent → defaults, and expanded tool output simply will not render.
+- ACP =session/load= replays from these same files (Codebuddy emits
+  =agent_message_chunk= per history item), so a synthetic file that the CLI resumes
+  is also a session the package can =session/load= with the existing
+  =agent-org--load-session= --- /no second resume path/.
+- *Unverified residual*: all of the above is read-only inference from the bundles;
+  a hand-written file has not yet been =--resume=d.  First live smoke test must be a
+  TEXT-ONLY conversation (skip tool records entirely), which is the low-risk shape
+  the code should emit anyway.
+
+*** Unit #183 --- transcript sync check + Org→messages parser (agent-org-buffer.el)
+- Extract =agent-org-buffer--transcript-text ()=: exactly the text
+  =agent-org-buffer-transcribe= lays down (=point-min= to
+  =agent-org-buffer--render-end= + =(agent-org-buffer-render-queue queue)=).
+  =transcribe= must call it, so "what the file should hold" has ONE definition.
+- =agent-org-buffer-transcript-synced-p (buffer)=: compare the FILE's bytes to that
+  text --- never =agent-org-buffer--transcript-cache=, which is our own memory and
+  stays truthful while a person edits the file behind our back.  Missing/unreadable
+  file → nil.  The convert command calls =agent-org-transcript-sync= (the forced
+  re-mirror, agent-org.el:2513) when this answers nil, then reads the file.
+- =agent-org-buffer-transcript-messages (file)=: plists
+  ='((:role "user" :text …) (:role "assistant" :text …))=, oldest first.  Rules:
+  a level-1 heading opens an exchange; its text (=* RESPONDED foo= minus the leading
+  state word, which is a word of =agent-org-prompt-todo-keywords=) plus the following
+  non-furniture lines is the USER message; the answer is the body of every =**=
+  part whose keyword is in =agent-org-response-todo-keywords= (WRITING/WROTE) ---
+  thoughts (THINKING/THOUGHT) and calls (RUNNING/EXECUTED/FAILED) are /left out/, as
+  are =:PROPERTIES:/, =:LOGBOOK: =, =:thinking:=/=:tool:= drawers, the metadata block
+  and the queue block.  Un-indent the ONE leading space §3.2/§3.3 add to structural
+  lines.  Classify by the package's own keyword defcustoms, NOT by asking Org which
+  set a word belongs to: a transcript read standalone has no =#+TODO:= lines yet
+  (that is #163) and built-in-vs-ELPA Org skew (9.7.11 batch / 9.8.10 live) would
+  make the answer version-dependent.
+- Known fidelity limits to state in the docstring: the prompt heading's first line
+  has whitespace runs collapsed and is markdown-normalised (§15), so a prompt is
+  recovered as the /user reads it/, not as bytes on the wire; and a RESUMED session's
+  transcript is defective today (see #164/#165: the whole replay sits under one
+  orphan =* Agent= heading, so the parser sees no prompts) --- fixing those two is a
+  precondition for cross-agent fidelity on resumed chats.
+- Five tests: file-not-cache truth of =synced-p= (edit the file, expect nil, re-sync,
+  expect t); prompts-then-answers in order; thoughts/tools/furniture excluded; a
+  multi-line prompt restored; no message invented from the live =* PROMPT= box.
+
+*** Unit #184 --- the mapping store (agent-org.el)
+- One file per project: =.agent-org/cross-agent.org=, path built exactly like
+  =agent-org-buffer--transcript-file= (buffer.el:5240) --- resolved against the CHAT
+  buffer's =default-directory=, never whatever =default-directory= is current (the
+  mistake =agent-org-review-teach-lessons-file= already makes at its :129).
+- One level-1 heading per LEG, =:PROPERTIES:= drawer with =:XAGENT:= (the group id
+  shared by every leg of one cross-agent session), =:AGENT:=, =:SESSION:=,
+  =:FILE:=, =:FROM:= (the leg it was converted from) and =:SYNCED:= (the timestamp of
+  the transcript the conversion read).
+- Writers/readers: =agent-org-cross-record=, =agent-org-cross-lookup (xagent agent)=,
+  =agent-org-cross-legs (xagent)=, and =agent-org-cross--parse-text=, a plain
+  heading+drawer regex scan (no =org-element=, no version skew, trivially testable ---
+  same argument the queue parser makes at §17).  Re-recording an (xagent, agent) pair
+  UPDATES its heading; it must never append a second leg for the same agent.
+
+*** Unit #185 --- the converters (agent-org.el + a new =:cross= key in agent-org-providers.el)
+- Provider specs gained no keys since 2026-10; add =:cross= holding =:root= (e.g.
+  =~/.qoder/projects=), the slug rule and the writer, so per-agent knowledge stays
+  where per-agent knowledge lives (providers.el), and =agent-org.el= =user-error=s on
+  a provider without one.  The drift test
+  (=test-agent-org-every-provider-has-a-start-agent-command=) already pins the
+  provider list; extend the shape test rather than a new list.
+- =defcustom agent-org-cross-session-root= (or per-provider override) so tests write
+  into an =ert-with-temp-directory= --- /never/ the real =~/.qoder= tree.
+- Pure message→record builders (test-pinned shapes, like =--status-kb= et al. in §21)
+  and one impure writer per agent.  First conversion of a session =mints= a new uuid
+  and CREATES the file; a hop /back/ APPENDS only the messages the destination file
+  does not already hold, chaining onto its last record's =uuid=/=id= --- that is what
+  "update Qoder's session file with the latest session data from Codebuddy" means.
+- Safety rails, each its own test: refuse (=user-error=) to write a session file for
+  a session a live chat buffer currently holds (an agent may be appending to it right
+  now); never write outside the resolved root; =sessionId= must equal the file's
+  basename (both agents key on that); ids must satisfy Qoder's =^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$=.
+
+*** Unit #186 --- the verbs and the docs
+- =agent-org-cross-convert= (confirm synced → write target file → record the leg →
+  report the new id and path), =agent-org-cross-go= (convert, then open a chat for the
+  target provider and =session/load= the new id through =agent-org--load-session=:1460),
+  =agent-org-cross-list= (this project's groups).  Target read with =completing-read=
+  over the providers carrying =:cross=, via the existing collection/selection helpers
+  (§13).  Keys go under =C-c a= --- the one prefix, and both maps are re-FILLED in
+  place by =--build-mode-map= so a hot-load actually changes live buffers.
+- The reverse hop needs no new code: the new chat's leg record carries the group id,
+  so =agent-org-cross-go= back to =qoder= finds the original session id, appends the
+  Codebuddy-era messages to Qoder's file and loads it.
+- Then: =agent-org-autoloads.el=, README.org, AGENTS.md, CONVENTIONS.md (a new §),
+  AI-REVIEW.org (what to review = the two format writers and the append-chain logic),
+  org-check every edited =.org=, full suite, hot-load buffer file first then
+  agent-org.el, and ONE small commit per unit.
+
+** TODO Clock seconds --- the fix is /designed/, measured, and NOT written
+User report: "Seconds no longer showing up in clock timestamps."  The on-screen
+=agent-org-clock-display= overlay /does/ print seconds (=0:00:09=); the =CLOCK:= text
+does not, because three sites still format stamps minute-granular:
+=agent-org-buffer--clock-open-lines= (buffer.el:3660, =ts-fmt
+"[%Y-%m-%d %a %H:%M]"=), =--clock-complete= (:3684) and =--clock-lines= (:3755).
+Measurements already taken on Org 9.7.11 /AND/ 9.8.10, so they need not be repeated:
+- a =CLOCK:= whose /duration/ carries seconds (==> 0:00:45=) parses to ZERO =clock=
+  nodes --- invisible to =org-clock-sum=, a clocktable and =org-clock-load=;
+- a second-precise /stamp/ (=… 00:30:12]=) still parses as ONE node and still sums (a
+  135 s range answers 2 minutes);
+so the fix is: stamps carry =%H:%M:%S=, the ==> duration stays =h:mm=, exact whole
+seconds stay in =:RESPONSE:=/=:SECONDS:=, and =agent-org-clock--stamp-time= already
+parses the seconds itself (Org's =org-parse-time-string= drops them).
+=C-c C-c= is the package's own =agent-org-ctrl-c-ctrl-c= for exactly this reason ---
+Org's handler would re-truncate the stamps.  Remaining step before writing it: re-run
+the (interrupted) probe of seconds-in-stamps through =org-clock-sum=, =org-clock-load=
+and a clocktable on BOTH Org versions, then pin it with tests.  AGENTS.md §22 already
+records this rule; CONVENTIONS.md §22 wording needs the same edit as the code.
+
+** TODO Everything else still open (tracker ids, with what is known)
+- #163 (was in_progress) =#+TODO:=/=#+SEQ_TODO:= lines in the transcript metadata,
+  files-only.  All measurements are done: ONE =#+TODO:= for the first set and ONE
+  =#+SEQ_TODO:= per extra set (several sequences on one line merge into one broken
+  set); =org-set-regexps-and-options= re-reads them, so =--install-todo-keywords=
+  (buffer.el:718) collapses to the emit-and-refresh path and =--render-metadata=
+  (:1913) gains four lines.  The pins to INVERT are tests at :2316 and :4334 (they
+  assert the lines are /absent/), the zero-reparse pins at :5177-5207 and
+  :10271-10326 (a metadata rebuild now costs one whole-buffer keyword re-read ---
+  say so in the commit message), and the comments at buffer.el 55-66, 125-132,
+  592-608, 631, 741, 1976-1981, 5248-5272.
+- #178 / #130 =AGENTS-TODOs.org= sync for the agent's plan/todowrite --- the user
+  called this URGENT too, and it is still untouched.  It is smaller than the
+  cross-agent feature: render =plan= updates as a headed list and mirror the tree
+  into =AGENTS-TODOs.org= at boundaries, reusing the transcribe/queue machinery.
+- #164 orphan =* Agent= on resume (live evidence: this session's transcript has 2
+  level-1 headings over 93 parts), #165 transcripts must hold the whole session,
+  #166/#168 rebuild-from-the-agent-record, #167 configurable load depth, #169 open
+  chats from transcript files.  #164/#165 gate the cross-agent parser above.
+- #170 sticky-heading header-line decision, #171 clone-buffer naming, #172/#82/#86
+  stall indicator + response clocking, #173/#117 tool drawer on/off, #174/#119/#129
+  prompt headings carry TODO states, #175/#120 bold model prefix + =:MODEL:=
+  property, #176/#150 CANCELLED on a killed prompt, #177/#126 steering port,
+  #179/#132 transcript tamper validation + index dir, #180 dev-refresh live buffers,
+  #181/#134 split windows per chat, #182/#151 Opencode V2 provider.
+- #127 is CLOSED by this handoff commit: the Arc 4 / Arc 5 pile is in, as ordered.
 

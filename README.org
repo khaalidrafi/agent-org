@@ -30,12 +30,17 @@ Each exchange also records how long the agent took to answer: a
 =:RESPONSE:= property (exact seconds) and a canonical Org =CLOCK:= range
 sit directly under its heading, filed in a =:LOGBOOK:= drawer, so
 ~org-clock-collect~ and the agenda's clocktable can total response time
-across a transcript.  It is written /only/ as a completed clock — the
-package never starts an Org clock of its own and touches none of Org's
-running-clock state, so this can never occupy the one global slot and
-block /your/ ~org-clock-in~: a person may still clock any exchange
-themselves as usual.  A resumed session's restored exchanges carry no
-clock rather than a fabricated one (see CONVENTIONS.md §22).
+across a transcript.  The range is opened with its start stamp when the
+prompt goes out — so a turn in flight already has a clock line, whose end
+and duration are written into that same line when the answer lands — and
+that /open/ line still cannot occupy Org's one global running-clock slot:
+the package never calls ~org-clock-in~, never touches Org's running-clock
+state, and a resumed session's restored exchanges carry no clock rather
+than a fabricated one (see CONVENTIONS.md §22).  And because
+Org's own clock tools round every sub-minute answer to ~0:00~, the chat
+shows the seconds itself: each heading ends with its clocked total, and the
+top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
+(see [[*Clocked seconds in the headings]]).
 
 * Prerequisites
 
@@ -113,7 +118,8 @@ NonGNU ELPA.
    registered provider, the way ~agent-shell-<provider>-start-agent~
    works).  What happens next is
    [[*Starting: which session you get][~agent-org-session-strategy~]]: by
-   default the agent is asked what this directory already holds.
+   default the chat you last had in this directory is reopened, without
+   asking (~C-u~ offers the chooser instead).
    Opens =~Goose:myproj= and shows ~Goose ➤ Starting~ in
    the header line.  When the ACP ~initialize~ + ~session/new~
    handshake completes, the header fills in with everything the agent
@@ -136,13 +142,29 @@ NonGNU ELPA.
    not the id it takes on the wire (~minimax/MiniMax-M3~); an agent that
    reports a current model without naming it falls back to the id, since
    a bar with no model reads as a bar with no model.
+   The mode segment is the same kind of /name/: Qoder's permission mode
+   shows as ~Bypass Permissions~, not the wire word ~yolo~ behind it, and
+   it follows you mid-session when the agent reports a mode change.
+   Scroll down into a long answer and the bar gains a /second/ row: the
+   heading of the exchange you are reading, pinned there so the question
+   stays on screen while its answer runs off the bottom.
+   #+begin_example
+   Goose ➤ free ➤ auto ➤ agent-org ➤ ▁ 5k/128k ➤ Streaming
+   * RESPONDED Write a parser for the queue region, then test it against
+   #+end_example
+   It is one line, truncated with ~…~ at the window's width, and it
+   disappears as soon as the real heading is back on screen — the pin is
+   a reminder, never a duplicate.  [[*Configuration][~agent-org-sticky-heading~]]
+   turns it off.  A part of an answer — a ~**~ line like ~ONGOING~, ~COMPLETE~
+   or ~FAILED~ — is deliberately not pinned: that word changes every few
+   seconds while the agent works, the prompt does not.
    Note: the first ~session/new~ can take tens of seconds while goose
    loads its extensions — the buffer stays on "Starting" meanwhile.
-2. Type in the live =~* User=~ box at the end of the buffer — no
+2. Type in the live =~* PROMPT=~ box at the end of the buffer — no
    unlocking, no composing step.  Once the session is Ready the box
    appears and never goes away: the heading itself is frozen, the body
    under it is always typeable, mid-turn included (that is where
-   type-ahead goes).  Hit ~C-c C-c~ to send; the draft becomes its own
+   type-ahead goes).  Hit ~C-c a s~ to send; the draft becomes its own
    exchange — /the heading is what you typed/ — and the same empty box stays
    open for the next message.  Everything the program writes (headings,
    agent output, tool calls) is read-only via text properties, and turns
@@ -182,21 +204,37 @@ NonGNU ELPA.
    (~agent-org-queue-when-busy~, on by default — agent-shell's type-ahead
    model): queued prompts go out FIFO as each turn ends successfully.
    What is waiting is shown /in the chat/, at the bottom: each waiting
-   prompt is a ~* TODO~ heading above the live ~* User~ box — /every/ entry
-   says TODO, because which one goes next is its /position/, not its
-   keyword.  ~C-c C-q~ (~agent-org-queue-edit~) takes you there; edit a
-   prompt in place, ~C-c C-a~ adds a blank one at the bottom to type into,
-   ~C-c C-d~ kills one, ~M-UP~ / ~M-DOWN~ re-order (the order in the region
+   prompt is a heading above the live ~* PROMPT~ box — the first says
+   ~* NEXT~ and every one behind it ~* WAIT~, because the word /is/ its
+   position in the send order.  ~C-c a q~ (~agent-org-queue-edit~) takes you there; edit a
+   prompt in place, ~C-c a a~ adds a blank one at the bottom to type into,
+   ~C-c a d~ kills one, ~M-UP~ / ~M-DOWN~ re-order (the order in the region
    /is/ the send order), and ~M-x agent-org-queue-apply~ (~agent-org-queue-apply~)
    is what puts the result on the wire.  Nothing is sent until you apply:
    a queue you are rearranging must not change under your hands, and the
    same list is mirrored into the transcript as these headings, so quitting
    Emacs mid-turn does not swallow a prompt (see [[#transcript-file][Transcript file]]).
-   ~C-c C-r~ (~agent-org-queue-resume~) sends the next one now, which is
-   the escape hatch after ~C-c C-k~ cancelled the turn they were queued
+   Three verbs need no position in the buffer at all, because a queue you
+   cannot see is a queue you cannot trust: ~C-c a e~
+   (~agent-org-queue-enqueue~) queues a prompt typed in the minibuffer while
+   your cursor stays wherever it is, ~C-c a v~ (~agent-org-queue-list~)
+   numbers every waiting prompt in the echo area, and ~C-c a x~
+   (~agent-org-queue-remove~) takes that number (or ~all~) and deletes the
+   entry from the page /and/ the session list together.
+   And a prompt that arrives while you are editing the region /shows up/
+   anyway: your half-typed words are never rewritten, the newcomer is
+   appended below them, so the header's ~N queued~ always matches the number
+   of headings you can count.
+   The same holds on the way /out/: when a turn ends and takes a queued
+   prompt, that entry disappears from an edited region too — but only if it
+   still says word-for-word what the package wrote there, so a prompt you
+   re-worded is never reaped, and a queue that has just emptied leaves no
+   region behind at all.
+   ~C-c a r~ (~agent-org-queue-resume~) sends the next one now, which is
+   the escape hatch after ~C-c a k~ cancelled the turn they were queued
    behind.
 
-   ~C-c C-l~ (~agent-org-lite-mode-toggle~) is the minimum-resources mode
+   ~C-c a l~ (~agent-org-lite-mode-toggle~) is the minimum-resources mode
    for one session (see the Resource monitor and lite mode section below).
 
 If the agent asks for permission, the header line shows
@@ -219,6 +257,49 @@ agent-org makes on its own (backing out of a session chooser, opening a
 session that is already live elsewhere, ~agent-org-reload~) never ask — a prompt
 raised from inside an agent callback is a trap, not a question.
 
+* Keys
+
+Everything agent-org binds lives under ONE prefix, ~C-c a~, which ~org-mode-map~
+leaves free --- and a chat buffer /IS/ an Org buffer, so a package key on an Org
+chord is a stolen command, not a preference.  The package used to sit on ~C-c
+C-g~, one of the two ~C-c C-<letter>~ slots Org leaves empty (the rest are
+claimed: ~C-c C-c~ is ~org-ctrl-c-ctrl-c~, the only gesture Org offers for
+refreshing a clocktable or editing a block, both of which a chat contains, and
+~C-c C-m~ PARSES as ~C-c RET~, Org's own ~org-ctrl-c-ret~); ~C-c a~ is one
+keystroke shorter.  A test measures the rule against a fully loaded
+~org-mode-map~, so if Org ever claims ~C-c a~ too it fails there rather than in
+your fingers.
+
+| Keys              | Command                         | Effect                                      |
+|-------------------+---------------------------------+---------------------------------------------|
+| ~C-c a s~       | ~agent-org-send~                | send the typed prompt (queues it mid-turn)   |
+| ~C-c a k~       | ~agent-org-cancel-turn~         | stop the running turn                        |
+| ~C-c a i~       | ~agent-org-interrupt-and-send~  | stop the turn and send the box, in one go    |
+| ~C-c a l~       | ~agent-org-lite-mode-toggle~    | cycle this session's lite scope (~C-u~: global) |
+| ~C-c a m~       | ~agent-org-set-session-model~   | switch the session's model                   |
+| ~C-c a c~       | ~agent-org-clock-display~       | show/hide the clocked total on each heading   |
+| ~C-c a q~       | ~agent-org-queue-edit~          | go to the prompts waiting in this session     |
+| ~C-c a Q~       | ~agent-org-queue-restore~       | repaint the region from the session's queue   |
+| ~C-c a r~       | ~agent-org-queue-resume~        | send the next waiting prompt now             |
+| ~C-c a a~       | ~agent-org-buffer-queue-add~    | add a queued prompt at the bottom            |
+| ~C-c a d~       | ~agent-org-buffer-queue-kill~   | kill the queued prompt at point              |
+| ~C-c a e~       | ~agent-org-queue-enqueue~       | queue a prompt from the minibuffer           |
+| ~C-c a n~       | ~agent-org-queue-prepend~       | queue one as the NEXT out, ahead of the rest  |
+| ~C-c a x~       | ~agent-org-queue-remove~        | remove one waiting prompt by number (or all) |
+| ~C-c a v~       | ~agent-org-queue-list~          | list the waiting prompts, numbered           |
+| ~M-UP~ / ~M-DOWN~ | ~agent-org-buffer-queue-move-up~ / ~-down~ | re-order the entry at point          |
+| ~C-c a g~       | ~agent-org-resource-refresh~    | in the resource monitor: redraw the tables   |
+| ~q~               | ~quit-window~                   | in the resource monitor: close it            |
+
+The exceptions are deliberate and few: ~M-RET~, ~M-LEFT~ / ~M-RIGHT~,
+~S-UP~ / ~S-DOWN~, ~C-c C-t~ and ~C-c -~ are bound to an error in a chat, ON
+PURPOSE --- Org's structure commands on those keys write through the
+~read-only~ text properties, so one of them fired mid-stream would corrupt the
+exchange the agent is still writing.  ~M-UP~ / ~M-DOWN~ are taken over for a
+positive reason: Org uses them to move a subtree, and in a chat the subtree
+worth moving is the queued prompt under point.  Folding stays available the Org
+way (~TAB~, ~S-TAB~), because folding only changes visibility.
+
 * Starting: which session you get
 
 ~agent-org-session-strategy~ decides what happens between the handshake
@@ -226,18 +307,24 @@ and the session opening — the same three choices ~agent-shell~ offers:
 
 | Strategy     | What ~M-x agent-org-start~ does                        |
 |--------------+--------------------------------------------------------|
-| ~prompt~       | asks the agent what this directory already holds, offers it |
 | ~latest~       | loads the most recently updated session, without asking |
+| ~prompt~       | asks the agent what this directory already holds, offers it |
 | ~new~          | opens a blank session, no listing round trip            |
 
-One call can pick a strategy without touching the setting: ~C-u M-x~
-forces ~new~ (no listing round trip), ~C-u C-u M-x~ forces ~latest~ — the
-session you last modified, which is how "always reopen where I left off"
-works as a keypress.  ~latest~ means /modified/: the agent's ~updatedAt~,
+~latest~ is the default: the chat you were just in is the one you are
+almost always after, and a question with an answer you give the same way
+every time is not worth a keystroke.
+
+One call can pick a strategy without touching the setting, and the
+prefixes are ordered by how much of the decision they hand back: ~C-u M-x~
+forces ~prompt~ (the chooser, which is what the default used to be), ~C-u
+C-u M-x~ forces ~new~ — the fast path that never asks the agent to
+list.  ~latest~ means /modified/: the agent's ~updatedAt~,
 or ~createdAt~ for a session nobody ever came back to, not the order the
 agent happened to list them in.
 
-~prompt~ is the default.  The offer is the agent's own ~session/list~ for
+~prompt~ is what ~C-u M-x agent-org-start~ reaches.  The offer is the agent's own
+~session/list~ for
 ~default-directory~, newest first, each candidate labelled
 
 #+begin_example
@@ -254,7 +341,7 @@ still means "start".  A chat that is already open in another window is
 marked ~(open)~: choosing it shows that window instead of loading the
 same session a second time.  Backing out of the offer (ESC /
 ~C-g~) closes the half-open chat buffer and its agent, instead of leaving a
-window stuck on "Starting".  ~C-u M-x agent-org-start~ forces
+window stuck on "Starting".  ~C-u C-u M-x agent-org-start~ forces
 ~new~ for one call, which is the shortcut when you mean to start over.
 
 Three details make this bearable on agents that are slow, silent or long:
@@ -271,8 +358,9 @@ Three details make this bearable on agents that are slow, silent or long:
   status reads ~Ready (new session: listing timed out after 20s)~ rather
   than plain ~Ready~, so a fallback never looks like a prompt that failed
   to appear.  Starting a chat is never blocked by the feature that shows
-  you the older ones.  On goose that wait is wasted every time, so
-  ~M-x agent-org-goose-start-agent~ followed by ~C-u~ — or
+  you the older ones.  On goose that wait is wasted every time, and the
+  default now pays it before opening anything, so
+  ~M-x agent-org-goose-start-agent~ followed by ~C-u C-u~ — or
   ~agent-org-session-strategy~ set to ~new~ — is the quick path.
 - An agent that cannot list or cannot ~session/load~ is asked neither:
   the capability check happens on the ~initialize~ response, so it costs
@@ -297,7 +385,7 @@ project you want to resume in, first.  It is the same request
 an agent holding 38 sessions in this directory offers all 38, not the
 first page.  One candidate is used without prompting; the header line
 shows ~Restoring~ while the history is replayed, then ~Ready~ with a
-live ~* User~ prompt at the end, and you continue exactly where you
+live ~* PROMPT~ prompt at the end, and you continue exactly where you
 left off — including prompts you had queued but never sent, which come
 back from the queue region at the bottom of the transcript and go out in
 order (the agent's own replay cannot contain them, because it never saw
@@ -365,7 +453,7 @@ characters, and the transcript's size on disk.
 
 | Session | State | Mode | Agent | CPU | RSS | Buffer | Transcript |
 
-~C-c C-c~ redraws it, ~q~ closes it, and a prefix argument
+~C-c a g~ redraws it, ~q~ closes it, and a prefix argument
 (~agent-org-resource-monitor~ with ~C-u~) narrows it to the session you call
 it from --- the reading you want when you suspect one chat.  It refreshes
 itself every ~agent-org-resource-refresh-interval~ seconds (5) *while it is
@@ -373,9 +461,9 @@ on display*, and stops the moment you leave the buffer: it is the only
 repeating timer this package runs, and it exists to report load rather than
 add to it.  Everything is read from ~/proc~, so the numbers are the kernel's.
 
-~C-c C-l~ cycles one session's /lite/ scope:
+~C-c a l~ cycles one session's /lite/ scope:
 =inherit= (the default) follows the global setting, =on= and =off= pin this
-session against it, and ~C-u C-c C-l~ flips the global
+session against it, and ~C-u C-c a l~ flips the global
 (~agent-org-lite-mode~) for every session that does not have a scope of its
 own.  Lite mode spends nothing on machinery nobody is reading:
 
@@ -390,7 +478,41 @@ own.  Lite mode spends nothing on machinery nobody is reading:
 What it does not do is turn off colours, drop the agent's reasoning, or stop
 converting Markdown to Org: those are the conversation, not the machinery.
 
-* Seeing the raw wire
+** Clocked seconds in the headings
+
+Every exchange is clocked: the property drawer under its heading carries
+=:RESPONSE:=, the exact whole seconds from the prompt going out to the answer
+finishing, and a ~:LOGBOOK:~ ~CLOCK:~ range in Org's own shape sits beside it.
+While the answer is still streaming, that range has no end yet and the property
+reads ~0~ — which is what the heading shows, ~[0:00:00]~, rather than a number
+guessed from a turn that has not finished.
+
+Org cannot show you those seconds.  Its clock arithmetic works in whole minutes
+(~org-clock-sum~ over a 45-second answer is ~0~, and ~0:00~ is what reaches the
+screen), and a ~CLOCK:~ line that /carries/ seconds is not a clock line at all —
+Org's parser reads zero clocks from it, which would hide your exchanges from
+~org-clock-sum~, from a clocktable and from ~org-clock-load~ while still looking
+right to the eye.
+
+So ~M-x agent-org-clock-display~ (~C-c a c~) is a fork of ~org-clock-display~
+that reads our number instead of Org's arithmetic: each heading with a timing
+gets a dim ~ [H:MM:SS]~ at its line end, and the echo area reports how many
+headings were counted and the total.  It is /on by default in a chat/
+(~agent-org-clock-display-default~), and ~C-u C-c a c~ turns it off — the
+gesture you press when the totals are noise is never the one that adds them.
+
+- The totals are overlays, so nothing is inserted: the transcript file, the
+  queue and every redraw read the buffer's bytes, and those bytes do not change.
+- The total adds up the exchange headings only.  A part's seconds are already
+  inside its exchange, so counting both would bill the same time twice — each
+  part heading still shows its own number.
+- A clock /you/ filed with ~C-x C-n~ / ~org-clock-out~ shows up too, at whatever
+  precision its stamps carry; a clock still running is left alone, because it is
+  yours and its end is not ours to invent.
+- A /lite/ session skips the refresh (§19 of CONVENTIONS.md), so the numbers do
+  not come back until the next turn boundary after lite is switched off.
+
+** Seeing the raw wire
 
 ~M-x agent-org-show-traffic~ in a chat buffer opens acp's own traffic log for
 that session's process: one line per message — time, direction, kind, method —
@@ -432,11 +554,11 @@ agent-org-opencode-start-agent~ then picking a MiniMax id is how you run
 MiniMax /through/ OpenCode, which is not the same thing as MiniMax Code.
 Both the chooser and the header show the agent's own label
 ("OpenCode Zen/MiniMax-M2.7"); the id stays behind, which is why ~C-c
-C-m~ can be read without knowing a catalog's naming scheme.
+C-g m~ can be read without knowing a catalog's naming scheme.
 
 | Keys                      | Effect                                          |
 |---------------------------|-------------------------------------------------|
-| ~C-c C-m~                 | complete over the models this agent advertises   |
+| ~C-c a m~               | complete over the models this agent advertises   |
 | ~M-x agent-org-set-session-model~ | same, from lisp or ~M-x~                         |
 
 Only ids the agent listed are accepted — OpenCode renames its catalog
@@ -455,12 +577,12 @@ MiniMax through OpenCode Zen is metered, so a prompt can come back as
 ~prompt failed: Upstream request failed: Insufficient account funds~ in
 the header line.  That is the upstream account talking, not a broken
 session: the id, the mode and the model are all still there, and topping
-up only needs a fresh ~C-c C-c~.
+up only needs a fresh ~C-c a s~.
 
 * What the agent is told about this connection
 
 Ask an agent "which model are you?" and it answers from its own idea of
-the default.  That is wrong the moment you switched with ~C-c C-m~ — which
+the default.  That is wrong the moment you switched with ~C-c a m~ — which
 is the normal case for MiniMax running /through/ OpenCode — and the
 session id and the harness name are facts of the same kind: the client
 knows them, the agent cannot derive them, and a commit trailer or a bug
@@ -482,7 +604,7 @@ needs, and neither one derives from the other.  An agent that advertises
 no model of this shape (goose) simply gets no ~model:~ line — a
 ~model: nil~ line would be an agent told something false.
 
-The block is rebuilt every turn, so it follows a mid-session ~C-c C-m~,
+The block is rebuilt every turn, so it follows a mid-session ~C-c a m~,
 and a prompt that waited its turn in the queue carries the same facts as
 one you typed.  Your own text is untouched and stays the first block: the
 agent receives the question verbatim, and the client speaks beside it
@@ -546,7 +668,7 @@ turns — and spends it inside the stream.
 Mirroring rather than appending is also why the file is never wrong about
 a tool call: a ~:tool:~ item that moved TODO→ONGOING→COMPLETE in the buffer moves it
 in the file too, where an append log would keep three items for one call.
-A draft still in the =~* User=~ box never reaches the file, and a failed
+A draft still in the =~* PROMPT=~ box never reaches the file, and a failed
 write is a note in the echo area, never a broken turn.
 
 One thing in the file is /not/ conversation: prompts you sent into a busy
@@ -634,6 +756,10 @@ what this package did before the option existed.
 
 - ~agent-org-use-header-line~ — when nil, status messages go to the
   echo area via ~message~ instead of the top bar.
+- ~agent-org-sticky-heading~ — when non-nil (the default) the top bar gains a
+  second row holding the prompt of the exchange you have scrolled into, one line,
+  truncated to the window: see [[*Quickstart]].  Nil pins nothing, and clears
+  a pin already showing rather than waiting for the next chat.
 - ~agent-org-quote-model-author~ — when non-nil (the default) an answer's quote
   block is attributed to the model that wrote it
   (~#+ATTR_TEXINFO: :author MiniMax M3~).  Nil keeps the stable word
@@ -656,8 +782,8 @@ what this package did before the option existed.
   is the relative ~.agent-org~, resolved against the chat's own directory,
   so every project keeps its own transcripts; an absolute value is a global
   pool.  Created on the first write.
-- ~agent-org-session-strategy~ — what starting means: ~new~, ~latest~ or
-  ~prompt~ (the default), see [[*Starting: which session you get]].
+- ~agent-org-session-strategy~ — what starting means: ~new~, ~latest~ (the
+  default) or ~prompt~, see [[*Starting: which session you get]].
 - ~agent-org-session-list-page-limit~ — how many ~session/list~ pages to
   follow; nil reads every page.
 - ~agent-org-session-list-timeout~ — seconds ~agent-org-start~ waits for
@@ -670,7 +796,7 @@ what this package did before the option existed.
   the Resource monitor and lite mode section.
 - ~agent-org-resource-refresh-interval~ — seconds between refreshes of the
   resource monitor, and only while it is displayed; nil or 0 turns
-  auto-refresh off and ~C-c C-c~ in the monitor redraws on demand.
+  auto-refresh off and ~C-c a g~ in the monitor redraws on demand.
 - ~agent-org-clock-ticks-per-second~ — Linux ~USER_HZ~, which is what the
   monitor's CPU column divides by.  100 everywhere it was measured.
 - ~agent-org-progress-min-time~ — seconds between redraws of the loading

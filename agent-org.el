@@ -78,8 +78,9 @@
 
 (defconst agent-org-new-session-label "New session"
   "Candidate that starts a fresh session from the chooser.
-It is offered FIRST, so an untouched RET keeps `agent-org-start'
-meaning \"start\" even in a directory full of old chats.")
+It is offered FIRST, so a `C-u M-x agent-org-start' answered with a bare
+RET still means \"start\": the fresh session `agent-org-start' used to open
+by default is the chooser's first choice, not a hidden one.")
 
 (defconst agent-org--open-marker " (open)"
   "Appended to a candidate's title when a live buffer already has that session.
@@ -97,7 +98,7 @@ when `agent-org-start' opened a blank buffer anyway."
     (user-error "Unknown `agent-org-session-strategy' %S: use `new', `latest' or `prompt'"
                 value)))
 
-(defcustom agent-org-session-strategy 'prompt
+(defcustom agent-org-session-strategy 'latest
   "How `agent-org-start' treats the sessions this directory already holds.
 
   `new'     start a fresh session, and never ask the agent to list.
@@ -108,14 +109,22 @@ when `agent-org-start' opened a blank buffer anyway."
 
 The names follow agent-shell's `agent-shell-session-strategy'.  An agent
 that does not advertise the `list' capability, or cannot `session/load',
-falls back to `new': there is nothing to choose.  One call can override
-the setting without editing it: `C-u M-x agent-org-start' forces `new',
-and `C-u C-u' forces `latest' -- reopen the chat you were last in, which
-is what makes `latest' a habit rather than a preference.
+falls back to `new': there is nothing to choose.
 
-`prompt' costs one request before a session opens, and some agents are
-slow or silent on `session/list' (Goose advertises the capability and
-never replies) — that is what `agent-org-session-list-timeout' covers."
+`latest' is the DEFAULT, on the user's order of 2026-10-13 (\"automatically
+open latest session, but will prompt like before with C-u\"): a directory you
+are working in has the chat you were just in, and going back to it is the
+answer that deserves no round trip of attention.  The keystrokes follow the
+same reading -- the gesture that spends the most patience comes first:
+`C-u M-x agent-org-start' prompts (what the default used to be), and
+`C-u C-u' forces `new', the fast path with no listing at all.  The chooser
+offers `New session' as its FIRST candidate, so a plain RET at `C-u' reaches
+the same fresh session one keystroke later.
+
+`prompt' and `latest' each cost one request before a session opens, and some
+agents are slow or silent on `session/list' (Goose advertises the capability
+and never replies) — that is what `agent-org-session-list-timeout' covers, and
+why a directory whose agent never answers should be used with `new'."
   :type '(choice (const :tag "Always start a new session" new)
                  (const :tag "Load the latest session" latest)
                  (const :tag "Prompt for a session" prompt))
@@ -147,7 +156,7 @@ to answer, on a machine that cannot spare them."
 (defcustom agent-org-session-list-timeout 20.0
   "Seconds `agent-org-start' waits for `session/list' before starting new.
 Goose answers `initialize' and `session/new' and never `session/list',
-so an unbounded wait would turn the default `prompt' strategy into a
+so an unbounded wait would turn the default `latest' strategy into a
 command that appears to hang.  When the timer fires the session opens as
 a fresh one and the echo area says why; a listing arriving afterwards is
 ignored.  nil waits forever, for an agent you trust to answer.
@@ -479,6 +488,21 @@ and the caller then shows \"unknown\"."
                    'name)
           (car (last (split-string current "/" t)))))))
 
+(defun agent-org--mode-name (modes-list current-id)
+  "The label MODES-LIST gives the mode CURRENT-ID, or CURRENT-ID itself.
+An ACP mode object is `id' plus `name' (plus `description'), exactly the
+pair a config option holds as `value' plus `name': the id is what a
+request sends back, the name is what the agent calls the mode in its own
+UI.  Qoder names its `yolo' mode \"Bypass Permissions\", and a bar that
+printed the id was quoting the wire at the user.
+Falls back to the id because `currentModeId' is allowed to point outside
+the advertised list, and a bar with no mode field reads as \"no mode\"."
+  (or (and current-id
+           (map-elt (seq-find (lambda (m) (equal (map-elt m 'id) current-id))
+                              (agent-org--wire-list modes-list))
+                    'name))
+      current-id))
+
 (defun agent-org--session-config (session)
   "Return SESSION's configOptions as last reported by the agent.
 The buffer status holds them: it is what the header line and the metadata
@@ -486,6 +510,15 @@ block are rendered from, so a second copy in the session could drift."
   (plist-get (buffer-local-value 'agent-org-buffer--status
                                  (plist-get session :buffer))
              :config))
+
+(defun agent-org--session-modes (session)
+  "Return SESSION's availableModes as last reported by the agent.
+Same reason as `agent-org--session-config': the buffer status is the one
+copy, and a `current_mode_update' carries ONLY the new id, so the name
+has to be looked up in the list that arrived with session/new."
+  (plist-get (buffer-local-value 'agent-org-buffer--status
+                                 (plist-get session :buffer))
+             :modes-list))
 
 (defun agent-org--ingest-config (buffer config)
   "Show configOptions CONFIG on BUFFER's header line and metadata.
@@ -562,9 +595,12 @@ interactive until the history has been painted."
     (when-let* ((title (and resp (map-elt resp 'title))))
       (agent-org-buffer-set-status buffer :title title))
     (when modes
-      (agent-org-buffer-set-status buffer
-        :mode (map-elt modes 'currentModeId)
-        :modes-list (agent-org--wire-list (map-elt modes 'availableModes))))
+      (let ((mode-list (agent-org--wire-list (map-elt modes 'availableModes)))
+            (mode-id (map-elt modes 'currentModeId)))
+        (agent-org-buffer-set-status buffer
+          :mode mode-id
+          :mode-name (agent-org--mode-name mode-list mode-id)
+          :modes-list mode-list)))
     (when config
       (agent-org--ingest-config buffer config))
     (agent-org-loader-finish buffer :session-id sid)
@@ -741,11 +777,15 @@ been sent yet, so the caller picks `session/new' or `session/load'."
   "Start a session with PROVIDER and open its Org chat buffer.
 When called interactively, prompt for the provider.  What \"start\"
 means is `agent-org-session-strategy''s business: with the default
-`prompt' the agent is asked what this directory already holds and you
-choose from that, or from `New session'.  One prefix argument forces
-`new' for this call, skipping the listing; two force `latest', which
-opens the most recently modified session without asking -- the same
-16-and-up reading `agent-org-resume-session' uses for its second tier."
+`latest' the directory's most recently updated session is opened without
+asking, which is the chat you were just in.
+
+The prefix arguments are the two ways out of that default, ordered by how
+much of the decision they hand back to you: one `C-u' prompts with the
+directory's sessions (`prompt' -- what the default used to be, and the
+chooser's first candidate is `New session'), and `C-u C-u' forces `new', the
+fast path that never asks the agent to list.  The 16-and-up reading is the
+one `agent-org-resume-session' already uses for its second tier."
   (interactive (list (agent-org--read-provider)))
   (let* ((session (agent-org--open-session (agent-org--provider-spec provider)))
          (buffer (plist-get session :buffer))
@@ -757,8 +797,8 @@ opens the most recently modified session without asking -- the same
          ;; directory, because by then the binding was gone
          (strategy (or (and current-prefix-arg
                             (if (>= (prefix-numeric-value current-prefix-arg) 16)
-                                'latest
-                              'new))
+                                'new
+                              'prompt))
                        agent-org-session-strategy)))
     (agent-org-loader-begin buffer)
     (agent-org--initialize session
@@ -1410,18 +1450,12 @@ and apply, never fired on the session's arrival."
       (plist-get session :replay-session-id)
       (plist-get session :replay-response))
     (when queued
-      (setf (plist-get session :pending-prompts) queued)
+      ;; Through the one writer (agent-org-queue--set): set the list and paint
+      ;; both projections of it, so a restored queue cannot be on the header
+      ;; and off the page.
+      (agent-org-queue--set session (plist-get session :buffer) queued)
       (message "[agent-org] %d queued prompt(s) reloaded from the transcript"
-               (length queued))
-      ;; Paint, do not send.  A resumed queue is a set of prompts the user
-      ;; parked before Emacs closed; on reopen they belong in the region and
-      ;; the `:QUEUE:' drawer for review, not on the wire the instant the
-      ;; session opens -- firing them spends tokens the user has not, on
-      ;; seeing the restored list, chosen to re-approve.  Refresh renders
-      ;; both projections of :pending-prompts and mirrors them to the
-      ;; transcript; the user then drains by applying the region (or the
-      ;; first real turn end does).
-      (agent-org--queue-refresh session (plist-get session :buffer)))))
+               (length queued)))))
 
 (defun agent-org--load-session (session session-id)
   "Replay SESSION-ID into SESSION's buffer with a `session/load' request.
@@ -1555,7 +1589,7 @@ saying \"stop\", and the prompts behind the cancelled turn were queued to join
 the work being stopped.  Releasing them here put a turn on the wire nobody
 asked for, and each one that answered fired the next, so one cancel emptied
 the whole queue in seconds (live bug; the user's order: \"Cancelling turn
-should never resume queue\").  `agent-org-queue-resume' (C-c C-r) is the way
+should never resume queue\").  `agent-org-queue-resume' (C-c a r) is the way
 back, and a later turn ending successfully drains FIFO as always."
   (interactive)
   (let* ((buffer (current-buffer))
@@ -1579,7 +1613,8 @@ back, and a later turn ending successfully drains FIFO as always."
     (agent-org-buffer-end-agent-turn buffer)
     ;; The note rides the Ready label by design (`:note' is the fact
     ;; that outlives the message): "Ready (turn cancelled)".
-    (agent-org-buffer-set-status buffer :state 'ready :note "turn cancelled")
+    (agent-org-buffer-set-status buffer :state 'ready
+                                 :note agent-org-buffer--cancel-note)
     ;; The box comes back by hand, because draining used to do it: with an
     ;; empty queue `agent-org--drain-queue' opens the prompt, and nothing
     ;; else on this path does.
@@ -1890,8 +1925,14 @@ kind is handled here and nothing is delegated to another handler."
              :used (map-elt update 'used) :size (map-elt update 'size))
            (agent-org-buffer-refresh-metadata buffer))
           ("current_mode_update"
-           (agent-org-buffer-set-status buffer
-             :mode (map-elt update 'currentModeId))
+           ;; the notification carries ONLY the id: the name comes from the
+           ;; list session/new advertised, so the bar keeps saying what the
+           ;; agent calls the mode ("Bypass Permissions"), not the wire word.
+           (let ((mode-id (map-elt update 'currentModeId)))
+             (agent-org-buffer-set-status buffer
+               :mode mode-id
+               :mode-name (agent-org--mode-name
+                           (agent-org--session-modes session) mode-id)))
            (agent-org-buffer-refresh-metadata buffer))
           ("config_option_update"
            (let ((config (agent-org--wire-list (map-elt update 'configOptions))))
@@ -2037,20 +2078,27 @@ fact is absent rather than `nil'."
                               " ")))
     (and (not (string-empty-p flat)) flat)))
 
-(defun agent-org--context-line (label id &optional name)
-  "One \"label: NAME (ID)\" fact, or \"label: ID\" when nothing names it.
-Both spellings go because they answer different questions — NAME is what a
-person and an agent read (\"MiniMax M3\"), ID is what a request or a trailer
-needs (\"minimax/MiniMax-M3\") — and neither derives from the other.  An
-unnamed or already-named-by-its-id value writes the value once, so no line
-reads `model: QModel (QModel)'."
+(defun agent-org--context-value (id &optional name)
+  "The `NAME (ID)' spelling of one fact, or nil when nothing is known.
+This is the shape a person and an agent read (NAME) with the thing a request
+or a commit trailer needs (ID) beside it, and neither derives from the other.
+An unnamed value, or one whose name IS its id, writes the value once, so no
+line reads `model: QModel (QModel)'."
   (let* ((id (agent-org--context-field id))
          (flat (or (agent-org--context-field name) id)))
     (when flat
-      (format "%s: %s%s" label flat
-              (if (and id (not (string= flat id)))
-                  (format " (%s)" id)
-                "")))))
+      (if (and id (not (string= flat id)))
+          (format "%s (%s)" flat id)
+        flat))))
+
+(defun agent-org--context-line (label id &optional name)
+  "One \"label: NAME (ID)\" fact, or \"label: ID\" when nothing names it.
+The value half is `agent-org--context-value', so the label is the only thing
+this adds -- which is what lets the model-change alert name two models in
+exactly the spelling the fact line uses."
+  (when-let* ((value (agent-org--context-value id name)))
+    (format "%s: %s" label value)))
+
 
 (defun agent-org--context-facts (session buffer)
   "The fact lines the agent is told about SESSION, as a list.
@@ -2067,31 +2115,100 @@ SESSION, because they identify the connection rather than this buffer."
                 (list (agent-org--context-line "agent"
                                                (plist-get session :name)
                                                (plist-get status :provider))
-                      (agent-org--context-line "model"
-                                               (plist-get status :model)
-                                               (plist-get status :model-name))
+                      (agent-org--model-fact status)
                       (agent-org--context-line "session"
                                                (plist-get session
                                                           :session-id))))))
 
+(defun agent-org--model-pair (status)
+  "This turn's model as `(ID . NAME)' from BUFFER's STATUS, or nil.
+Either half is enough to know a model: goose spells id and label with the same
+word and a harness can report one without the other, so a pair is built from
+whatever the status holds.  nil is reserved for \"nothing known\", which is
+what keeps the alert below from comparing two ignorances and calling it a
+change.  Both halves go through `agent-org--context-field' so a label carrying
+a newline cannot split the block."
+  (let ((id (agent-org--context-field (plist-get status :model)))
+        (name (agent-org--context-field (plist-get status :model-name))))
+    (and (or id name) (cons id name))))
+
+(defun agent-org--model-fact (status)
+  "The `model: NAME (ID)' line for STATUS, or nil when no model is known."
+  (when-let* ((pair (agent-org--model-pair status)))
+    (agent-org--context-line "model" (car pair) (cdr pair))))
+
+(defun agent-org--model-change-fact (previous current)
+  "The alert line naming PREVIOUS and CURRENT, or nil when nothing changed.
+CURRENT/PREVIOUS are `(ID . NAME)' pairs as `agent-org--model-pair' builds
+them.  The condition is a change between two KNOWN models: a first turn has no
+previous, and a turn where the agent stopped reporting one has no current, so
+neither announces anything.  Compared on the ID when both turns have one,
+because the id is what the wire carries and a harness that renames a model's
+label mid-session has not changed the model."
+  (when (and previous current)
+    (let ((changed (if (and (car previous) (car current))
+                       (not (string= (car previous) (car current)))
+                     (not (string= (agent-org--context-value (car previous)
+                                                             (cdr previous))
+                                   (agent-org--context-value (car current)
+                                                             (cdr current)))))))
+      (when changed
+        (format (concat "model change: this turn runs on %s; the turn before ran on %s."
+                        " The earlier turns of this session are that model's work, not yours"
+                        " — do not describe them as your own or assume your behaviour carried over.")
+                (agent-org--context-value (car current) (cdr current))
+                (agent-org--context-value (car previous) (cdr previous)))))))
+
+(defvar-local agent-org--last-context-model nil
+  "The model the last context block announced, as `(ID . NAME)'.
+The memory the model-change alert compares this turn against.  It rides the
+BUFFER rather than the session plist for two reasons: the fact is about a chat
+(a resumed session in a new buffer has said nothing yet, and should not alert),
+and a plist key that does not exist yet cannot be written with
+`setf (plist-get session :new-key)' — that appends to the local copy of the
+plist and the caller never sees it, which is how the first version of this
+silently never armed an alert.  nil means \"nothing announced yet\", which is
+deliberately not the same as a model that changed.")
+
 (defun agent-org--session-context-text (session buffer)
   "The <agent-org-context> block for one turn of SESSION, as a string.
-Built PER TURN, because the middle fact changes mid-session: `C-c C-m'
+Built PER TURN, because the middle fact changes mid-session: `C-c a m'
 between two questions is a normal thing to do, and a block computed at
 session start would tell the agent a model that stopped being true turn one
 ago — worse than saying nothing.
+A turn whose model differs from the last turn's also gets
+`agent-org--model-change-fact', because a model that inherits a transcript it
+did not write will otherwise answer \"I did that\" about another model's work
+— and it has no way to know the client switched under it.  The memory is
+`agent-org--last-context-model', so the alert rides ONE turn per change: the
+turn after a switch runs on the same model as the alerted turn and says
+nothing.  A block built for a request that then failed to reach the wire is
+recorded all the same — one writer, and the retry still names the model it is
+actually running, it just misses its one alert.
 The delimiters are the point: they mark the text as the client talking about
 the connection, not the person asking for something, so an agent never
 quotes the block as the request or treats it as an instruction to act on."
-  (let ((facts (agent-org--context-facts session buffer)))
+  (let* ((status (buffer-local-value 'agent-org-buffer--status buffer))
+         (current (agent-org--model-pair status))
+         (previous (buffer-local-value 'agent-org--last-context-model buffer))
+         (facts (agent-org--context-facts session buffer))
+         (alert (agent-org--model-change-fact previous current)))
+    (when current
+      (with-current-buffer buffer
+        (setq agent-org--last-context-model current)))
     (concat "<agent-org-context>\n"
             "Client metadata about this connection,"
             " not part of the user's request.\n"
-            (mapconcat #'identity facts "\n")
+            ;; LAST, after the three facts: it is commentary on the model line,
+            ;; and putting it among them would break the fixed order that is
+            ;; quoted and pinned.
+            (mapconcat #'identity (if alert (append facts (list alert)) facts)
+                       "\n")
             ;; no blank line when a host gives no facts at all: a gap inside
             ;; a fixed-format block reads as a field that failed to print
             (and facts "\n")
             "</agent-org-context>\n")))
+
 
 (defun agent-org--prompt-blocks (session buffer text)
   "The content blocks for TEXT: the user's words, then the client's facts.
@@ -2180,16 +2297,14 @@ while the queue is non-empty, the one write lite mode does not skip (see
 (defun agent-org--queue-note (buffer key text)
   "Record TEXT in BUFFER's pending-change log under KEY, newest first.
 The reconciliation the editor used to keep in its own buffer
-(`agent-org-buffer--queue-sent', `agent-org-buffer--queue-added'), kept here
-instead because
-the chat buffer is now the editing surface.  A queue that changes under the
-user's hands -- the turn ends and the head goes out, a prompt typed into the
-box joins the back -- must not be lost to a repaint, and must not be re-sent
-either: apply reads these and drops the sent one by text, then puts the added
-one back at the end."
+(`agent-org-buffer--queue-sent'), kept here because
+the chat buffer is now the editing surface.  Only ONE log survives now that the
+region shows every arrival: the prompt the agent SENT while the user was editing
+his copy of it, which the apply drops by text.  What ARRIVES is no longer noted
+-- it is on the page, so the page is the list."
   (with-current-buffer buffer
-    ;; `make-local-variable' FIRST: the log's two variables are `defvar-local'
-    ;; in agent-org-buffer.el and start out unbound per buffer, so a plain
+    ;; `make-local-variable' FIRST: the log's variable is `defvar-local' in
+    ;; agent-org-buffer.el and starts out unbound per buffer, so a plain
     ;; `(push text (symbol-value key))' would read the GLOBAL value (nil),
     ;; cons onto it and throw the result away -- the note would silently not
     ;; stick, and the prompt it records would go missing on the next apply.
@@ -2198,18 +2313,27 @@ one back at the end."
 (defun agent-org--queue-forget (buffer)
   "Clear BUFFER's pending-change log: nothing was reconciled, so nothing to keep."
   (with-current-buffer buffer
-    (setq-local agent-org-buffer--queue-sent nil
-                agent-org-buffer--queue-added nil)))
+    (setq-local agent-org-buffer--queue-sent nil)))
+
+(defun agent-org-queue--set (session buffer prompts)
+  "Make PROMPTS this session's queue, and show them in BUFFER.
+THE one writer of `:pending-prompts': enqueue, remove, apply and every verb
+ported from agent-shell go through here, because a queue with two writers is a
+queue whose header count and visible entries can disagree -- and that
+disagreement was the live bug (\"Only one shows, but the header line says 3
+queued\").  One call mutates the list and repaints the entries, the header and
+the transcript, so no verb can update one projection and forget another."
+  (setf (plist-get session :pending-prompts) prompts)
+  (agent-org--queue-refresh session buffer))
 
 (defun agent-org--queue-enqueue (session buffer text)
   "Append TEXT to SESSION's pending queue and show the depth in BUFFER.
-The editor, if one is open, is told too: it cannot see this prompt, and an
-editor that overwrites the session's queue with its own contents would
-silently drop it (see `agent-org-buffer--queue-added')."
-  (setf (plist-get session :pending-prompts)
-        (append (plist-get session :pending-prompts) (list text)))
-  (agent-org--queue-refresh session buffer)
-  (agent-org--queue-note buffer 'agent-org-buffer--queue-added text)
+Everything the user sees comes out of `agent-org-queue--set': the chat's own
+region is the editor, and the refresh it runs either repaints the entry or, when
+the user has the region under his hands, APPENDS the arrival so his own words
+are never rewritten (`agent-org-buffer-refresh-queue')."
+  (agent-org-queue--set session buffer
+                        (append (plist-get session :pending-prompts) (list text)))
   (message "[agent-org] queued prompt (%d waiting)"
            (length (plist-get session :pending-prompts))))
 
@@ -2224,21 +2348,20 @@ whatever draft it holds stay untouched."
   (let ((prompts (plist-get session :pending-prompts)))
     (if (null prompts)
         (agent-org-buffer-insert-prompt buffer)
-      (setf (plist-get session :pending-prompts) (cdr prompts))
       (agent-org-buffer-begin-exchange buffer (car prompts))
-      ;; Refresh AFTER the heading is in the buffer: the one write that
-      ;; drops the prompt from the transcript's queue block is then also
-      ;; the write that puts it in the conversation, so no mirror on disk
-      ;; is ever without it.  Getting this backwards makes a crash between
-      ;; the two lose a prompt the user already paid for.
+      ;; The prompt is noted BEFORE the write, so that a region the user has
+      ;; already edited keeps the line while the session has dropped it:
+      ;; `agent-org-queue-apply' then removes it by text.  By POSITION it would
+      ;; be wrong -- the user may have moved that entry anywhere while the agent
+      ;; was answering.
       ;;
-      ;; The prompt is ALSO noted before the refresh, so that a region the
-      ;; user has already edited keeps the line while the session has
-      ;; dropped it: `agent-org-queue-apply' then removes it by text.  By
-      ;; POSITION it would be wrong -- the user may have moved that entry
-      ;; anywhere while the agent was answering.
+      ;; The heading is in the buffer before `agent-org-queue--set' runs, which
+      ;; is what keeps the transcript honest: the one write that drops this
+      ;; prompt from the file's queue block is also the write that puts it in the
+      ;; conversation, so no mirror on disk is ever without it.  Getting the
+      ;; order backwards loses a prompt the user already paid for.
       (agent-org--queue-note buffer 'agent-org-buffer--queue-sent (car prompts))
-      (agent-org--queue-refresh session buffer)
+      (agent-org-queue--set session buffer (cdr prompts))
       (agent-org--send-turn session buffer (car prompts)))))
 
 (defun agent-org--sync-title (session)
@@ -2355,9 +2478,9 @@ in the user's type-ahead box across the turn boundary."
 
 ;;;###autoload
 (defun agent-org-send ()
-  "Send what is typed in the live `* User' box to the agent.
-Idle, the draft becomes a frozen User heading above the box and goes on
-the wire; the box stays open, so the next prompt can be typed right away.
+  "Send what is typed in the live `* PROMPT' box to the agent.
+Idle, the draft becomes a frozen exchange heading above the box and goes
+on the wire; the box stays open, so the next prompt can be typed right away.
 While a turn streams the same act merely queues the draft -- see
 `agent-org-queue-when-busy' -- and it goes out, FIFO, when the running
 turn ends successfully.  This type-ahead model is agent-shell's: the
@@ -2465,32 +2588,98 @@ Newest first; `agent-org-queue-apply' reads it reversed.  Recorded by
 `agent-org--queue-note' at the drain, and matched BY TEXT on apply: the drain
 takes the front of the SESSION's list, and the user may have moved that entry
 anywhere in the region, so dropping by position would resend a prompt the agent
-already answered and lose an edited one.")
+already answered and lose an edited one.
 
-(defvar-local agent-org-buffer--queue-added nil
-  "Prompts QUEUED into this buffer while its queue was being edited.
-Newest first, for the same reason as `agent-org-buffer--queue-sent'.  These go
-BACK at the end on apply, in arrival order: the region does not show them, so
-it must not be allowed to overwrite them away.")
+This is the ONLY note the queue keeps: the other half of the old pair recorded
+prompts that ARRIVED while the region was dirty because they were invisible
+until the apply, and the region now shows every arrival the moment it happens.")
 
-(defun agent-org--queue-drop-sent (entries sent)
-  "ENTRIES with one occurrence removed for each text in SENT.
-Matched by TEXT, and only the first occurrence of each: two entries with the
-same words are two prompts, and the agent taking one leaves the other waiting.
-Position would be easier and would be wrong -- see
-`agent-org-buffer--queue-sent'."
-  (let ((out (copy-sequence entries)))
-    (dolist (text sent out)
-      (let ((at (seq-position out text #'equal)))
-        (when at (setq out (seq-remove-at-position out at)))))))
+;;;###autoload
+(defun agent-org-queue-enqueue (text)
+  "Queue TEXT for this session without leaving where you are.
+Port of `agent-shell-prompt-queue' (agent-shell-prompt-queue.el:346), and it
+copies that command's one surprising decision: it ALWAYS queues, idle or not.
+agent-shell queues because the verb must not change its mind with the agent's
+mood, and the same reason is stronger here -- `agent-org-send' is the verb that
+asks for an answer now, and a second one that sometimes sends and sometimes
+waits would be a coin toss in muscle memory.  Send it now with
+`agent-org-queue-resume' (C-c a r)."
+  (interactive "sQueue prompt for this session: ")
+  (let* ((buffer (current-buffer))
+         (session (agent-org--session-for-buffer buffer)))
+    (unless session
+      (user-error "Not an agent-org chat buffer"))
+    (if (string-blank-p text)
+        (user-error "Nothing to queue")
+      (agent-org--queue-enqueue session buffer (string-trim text)))))
+
+;;;###autoload
+(defun agent-org-queue-remove (&optional which)
+  "Drop one waiting prompt by the NUMBER it is shown with, or all of them.
+Port of `agent-shell-prompt-queue-remove' (agent-shell-prompt-queue.el:385) down
+to its two courtesies: the picker lists `1: <prompt>' in queue order with a
+`Remove all' choice, and either answer asks before deleting -- a queued prompt
+is text somebody typed, and a stray return on \"all\" is the loss worth making
+impossible.
+
+WHICH nil reads the number from the picker; a string naming a number takes it
+directly, and `all' drops the whole queue.  Both halves of the queue move
+together: the entry is killed from the chat's region
+(`agent-org-buffer-queue-kill-text') AND taken out of the session's list
+(`agent-org-queue--set'), because a region the user has edited is not repainted
+from the list, so a removal that touched only the list would leave the prompt
+on the page and put it back on the queue at the next apply."
+  (interactive)
+  (let* ((buffer (current-buffer))
+         (session (agent-org--session-for-buffer buffer))
+         (prompts (and session (plist-get session :pending-prompts))))
+    (unless session
+      (user-error "Not an agent-org chat buffer"))
+    (unless prompts
+      (user-error "Nothing is waiting in this queue"))
+    (let* ((all (format "Remove all (%d)" (length prompts)))
+           (choices (append (mapcar (lambda (n) (format "%d" n))
+                                    (number-sequence 1 (length prompts)))
+                            (list all)))
+           (which (or which
+                      (completing-read
+                       (format "Remove which queued prompt (1-%d, or all): "
+                               (length prompts))
+                       choices nil t)))
+           ;; the picker's own label, and the word a caller passes directly.
+           ;; `string-to-number' answers 0 for either, and `(1- 0)' is the
+           ;; nth that does not exist.
+           (whole (or (string= which all) (equal which "all")))
+           (index (and (not whole) (string-to-number which)))
+           (victim (and index (nth (1- index) prompts)))
+           (count (if whole (length prompts) 1)))
+      (unless (or whole victim)
+        (user-error "No queued prompt numbered %s" which))
+      (unless (y-or-n-p (if whole
+                            (format "Remove all %d queued prompts? " count)
+                          (format "Remove queued prompt %s? " victim)))
+        (user-error "Removed nothing"))
+      (if whole
+          (progn
+            (with-current-buffer buffer
+              (agent-org-buffer--queue-paint (agent-org-buffer--queue-region) nil))
+            (agent-org-queue--set session buffer nil))
+        (agent-org-buffer-queue-kill-text buffer victim)
+        ;; ONE occurrence, by text: `remove' would delete every copy, and two
+        ;; identical prompts in a queue are two prompts that the picker numbered
+        ;; separately.
+        (agent-org-queue--set session buffer
+                              (agent-org-buffer--queue-minus prompts (list victim))))
+      (message "[agent-org] removed %d queued prompt(s); %d waiting"
+               count (length (plist-get session :pending-prompts))))))
 
 ;;;###autoload
 (defun agent-org-queue-edit ()
   "Go to this session's queued prompts, at the bottom of the chat.
-The entries are `* TODO' headings above the live `* User' box: type
-into them, add more with `C-c C-a', kill one with `C-c C-d', reorder with
+The entries are `* NEXT' headings above the live `* PROMPT' box: type
+into them, add more with `C-c a a', kill one with `C-c a d', reorder with
 `M-UP'/`M-DOWN', and put the result on the wire with `M-x agent-org-queue-apply'
-(bound to `C-c C-a' nowhere on purpose: in a chat, `C-c C-a' is the user's own
+(bound to a key nowhere on purpose: in a chat, `C-c a a' is the user's own
 \"add one here\").
 
 Nothing is written to the session until the apply.  That is the whole contract
@@ -2499,7 +2688,7 @@ and the reason the region is never repainted over an edit
 change under his hands, and a transcript must never claim a prompt the agent
 was not sent.
 
-An EMPTY queue is not an error and not a no-op either: one blank `* TODO' entry
+An EMPTY queue is not an error and not a no-op either: one blank `* NEXT' entry
 is created and point lands in it, because \"add a prompt to the queue\" and
 \"write down the next thing to ask\" are the same gesture here, and a blank
 entry is dropped on apply so composing one cannot send a blank."
@@ -2526,12 +2715,13 @@ entry is dropped on apply so composing one cannot send a blank."
 ;;;###autoload
 (defun agent-org-queue-apply ()
   "Make the queue entries in this buffer the session's queue, everywhere.
-Reconciliation, in this order: prompts the agent sent while you were editing are
-removed BY TEXT (`agent-org--queue-drop-sent'), then prompts that arrived while
-you were editing go back on the end, in arrival order.  So the region is never
-the sole writer of a list it has not seen -- and an entry you edited AFTER it
-went out is the one case that does get sent again, because the agent never saw
-those words.
+One reconciliation: a prompt the agent SENT while you were editing is removed BY
+TEXT (`agent-org-buffer--queue-minus'), because the drain took the front of the
+SESSION's list and you may have moved that entry anywhere.  Nothing else is
+carried -- an arrival is on the page the moment it happens
+(`agent-org-buffer-refresh-queue'), so the region is the whole queue and
+there is no invisible backlog to merge.  An entry you edited AFTER it went out
+is the one case that gets sent again, because the agent never saw those words.
 
 The order in the region IS the send order, so an `M-UP'/`M-DOWN' in here
 re-orders the queue: that is the feature the separate editor existed for, and
@@ -2541,14 +2731,47 @@ it is now the region's own property."
          (session (agent-org--session-for-buffer buffer)))
     (unless session
       (user-error "Not an agent-org chat buffer"))
-    (let ((result (append (agent-org--queue-drop-sent
-                           (agent-org-buffer-queue-parse buffer)
-                           (reverse agent-org-buffer--queue-sent))
-                          (reverse agent-org-buffer--queue-added))))
+    (let ((result (agent-org-buffer--queue-minus
+                   (agent-org-buffer-queue-parse buffer)
+                   (reverse agent-org-buffer--queue-sent))))
       (agent-org--queue-forget buffer)
-      (setf (plist-get session :pending-prompts) result)
-      (agent-org--queue-refresh session buffer)
+      (agent-org-queue--set session buffer result)
       (message "[agent-org] queue applied: %d waiting" (length result)))))
+
+;;;###autoload
+(defun agent-org-queue-list ()
+  "Show this session's waiting prompts, numbered, in the echo area.
+Port of agent-shell's queue display (agent-shell-prompt-queue.el:99 and the
+echo-area table at :128), as a command rather than a fragment some other
+command prints.  It exists because the entries live at the BOTTOM of a long
+chat: \"what is still queued?\" should cost one keystroke, not an
+end-of-buffer.  The numbers are the ones `agent-org-queue-remove' asks for, and
+one line each -- agent-shell truncates its listing at 80 columns for exactly
+this reason, and a queued prompt is often a whole paragraph.
+
+Empty is a message, not an error: this reports, it does not act."
+  (interactive)
+  (let* ((buffer (current-buffer))
+         (session (agent-org--session-for-buffer buffer))
+         (prompts (and session (plist-get session :pending-prompts))))
+    (unless session
+      (user-error "Not an agent-org chat buffer"))
+    (if (null prompts)
+        (message "[agent-org] nothing queued")
+      (let ((n 0))
+        (message "[agent-org] %d queued:\n%s"
+                 (length prompts)
+                 (mapconcat (lambda (text)
+                              (cl-incf n)
+                              (format "  %d: %s" n
+                                      ;; one line each: a queued prompt is often
+                                      ;; a whole paragraph and the echo area is
+                                      ;; one line (agent-shell truncates at 80
+                                      ;; columns for the same reason)
+                                      (truncate-string-to-width
+                                       (car (split-string text "\n" t)) 70 nil nil "…")))
+                            prompts
+                            "\n"))))))
 
 ;;;###autoload
 (defun agent-org-queue-resume ()
@@ -2574,6 +2797,110 @@ though: the person calling this believes there is a prompt in it."
         (message "[agent-org] agent is busy — the queue goes out when this turn ends")
       (agent-org--drain-queue session buffer))))
 
+;;;###autoload
+(defun agent-org-queue-restore ()
+  "Rebuild this chat's queue region from the queue the session is running.
+The way out of a messed-up page.  The edit guard
+(`agent-org-buffer--queue-shown') is what makes editing the entries safe: a
+refresh never repaints text the user touched, because a repaint mid-word
+would delete a half-typed prompt.  The guard is also how a STALE entry
+survives -- delete or re-order by hand and the region keeps advertising a
+queue the session is not running, while the header line counts something
+else, and there was no way back except typing every prompt again.
+
+So this is the ONE path allowed to overrule the guard, and it is a command
+rather than something that happens to his text: the region is discarded and
+`:pending-prompts' is rendered from the top, NEXT/WAIT keywords and all.
+The direction matters and is the whole design: restore makes the PAGE agree
+with the QUEUE.  When he means the other one -- his edits are the queue he
+wants -- that is `agent-org-queue-apply', and the killed region is on the
+kill ring meanwhile, so a restore he regrets is `C-y' away.
+
+The transcript is re-mirrored here rather than left for a turn boundary: the
+file is what a RESUME reads, and leaving the stale words in it would put
+them back on the page next session."
+  (interactive)
+  (let* ((buffer (current-buffer))
+         (session (agent-org--session-for-buffer buffer)))
+    (unless session
+      (user-error "Not an agent-org chat buffer"))
+    (unless (agent-org-buffer-queue-p buffer)
+      (user-error "This chat has no queue region to restore"))
+    (agent-org-buffer-queue-restore buffer (plist-get session :pending-prompts))
+    (agent-org-buffer-transcribe buffer)
+    (message "[agent-org] queue restored from the session: %d waiting"
+             (length (plist-get session :pending-prompts)))))
+
+;;;###autoload
+(defun agent-org-queue-prepend (text)
+  "Queue TEXT as the NEXT prompt out, ahead of everything already waiting.
+`agent-org-queue-enqueue' puts a prompt at the BACK of the queue; this puts
+it at the FRONT, and the difference only matters once the queue is longer
+than one: the drain takes the head (`agent-org--drain-queue'), so a prompt
+that must be answered BEFORE the ones already sitting there has to be
+inserted before them rather than dragged up with `M-UP' at the bottom of a
+long chat.
+
+It queues, it does not send: the queue is the surface for \"later, in this
+order\", and `agent-org-queue-resume' (C-c a r) is the verb that means
+now.  Everything still goes through `agent-org-queue--set', the one writer
+of the list, so the entries, the header count and the transcript move
+together."
+  (interactive "sQueue prompt for this session, first: ")
+  (let* ((buffer (current-buffer))
+         (session (agent-org--session-for-buffer buffer)))
+    (unless session
+      (user-error "Not an agent-org chat buffer"))
+    (when (string-blank-p text)
+      (user-error "Nothing to queue"))
+    (agent-org-queue--set session buffer
+                          (cons (string-trim text)
+                                (plist-get session :pending-prompts)))
+    (message "[agent-org] queued first (%d waiting)"
+             (length (plist-get session :pending-prompts)))))
+
+;;;###autoload
+(defun agent-org-interrupt-and-send ()
+  "Stop the agent now and send what is in the prompt box, in one gesture.
+Idle, this is `agent-org-send'.  Busy, it cancels the running turn and then
+sends, which is the point: the thing you typed beside a running turn is the
+answer to a question the agent has not asked yet, and waiting for the drain
+means waiting out a task you have already decided to stop.
+
+Two decisions inside it, both measured against the alternative:
+
+  - the draft is taken BEFORE the cancel.  `agent-org-cancel-turn' closes
+    the turn and re-opens the live `* PROMPT' box, so reading the box
+    afterwards would read whatever it holds once the new turn is ready --
+    and an empty box raises, which is the wrong error for \"you stopped a
+    turn to send nothing\".
+  - the prompt goes out as its OWN exchange, not as a queue entry.  A
+    queued prompt waits for a turn that ends SUCCESSFULLY, and this turn is
+    being stopped precisely because it is not going to end well;
+    `agent-org-cancel-turn' also releases nothing that was queued behind it,
+    on the user's order, so an interrupting prompt that were queued here
+    would sit waiting forever.
+
+The cancelled turn keeps its heading and its CANCELLED word, and the
+interrupting prompt gets the next one; nothing on the queue moves."
+  (interactive)
+  (let* ((buffer (current-buffer))
+         (session (agent-org--session-for-buffer buffer)))
+    (unless session
+      (user-error "Not an agent-org chat buffer"))
+    (when (plist-get session :loading)
+      (user-error "Session history is still loading"))
+    (unless (plist-get session :session-id)
+      (user-error "Session not ready"))
+    ;; take-draft first, for the reason in the docstring: an empty box is a
+    ;; user-error BEFORE any cancel has gone out, so a refused interrupt leaves
+    ;; the running turn exactly as it was.
+    (let ((text (agent-org-buffer-take-draft buffer)))
+      (when (plist-get session :streaming)
+        (agent-org-cancel-turn))
+      (agent-org-buffer-begin-exchange buffer text)
+      (agent-org--send-turn session buffer text))))
+
 
 ;;;; Resource monitor
 
@@ -2595,7 +2922,7 @@ Five seconds by default because the question this answers -- which agent
 is holding the machine, and how much of it -- does not change in between,
 and because a monitor that wakes Emacs ten times a second to redraw the
 same four numbers is the load it is supposed to be reporting.  Nil or zero
-turns auto-refresh off; `agent-org-resource-refresh' (C-c C-c in the
+turns auto-refresh off; `agent-org-resource-refresh' (C-c a g in the
 monitor) still redraws on demand.
 
 The timer only fires while the buffer is on display: an undisplayed monitor
@@ -2892,15 +3219,30 @@ machine table's totals disagree with the rows beside them."
       rows)
      "\n")))
 
+(defun agent-org--build-resource-monitor-map (map)
+  "Fill MAP with the resource monitor's bindings, and return it.
+Fills rather than returns a fresh map for the reason
+`agent-org-buffer--build-mode-map' documents: a hot load must reach the monitor
+buffer that is already open, and `define-minor-mode' put the keymap OBJECT it
+activated on into `minor-mode-map-alist'.  One keymap, re-filled in place."
+  (define-key map (kbd "C-c a g") #'agent-org-resource-refresh)
+  (define-key map (kbd "q") #'quit-window)
+  map)
+
 (defvar agent-org-resource-monitor-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c C-c") #'agent-org-resource-refresh)
-    (define-key map (kbd "q") #'quit-window)
-    map)
+  (agent-org--build-resource-monitor-map (make-sparse-keymap))
   "Keymap for the resource monitor.
-`C-c C-c' refreshes, as `C-c C-c' sends in a chat: it is the act of this
-buffer.  `q' closes it, because a monitor left open behind a real
-conversation is a window somebody has to remember to close.")
+The one keymap object this package fills at load; see
+`agent-org--build-resource-monitor-map' for why that matters.
+`C-c a g' refreshes -- the same free prefix a chat uses, because the monitor
+is an Org buffer too and `C-c C-c' there is `org-ctrl-c-ctrl-c', which a table
+buffer needs for nothing but has every right to keep.  `q' closes it, because a
+monitor left open behind a real conversation is a window somebody has to
+remember to close, and `q' inserts nothing in a read-only buffer anyway.")
+
+(progn
+  (setcdr agent-org-resource-monitor-map nil)
+  (agent-org--build-resource-monitor-map agent-org-resource-monitor-map))
 
 (defvar-local agent-org--resource-scope nil
   "The sessions this monitor buffer is showing.
@@ -2914,7 +3256,7 @@ opens or dies shows up on the next refresh.")
 (define-minor-mode agent-org-resource-monitor-mode
   "Minor mode for the `agent-org' resource monitor buffer.
 Keys:
-  C-c C-c  Redraw the tables now
+  C-c a g  Redraw the tables now
   q        Close the monitor
 A MINOR mode over Org rather than a major one, because the monitor is an Org
 document and folding, alignment and `TAB' must keep working in it: a major
@@ -3008,7 +3350,7 @@ the line -- hence `beginning-of-line' before the delete, the same trap
 ;;;###autoload
 (defun agent-org-resource-refresh ()
   "Redraw the resource monitor now.
-C-c C-c in the monitor, and the path `agent-org-resource-monitor' itself
+C-c a g in the monitor, and the path `agent-org-resource-monitor' itself
 takes when it is displayed: a hidden monitor has nothing to show anybody, so
 the timer skips it and this command is how it catches up when it comes back.
 A no-op when there is no monitor buffer yet, because \"refresh\" on a monitor
@@ -3261,6 +3603,113 @@ Not Org's `0:13' clock format, which is minute-granular by design and would
 render two 40-second answers as `0:01' -- the seconds are the whole point of
 this column, and `format-seconds' gives them without a hand-rolled division."
   (format-seconds "%h:%.2m:%.2s" (max 0 seconds)))
+
+(defcustom agent-org-response-error-hook nil
+  "Hook run when a response from the agent finishes with an error.
+Each function is called with three arguments: BUFFER, SESSION, and MESSAGE
+(the error message text).  This is run after the buffer state is updated to
+error and the prompt box is re-inserted, but before the transcript is
+written.  Use this for logging, notifications, or automated recovery."
+  :type 'hook
+  :group 'agent-org)
+
+(defcustom agent-org-response-finished-hook nil
+  "Hook run when a response from the agent finishes successfully.
+Each function is called with two arguments: BUFFER and SESSION.  This is
+run after the buffer state is updated to ready, the queue is drained, and
+the transcript is written."
+  :type 'hook
+  :group 'agent-org)
+
+(defcustom agent-org-auto-continue-mode nil
+  "When non-nil, automatically send a continuation prompt on response error.
+The prompt text is \"Continue. An error interrupted you.\" and it is sent
+as a new turn (not queued).  This mode is buffer-local and can be toggled
+with `agent-org-auto-continue-mode'.  For a global default, customize the
+variable before opening chats."
+  :type 'boolean
+  :group 'agent-org)
+
+(defcustom agent-org-auto-continue-prompt "Continue. An error interrupted you."
+  "The prompt text sent automatically when `agent-org-auto-continue-mode'
+is non-nil and a response ends with an error."
+  :type 'string
+  :group 'agent-org)
+
+(defun agent-org--run-response-error-hook (buffer session message)
+  "Run `agent-org-response-error-hook' with BUFFER, SESSION, MESSAGE."
+  (run-hook-with-args 'agent-org-response-error-hook buffer session message))
+
+(defun agent-org--run-response-finished-hook (buffer session)
+  "Run `agent-org-response-finished-hook' with BUFFER, SESSION."
+  (run-hook-with-args 'agent-org-response-finished-hook buffer session))
+
+(defun agent-org-send-prompt-with-session (prompt session)
+  "Send PROMPT to the agent in SESSION.
+SESSION must be a session alist from `agent-org--session-for-buffer' or
+returned by `agent-org--find-session-by-id'.  If SESSION has an active
+streaming turn, the prompt is queued (if `agent-org-queue-when-busy' is
+non-nil) or an error is signaled.  Otherwise the prompt is sent immediately
+as a new turn.  Returns the turn number if sent, nil if queued."
+  (let ((buffer (plist-get session :buffer))
+        (client (plist-get session :client))
+        (sid (plist-get session :session-id)))
+    (unless (and buffer client sid)
+      (user-error "Session not ready for sending"))
+    (when (plist-get session :loading)
+      (user-error "Session history is still loading"))
+    (let ((text (string-trim prompt)))
+      (when (string-empty-p text)
+        (user-error "Empty prompt"))
+      (if (plist-get session :streaming)
+          (progn
+            (unless agent-org-queue-when-busy
+              (user-error "Agent is still responding"))
+            (agent-org--queue-enqueue session buffer text)
+            nil)
+        (let* ((turn (progn
+                       (setf (plist-get session :turn)
+                             (1+ (or (plist-get session :turn) 0)))
+                       (plist-get session :turn))))
+          (setf (plist-get session :streaming) t)
+          (agent-org-buffer-set-status buffer :state 'streaming
+            :message (agent-org--queue-message "Sending…" session))
+          (agent-org-buffer-transcribe buffer)
+          (acp-send-request
+           :client client
+           :request (acp-make-session-prompt-request
+                     :session-id sid
+                     :prompt (agent-org--prompt-blocks session buffer text))
+           :buffer buffer
+           :on-success (lambda (resp)
+                         (when (eq (plist-get session :turn) turn)
+                           (setf (plist-get session :turn) nil)
+                           (setf (plist-get session :streaming) nil)
+                           (agent-org-buffer-end-agent-turn buffer)
+                           (agent-org--record-usage buffer resp)
+                           (agent-org-buffer-set-status buffer :state 'ready)
+                           (agent-org--drain-queue session buffer)
+                           (agent-org-buffer-refresh-metadata buffer)
+                           (agent-org-buffer-transcribe buffer)
+                           (agent-org--sync-title session)
+                           (agent-org--run-response-finished-hook buffer session)))
+           :on-failure (lambda (_err msg)
+                         (when (eq (plist-get session :turn) turn)
+                           (setf (plist-get session :turn) nil)
+                           (setf (plist-get session :streaming) nil)
+                           (agent-org-buffer-end-agent-turn buffer)
+                           (agent-org-buffer-set-status
+                            buffer :state 'error
+                            :message (format "prompt failed: %s"
+                                             (agent-org--failure-text msg)))
+                           (agent-org-buffer-insert-prompt buffer)
+                           (agent-org-buffer-transcribe buffer)
+                           (agent-org--run-response-error-hook buffer session msg)
+                           (when (and (buffer-local-value 'agent-org-auto-continue-mode buffer)
+                                      (not (string-blank-p agent-org-auto-continue-prompt)))
+                             (agent-org-send-prompt-with-session
+                              agent-org-auto-continue-prompt session)))))
+          turn)))))
 
 (provide 'agent-org)
 ;;; agent-org.el ends here
