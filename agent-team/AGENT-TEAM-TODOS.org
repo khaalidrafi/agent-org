@@ -1,6 +1,8 @@
 #+TITLE: AGENT-TEAM-TODOS.org — team board (single source of truth)
 #+TODO: TODO PROGRESS BLOCKED REVIEW | DONE CANCELLED DEFERRED
 * Board
+** DONE DISPATCH #2 staffing — ai/staffing
+   members carry duties + rank + evidence; Founder share sent
 * Org cheat sheet
   - PROGRESS + CLOCK start; notes in :LOGBOOK:
   - BLOCKED + reason; :OWN: = owner ruling

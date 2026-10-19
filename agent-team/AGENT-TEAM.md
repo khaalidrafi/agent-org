@@ -23,11 +23,16 @@ on the clock) and mirroring every session to a transcript Org file.
 - Existing code and conventions outrank this manual; the team layer wraps
   the project, never rewrites it.
 
+
 * ROLE SCOPES
 
 - Director of Engineering — mission, priorities, owner interface.
 - Engineering Manager — dispatch, verification, team files, roster.
-- Implementer — agent-org application code and its ERT tests.
+- Implementer (features) — agent-org application code and its ERT tests;
+  Claude Opus 4.7 owns core buffer/session features, Qwen3.8-Flash owns
+  providers and prompt-queue mechanics (see AGENT-TEAM-MEMBERS.org).
+- Scout — web research with citations; returns findings, never writes repo
+  files.
 
 * CONVENTIONS
 

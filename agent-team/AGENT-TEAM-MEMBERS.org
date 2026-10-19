@@ -1,14 +1,61 @@
 #+TITLE: AGENT-TEAM-MEMBERS.org — ranked members, ordered by roles
 #+ROSTER: API roster authority = GET /v1/models on the gateway
-* Engineering Manager — Kimi-K2.6 @ kimi.ai
-  - :last-dispatch: 1
-  - owns: dispatch, verification, team files, roster
-  - rank: 1 — EM by appointment (DISPATCH #1); org+dispatch work, no app-code writes
+#+ROSTER_STATUS: gateway URL not in dispatch; 8 candidate hosts DNS-fail 2026-10-19;
+  bodies below are provisional until GET /v1/models confirms them
+
 * Director of Engineering — Kimi-K2.6 @ kimi.ai
-  - :last-dispatch: 1
-  - owns: mission, priorities, owner interface
-  - rank: 1 — directs, does not code; same model, distinct seat
-* Implementer (elisp/features) — Qwen3.8-Flash @ qoder.com
+  - :last-dispatch: 2
+  - duties: owns mission and priorities; writes dispatches; rules on BLOCKED
+    (:OWN:); the owner interface; approves merges to the default branch
+  - rank: strategy/planning #1 (appointment, DISPATCH #1); coding — not ranked,
+    does not code
+
+* Engineering Manager — Kimi-K2.6 @ kimi.ai
+  - :last-dispatch: 2
+  - duties: owns staffing + roster; dispatches work; verifies every REVIEW
+    against the repo; sole flipper of DONE on the board; keeps AGENT-TEAM
+    files true; reports PROGRESS/BLOCKED/REVIEW
+  - rank: EM/dispatch/verification #1 (appointment); research+writing #1 —
+    evidence: SWE-Bench Pro 58.6% (beats GPT-5.4 57.7, Opus 4.6 53.4),
+    HLE w/tools 54.0% leads frontier, Terminal-Bench 2.0 66.7%
+    (https://www.kimi.ai/blog/kimi-k2-6 ;
+    https://deepinfra.com/blog/kimi-k2-6-api-benchmarks-latency-throughput-cost) ;
+    known limit: slower, needs a tight harness (HN practitioner consensus,
+    https://news.ycombinator.com/item?id=47993235)
+
+* Implementer (features) — Claude Opus 4.7 @ anthropic
   - :last-dispatch: 0
-  - owns: agent-org application code, ERT tests
-  - rank: 2 — evidence: commits 041196a (Cline provider), 39dbb67 (resume queue), 1d862c2 (goose menu), 60b335b (clock-report fix), c4a4850 (review-teach arc), all with tests; provisional until GET /v1/models confirms
+  - duties: owns agent-org application code — new features in
+    agent-org-buffer.el / agent-org.el / agent-org-review-teach.el with ERT
+    tests in tests/; keeps CONVENTIONS.md rules when rendering Org
+  - rank: coding #1 on benchmarks — evidence: WebDev Arena top cluster
+    (claude-opus-4-7-thinking #1, 1567 Elo; opus-4-7 #2)
+    (https://www.propelcode.ai/blog/lm-arena-coding-leaderboard-insights-for-developers) ;
+    SWE-Bench Verified 87.6% — public leader
+    (https://www.truefoundry.com/blog/kimi-k2-6-the-open-source-coding-giant-thats-reshaping-agentic-ai) ;
+    GDPval-AA knowledge-work leader (Opus 5, 1862)
+    (https://benchlm.ai/benchmarks/gdpvalaa) ; INTERN for this repo until the
+    gateway roster confirms a body AND one intern round (5 real tasks) passes
+    — benchmark != track record here
+
+* Implementer (features) — Qwen3.8-Flash @ qoder.com
+  - :last-dispatch: 0
+  - duties: owns provider integrations (agent-org-providers.el: goose, cline,
+    copilot, cursor, codebuddy), prompt-queue mechanics, and small fixes;
+    first pick for cheap high-volume turns
+  - rank: coding #2 (proven-performance rule: track record in THIS repo
+    outranks generic benchmarks) — evidence: commits 041196a (Cline provider),
+    b16cb5c (Copilot/Cursor/CodeBuddy), 39dbb67 (resume queue), 1d862c2
+    (goose menu), 60b335b (clock-report fix), c4a4850 (review-teach arc),
+    all landed with tests on ai/quickstart; benchmarks mid-tier but
+    flash-class models praised for tool calling at low cost
+    (https://news.ycombinator.com/item?id=47993235)
+
+* Scout (research) — Gemini 3.7 Flash @ google
+  - :last-dispatch: 0
+  - duties: owns web research for dispatches — benchmark checks, doc lookups,
+    sentiment scans; never writes repo files; returns cited findings to the EM
+  - rank: research #1 — evidence: WebDev Arena leader (Gemini 3.7 Flash,
+    1588 Elo, cheapest near-leader at $0.75/M)
+    (https://llm-stats.com/benchmarks/webdev-arena) ; INTERN for this team —
+    no track record in repo or on gateway yet; intern round: 5 research tasks
