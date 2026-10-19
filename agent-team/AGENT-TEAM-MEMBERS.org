@@ -1,0 +1,14 @@
+#+TITLE: AGENT-TEAM-MEMBERS.org — ranked members, ordered by roles
+#+ROSTER: API roster authority = GET /v1/models on the gateway
+* Engineering Manager — Kimi-K2.6 @ kimi.ai
+  - :last-dispatch: 1
+  - owns: dispatch, verification, team files, roster
+  - rank: 1 — EM by appointment (DISPATCH #1); org+dispatch work, no app-code writes
+* Director of Engineering — Kimi-K2.6 @ kimi.ai
+  - :last-dispatch: 1
+  - owns: mission, priorities, owner interface
+  - rank: 1 — directs, does not code; same model, distinct seat
+* Implementer (elisp/features) — Qwen3.8-Flash @ qoder.com
+  - :last-dispatch: 0
+  - owns: agent-org application code, ERT tests
+  - rank: 2 — evidence: commits 041196a (Cline provider), 39dbb67 (resume queue), 1d862c2 (goose menu), 60b335b (clock-report fix), c4a4850 (review-teach arc), all with tests; provisional until GET /v1/models confirms

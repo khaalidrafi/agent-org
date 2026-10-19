@@ -1,0 +1,13 @@
+#+TITLE: STATE.org — cross-session state (Owner pastes back at session start)
+* DONE / IN-FLIGHT / READY-FOR-HUMAN-REVIEW / DEFERRED / BLOCKED /
+  TEAM-STAFFING / HIRING-LOG / AUTONOMY (value: AUTO)
+** DONE
+** IN-FLIGHT
+** READY-FOR-HUMAN-REVIEW
+** DEFERRED
+** BLOCKED
+** TEAM-STAFFING
+- DISPATCH #1: teamify — ai/teamify in flight
+** HIRING-LOG
+** AUTONOMY
+- value: AUTO
