@@ -1,0 +1,67 @@
+#+TITLE: FEATURES.org — low-level agent-org features needed by agent-team.el
+#+FROM: Team Lead (GLM-5.3-Flash @ chat.z.ai) — Owner order 2026-10-21:
+       "Suggest low-level features you need on agent-org to enhance and
+       complete agent-team.el"
+#+ROLE: agent-org is the ACP client carrying inter-agent communication for
+        agent-team.el teams (COMMON.org §TEAM LOOP). Ordered by impact.
+
+* 1. SEAT SUPERVISOR
+  Spawn/stop agent seats as role-labeled processes; heartbeats, stall
+  detection (stall-N counter), auto-restart, crash logs. Teams currently
+  detect stalls by CI absence — make it a primitive.
+
+* 2. LANE ROUTER + FALLBACK
+  Per-seat provider+model lane config; automatic failover on
+  stall/402/403/quota → next lane, WITHOUT waiting for the Owner (Owner
+  order 2026-10-21); per-lane daily-budget accounting so free caps (Groq
+  1,000/day, Gemini CLI 1,000/day, NVIDIA NIM 10,000/day, OpenRouter :free
+  50→1,000/day) are tracked and stopped before burn.
+
+* 3. SECRET INJECTION
+  Pass credentials to seat subprocesses as ENV NAMES only; redaction
+  middleware scrubs token-shaped values from every outbound ACP frame, log,
+  and transcript. Values never cross the protocol.
+
+* 4. CLI ADAPTER LAYER (until native ACP support lands per body)
+  One uniform adapter contract for dsh · pi · cline · omp · opencode ·
+  goose · qwen-code: headless flags, JSON output modes, session resume,
+  tool-permission presets. Concrete hooks (research 2026-10-21,
+  CANDIDATES.org): dsh → dsh-headless / dsh-acp-app bundles; pi →
+  `--mode json|--mode rpc` or community `npx pi-acp`; cline →
+  `cline --acp` (native) / `cline "task" --json` (NDJSON).
+
+* 5. BOARD SYNC
+  Bidirectional agent-team/TODOS.org + TEAM-CHAT.org ↔ ACP bus: commit
+  checkpoints on every flip, diff-only writes, lease/claim API so two seats
+  never edit one board item concurrently.
+
+* 6. HANDOFF VALIDATOR
+  Enforce the :HANDOFF: drawer contract (:FROM: · :CONTEXT: · :NEXT: ·
+  :BOUNDARIES: · :OPEN-RISKS:) at the protocol layer; bounce invalid
+  handoffs before they reach a seat instead of after.
+
+* 7. MIRROR GATEWAY (+ the TG duplicate fix)
+  Telegram/Lark verdict-only mirror with dedupe keyed on (chat,
+  message-class, hour-bucket): BLOCKED ≤ 1/hour, DONE always. This is also
+  the concrete fix for the stall-9 duplicate-message bug (TG repeated the
+  same BLOCKED page on every poll cycle).
+
+* 8. POLICY GATES
+  Allow/deny hooks per seat: force-push, secrets access, network egress;
+  :OWN:-tagged items route to the Owner chat only; everything else acts on
+  declared policy.
+
+* 9. CONTEXT PACKAGER
+  Build per-task context packs (named files → one pack) with token budgets;
+  handoffs pass filesystem references, never payloads — kills the
+  telephone-game context drift between seats.
+
+* 10. AUDIT LOG
+  Append-only JSONL of every ACP frame + tool call per seat; provenance
+  (model@platform, dispatch #, branch, date) for every artifact — audit is
+  the reviewer that never sleeps.
+
+* 11. HEALTH METRICS
+  Per-seat success rate, stall counts, req/token burn per lane, free-quota
+  burn-down — surfaced into STATE.org so staffing decisions see live data,
+  not vibes.
