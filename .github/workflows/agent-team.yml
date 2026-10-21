@@ -1,0 +1,709 @@
+name: Agent Team Chain
+
+# agent-org's agent-team chain — ported from khaalidrafi/agent-team.el via
+# the admincraft port (proven architecture, same laws). Owner order
+# 2026-10-21 03:53Z #hq: "teamify agent-org ... I WANNA SEE ALL PENDING
+# TASKS of admincraft and agent-org done" + "Qoder also has DeepSeek Flash
+# free. Hire that, too."
+#
+# Structure per run: test (landing gate: byte-compile + ERT) -> turn (TG
+# ingest owner-locked -> session restore -> ONE agent segment in the
+# preinstalled harness container -> session scrub+upload -> branch push +
+# rotation advance) -> finalize (auto-merge behind the gate -> stall
+# accounting -> SELF-DISPATCH while the objective is open and KILL-SWITCH
+# is OFF). The team decides how many runs the objective takes; the chain
+# stops ONLY on kill switch, objective complete, or tests red; a
+# no-progress streak shifts to backoff, never to failure.
+#
+# Seats: qoder is the ONE body PROVEN on this team family's CI. The
+# rotation alternates the qoder seat's BRAIN: qwen3.8-flash (proven) and
+# deepseek-flash (hired per Owner order 2026-10-21 — free tier; the lane
+# self-probes the --model flag and falls back to the proven default, so a
+# wrong id degrades to work-as-usual, never to a stall). zai@goose is the
+# fallback lane the moment ZAI_API_KEY is set (it is).
+
+on:
+  push:
+    branches: [ai/quickstart]
+  schedule:
+    - cron: '23 * * * *'   # hourly safety net — re-kicks the chain if a run dies infra-level
+  workflow_dispatch: {}
+
+concurrency:
+  group: chain-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write   # self-chain: finalize re-dispatches the next turn
+  # NO `workflows: write` — GitHub rejects the KEY at workflow-creation
+  # time (agent-team.el runs 39455051426 / 39455277702 evidence; the
+  # stale-workflow-delta push rejection is cured by rebase-before-push).
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Emacs
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq emacs-nox
+
+      - name: Landing gate (byte-compile + ERT + loader smoke)
+        run: bash .github/scripts/gate.sh
+
+  turn:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: test
+    outputs:
+      turn_branch: ${{ steps.push.outputs.branch }}
+      seg_result: ${{ steps.seg.outputs.result }}
+      tg_chat: ${{ steps.ingest.outputs.chat_id }}
+      base_sha: ${{ steps.control.outputs.base_sha }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    continue-on-error: true
+    env:
+      QODER_PERSONAL_ACCESS_TOKEN: ${{ secrets.QODER_PERSONAL_ACCESS_TOKEN }}
+      ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}           # fallback brain
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      CODEBUDDY_AUTH_TOKEN: ${{ secrets.CODEBUDDY_AUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read control file (kill switch / objective / turn)
+        id: control
+        run: |
+          CTL=agent-team/TEAM-CONTROL.org
+          KILL=$(grep -oP '^\#\+KILL-SWITCH:\s*\K\w+' "$CTL" | head -1)
+          OBJSTATE=$(grep -oP '^\#\+OBJECTIVE-STATE:\s*\K\w+' "$CTL" | head -1)
+          OBJECTIVE=$(grep -oP '^\#\+OBJECTIVE:\s*\K.*' "$CTL" | head -1)
+          TURN=$(grep -oP '^\#\+TURN:\s*\K.*' "$CTL" | head -1 | xargs)
+          echo "kill=${KILL:-OFF} objstate=${OBJSTATE:-OPEN} turn='${TURN}'"
+          echo "base_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [ "${KILL:-OFF}" = "ON" ]; then
+            echo "mode=killed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "${OBJSTATE:-OPEN}" = "COMPLETE" ]; then
+            echo "mode=complete" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$OBJECTIVE" ]; then
+            echo "mode=no-objective" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "mode=work" >> "$GITHUB_OUTPUT"
+          echo "objective=$OBJECTIVE" >> "$GITHUB_OUTPUT"
+          # Seat selection by #+TURN pointer (rotation grammar extensible).
+          case "$TURN" in
+            deepseek-flash@qoder*) NEXT_SEAT=implementer-deepseek ;;
+            qwen3.8-flash@qoder*)  NEXT_SEAT=implementer ;;
+            *)                     NEXT_SEAT=implementer ;;
+          esac
+          echo "seat=$NEXT_SEAT" >> "$GITHUB_OUTPUT"
+
+      - name: Stop notice (kill switch / complete / no objective)
+        if: steps.control.outputs.mode != 'work'
+        run: |
+          MODE="${{ steps.control.outputs.mode }}"
+          SUMMARY="$GITHUB_STEP_SUMMARY"
+          case "$MODE" in
+            killed)       MSG="TEAM STOPPED BY KILL SWITCH — no turns run until #+KILL-SWITCH: OFF" ;;
+            complete)     MSG="OBJECTIVE COMPLETE — team standing down (set #+OBJECTIVE-STATE: OPEN with a new objective to restart)" ;;
+            no-objective) MSG="NO OBJECTIVE SET — write one line into #+OBJECTIVE in agent-team/TEAM-CONTROL.org" ;;
+          esac
+          echo "$MSG" >> "$SUMMARY"
+
+      - name: Build harness image (preinstalled agents — cached, no installs)
+        if: steps.control.outputs.mode == 'work'
+        run: |
+          docker buildx build --load \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            -t agent-harness:local \
+            docker/harness
+
+      - name: Prepare git identity
+        if: steps.control.outputs.mode == 'work'
+        run: |
+          git config user.name "agent-team-ci"
+          git config user.email "agent-team-ci@users.noreply.github.com"
+          git remote set-url --push origin \
+            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+
+      # OWNER LOCK (Owner order 17:47Z): only the Owner's chat is ingested
+      # VERBATIM into TEAM-CHAT.org before the segment; others dropped.
+      - name: Telegram bridge — ingest Owner replies into the team chat (owner-locked)
+        id: ingest
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_OWNER_ID: ${{ secrets.TELEGRAM_OWNER_ID }}
+        run: |
+          [ -n "$TELEGRAM_BOT_TOKEN" ] || { echo "telegram: no token — silent"; exit 0; }
+          OWNER="${TELEGRAM_OWNER_ID}"
+          git config user.name "agent-team-ci"
+          git config user.email "agent-team-ci@users.noreply.github.com"
+          git remote set-url --push origin \
+            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          CHAT=agent-team/TEAM-CHAT.org
+          UPD=$(curl -sS --max-time 20 \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?allowed_updates=%5B%22message%22%5D&limit=20") || UPD=""
+          echo "$UPD" | jq -e '.ok == true' >/dev/null 2>&1 || { echo "telegram: API error or empty — skip"; exit 0; }
+          if [ -z "$OWNER" ]; then
+            CLAIM=$(echo "$UPD" | jq -r '[.result[] | select(.message.chat.type=="private") | .message.chat.id] | first // empty')
+            if [ -n "$CLAIM" ]; then
+              echo "::warning::telegram lock ENGAGED, TELEGRAM_OWNER_ID unset — first-contact claim from chat ${CLAIM} DROPPED (the Lead verifies and sets the secret)"
+            else
+              echo "telegram: lock engaged (no owner secret yet), no pending messages"
+            fi
+            exit 0
+          fi
+          COUNT=$(echo "$UPD" | jq --arg owner "$OWNER" '[.result[] | select(.message.chat.type=="private") and (.message.text != null) and ((.message.chat.id | tostring) == $owner)] | length')
+          REJECT=$(echo "$UPD" | jq --arg owner "$OWNER" '[.result[] | select(.message.chat.type=="private") and ((.message.chat.id | tostring) != $owner)] | length')
+          if [ "$REJECT" -gt 0 ]; then
+            echo "::warning::telegram: DROPPED ${REJECT} message(s) from non-owner chat(s) — owner lock"
+          fi
+          if [ "$COUNT" -eq 0 ]; then echo "telegram: no pending OWNER messages (dropped ${REJECT} non-owner)"; exit 0; fi
+          LAST_ID=$(echo "$UPD" | jq '[.result[].update_id] | max')
+          TS=$(date -u '+%Y-%m-%d %a %H:%M UTC')
+          {
+            echo ""
+            echo "* MSG owner (tg) -> @lead :note:                    :msg:owner:lead:note:"
+            echo ":PROPERTIES:"
+            echo ":FROM: owner"
+            echo ":TO: lead"
+            echo ":KIND: note"
+            echo ":WHEN: [${TS}]"
+            echo ":CHANNEL: telegram"
+            echo ":END:"
+            echo "  [Telegram bridge — Owner's message, recorded verbatim]"
+            echo "$UPD" | jq -r '.result[] | select(.message.chat.type=="private") | select(.message.text) |
+                     "  >> " + (.message.text | gsub("\n"; "\n  >> "))'
+          } >> "$CHAT"
+          bash .github/scripts/secret-guard.sh file "$CHAT"
+          git add "$CHAT"
+          git commit -m "tg-ingest: ${COUNT} Owner message(s) -> team chat" || echo "::notice::nothing to commit"
+          PUSHED=no
+          for i in 1 2 3; do
+            if git push origin "ai/quickstart"; then PUSHED=yes; break; fi
+            git fetch origin ai/quickstart && git rebase origin/ai/quickstart || git rebase --abort
+          done
+          if [ "$PUSHED" = "yes" ] && [ -n "$LAST_ID" ]; then
+            curl -sS -o /dev/null "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?offset=$((LAST_ID+1))"
+            echo "telegram: ingested ${COUNT} message(s), offset confirmed"
+          else
+            git checkout -- "$CHAT" || true
+            echo "::warning::telegram ingest push failed — messages left unconfirmed for the next run"
+          fi
+          echo "chat_id=${OWNER}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore previous session of this seat (resume context)
+        id: sess-restore
+        if: steps.control.outputs.mode == 'work'
+        env:
+          SEAT: ${{ steps.control.outputs.seat }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ART_ID=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+            | jq -r --arg p "sessions-${SEAT}-" \
+              '[.artifacts[] | select(.name | startswith($p))] | sort_by(.id) | last | .id // empty')
+          [ -n "$ART_ID" ] || { echo "sessions: no previous artifact for ${SEAT} — cold start"; exit 0; }
+          curl -sSL -H "Authorization: Bearer $GH_TOKEN" -o "$PWD/.sessions-prev.zip" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${ART_ID}/zip"
+          mkdir -p "$PWD/.sessions-restore"
+          unzip -q -o "$PWD/.sessions-prev.zip" -d "$PWD/.sessions-restore" || true
+          TGZ=$(ls "$PWD"/.sessions-restore/sessions-*.tgz 2>/dev/null | head -1)
+          if [ -n "${TGZ:-}" ]; then
+            rm -rf /tmp/sessx && mkdir -p /tmp/sessx
+            tar xzf "$TGZ" -C /tmp/sessx 2>/dev/null || true
+            rm -rf "$PWD/.sessions-restore" && mv /tmp/sessx "$PWD/.sessions-restore"
+          fi
+          rm -f "$PWD/.sessions-prev.zip"
+          echo "sessions: restored artifact ${ART_ID} for seat ${SEAT}"
+
+      - name: Run the turn (one segment, preinstalled agent in container)
+        id: seg
+        if: steps.control.outputs.mode == 'work'
+        timeout-minutes: 22
+        run: |
+          SEAT="${{ steps.control.outputs.seat }}"
+          OBJECTIVE=$(grep -oP '^\#\+OBJECTIVE:\s*\K.*' agent-team/TEAM-CONTROL.org | head -1)
+          BOARD=agent-team/AGENT-TEAM-TODOS.org
+          SUMMARY="$GITHUB_STEP_SUMMARY"
+          TOP=$(grep -E '^\*+ (TODO|ONGOING|PENDING|WAIT)' "$BOARD" | head -8 | sed 's/^\*\** //' || true)
+          BRANCH="ai/turn-$(date -u +%Y%m%d-%H%M)"
+          git checkout -b "$BRANCH"
+          echo "TURN_BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
+          BRIEF="You are the on-turn member of the agent-org Agent Team, seat ${SEAT}.
+          TEAM OBJECTIVE (from agent-team/TEAM-CONTROL.org): ${OBJECTIVE}
+          Board: agent-team/AGENT-TEAM-TODOS.org (rotation pointer).
+          THE SPEC: TODOs.org at repo root — every '** TODO' item is a full
+          port spec (agent-shell mechanism -> agent-org design), with the
+          agent-org functions it touches. Read the item you pick COMPLETELY
+          before coding; its sub-bullets ARE the acceptance criteria.
+          Roster: agent-team/AGENT-TEAM-MEMBERS.org. Manual: AGENTS.md +
+          CONVENTIONS.md (rendering rules + measurements — they outrank
+          taste). Code: agent-org*.el at repo root; tests in tests/.
+          PEER MESH — ONE CHAT BUFFER: agent-team/TEAM-CHAT.org. Append ONE
+          message AT EOF in this EXACT format (FORMAT LAW):
+          * MSG ${SEAT} -> @<to|all> :<kind>:      :msg:${SEAT}:<to-sans-at>:<kind>:
+          :PROPERTIES:
+          :FROM: ${SEAT}
+          :TO: <to|all>
+          :KIND: <dispatch|report|request|escalation|review|note>
+          :WHEN: [YYYY-MM-DD Eee HH:MM UTC]
+          :END:
+          <indented body lines>
+          Append only — never edit or delete existing entries. Any
+          Telegram-bound message MUST open with FROM:/TO: lines.
+          Handles: @implementer @implementer-deepseek @lead @owner @all.
+          LAW #10 (Lead-owned files): NEVER edit .github/workflows/*,
+          agent-team/TEAM-CONTROL.org, or .gitattributes — cite them in
+          chat instead.
+          WORK ORDER (Owner 2026-10-21 03:53Z: ALL pending TODOs DONE by
+          his morning, Asia/Dhaka). Take the FIRST TODOs.org '** TODO'
+          item in FILE ORDER that you can advance, or continue the item
+          you already moved to PROGRESS. Priority pins (do these first
+          when free): (1) Cross-agent sessions — Qoder <-> Codebuddy
+          (design DONE, code NOT started); (2) Model selection menu;
+          (3) Steer — inject into the live turn.
+          WORK ONE SEGMENT (time-boxed, max 3 self-attempts):
+          1. READ THE TEAM CHAT FIRST (agent-team/TEAM-CHAT.org): scan the
+             tail for @${SEAT} pings you have not answered — do the work,
+             answer it, or reply BLOCKED with evidence.
+          2. Flip your item on TODOs.org to PROGRESS at segment start and
+             mirror it on the board (board law).
+          3. Do the work IN THIS BRANCH. Small, verifiable, committed.
+             Follow CONVENTIONS.md rendering rules + measurements exactly.
+          4. VERIFY before finishing (the landing gate runs the same):
+             rm -f *.elc tests/*.elc
+             emacs -Q --batch --eval \"(add-to-list 'load-path \\\".\\\")\" \
+               --eval \"(setq byte-compile-error-on-warn t)\" \
+               --eval \"(batch-byte-compile)\" agent-org-buffer.el agent-org.el \
+               agent-org-loader.el agent-org-providers.el agent-org-review-teach.el
+             emacs -Q --batch --eval \"(add-to-list 'load-path \\\".\\\")\" \
+               --eval \"(load \\\"tests/test-agent-org.el\\\")\" \
+               --eval \"(ert-run-tests-batch-and-exit)\"
+             New feature => new ERT tests in tests/ (mock ACP only, never a
+             real package). Red work never lands — finalize re-runs the
+             gate and will UNDO the merge of a red tree.
+          5. POST TO THE TEAM CHAT (append at EOF): report results with
+             evidence (file:line, commit sha), :escalation: @lead after 2
+             failed self-attempts.
+          6. Append a :LOGBOOK: note to the TODOs.org item you touched:
+             what changed + evidence. When DELIVERED, flip to REVIEW with
+             a note (branch, sha, evidence) — NEVER mark DONE (Lead gate).
+          7. Commit everything on this branch with message 'turn(${SEAT}): ...'.
+          8. REPORT: append to agent-team/TEAM-CHAT.org as
+             '${SEAT} -> @lead :report:' (RESULT: DONE | PARTIAL | BLOCKED,
+             evidence included).
+          9. Never claim the OBJECTIVE complete yourself: a completion
+             claim goes to the chat; the Lead verifies and only the Lead
+             sets OBJECTIVE-STATE: COMPLETE.
+          10. Do NOT push; the chain's finalize auto-merges your branch.
+          11. LEAD-OWNED FILES — never edit, only read and cite:
+              .github/workflows/*, agent-team/TEAM-CONTROL.org,
+              .gitattributes, .github/scripts/*.
+          Boundaries: no spend; no destructive actions; stay in scope of
+          the item you picked.
+          SECRET LAW: credentials NEVER travel in chat, files, commits, or
+          messages — only as ENV VAR NAMES. If you need a credential a
+          peer holds, ask for its ENV VAR NAME; the peer replies with the
+          NAME and has-it/absent, NEVER the value; read it from your OWN
+          environment. Never echo a secret value anywhere. The SECRET
+          GUARD (.github/scripts/secret-guard.sh) redacts leaked values
+          from every commit, chat entry, and session artifact.
+          SESSION LAW: your CLI session files are collected at turn end,
+          scrubbed of secrets, uploaded as artifact
+          'sessions-<seat>-<run>' (30-day retention). The next turn of
+          YOUR seat restores them before you run — resume with context."
+
+          cat > "$PWD/.turn-inside.sh" <<'INNER'
+          #!/usr/bin/env bash
+          set +e
+          if [ -d /sessions-restore ]; then
+            mkdir -p "$HOME"
+            if [ -d /sessions-restore/home/agent ]; then
+              cp -a /sessions-restore/home/agent/. "$HOME/" 2>/dev/null || true
+            else
+              cp -a /sessions-restore/. "$HOME/" 2>/dev/null || true
+            fi
+          fi
+          # Byte-compile inside the container so the gate is fast + the
+          # seat sees the same warnings the landing gate will.
+          (cd /workspace && rm -f *.elc tests/*.elc \
+            && emacs -Q --batch --eval "(add-to-list 'load-path \".\")" \
+                 --eval "(batch-byte-compile)" agent-org-buffer.el \
+                 agent-org-loader.el 2>/dev/null || true)
+          case "$SEAT" in
+            implementer | implementer-deepseek)
+              QMODEL=""; [ "$SEAT" = "implementer-deepseek" ] && QMODEL="deepseek-flash"
+              if [ -n "$QMODEL" ] \
+                 && env HOME=/usr/local/lib/qoder-home \
+                     qoder -p "$BRIEF" --model "$QMODEL" --output-format json \
+                     --permission-mode bypassPermissions --max-turns 100; then
+                echo "TURN_RESULT=qoder run OK (lane: ${QMODEL}@qoder — model flag VALID)"
+              elif env HOME=/usr/local/lib/qoder-home \
+                     qoder -p "$BRIEF" --output-format json \
+                     --permission-mode bypassPermissions --max-turns 100; then
+                if [ -n "$QMODEL" ]; then
+                  echo "TURN_RESULT=qoder run OK (lane: qwen3.8-flash@qoder — ${QMODEL} flag invalid, fell back; REPORT the right id in chat)"
+                else
+                  echo "TURN_RESULT=qoder run OK (lane: qwen3.8-flash@qoder)"
+                fi
+              elif [ -n "$ZAI_API_KEY" ] && command -v goose >/dev/null 2>&1; then
+                env GOOSE_PROVIDER=openai GOOSE_MODEL=glm-4.7-flash \
+                    OPENAI_API_KEY="$ZAI_API_KEY" \
+                    OPENAI_HOST="https://api.z.ai" \
+                    OPENAI_BASE_PATH="/api/paas/v4/chat/completions" \
+                    goose run --no-session -t "$BRIEF" \
+                  && echo "TURN_RESULT=goose run OK (acting lane: zai/glm-4.7-flash@goose)" \
+                  || echo "TURN_RESULT=BLOCKED (qoder + zai acting lane both failed)"
+              else
+                echo "TURN_RESULT=BLOCKED (qoder failed and no ZAI fallback — check harness/lane)"
+              fi
+              ;;
+            *)
+              echo "TURN_RESULT=BLOCKED (unknown seat ${SEAT} — rotation case gap)"
+              ;;
+          esac
+          SESS="/workspace/.turn-sessions.tgz"
+          rm -f "$SESS"
+          tar czf "$SESS" -C / \
+            "${HOME#/}/.qoder" \
+            "usr/local/lib/qoder-home/.qoder" \
+            2>/dev/null || true
+          [ -s "$SESS" ] || echo "sessions: nothing collected this turn" >&2
+          INNER
+
+          mkdir -p "$PWD/.sessions-restore"
+          if docker run --rm --user 1001:1001 \
+            -v "$PWD":/workspace -w /workspace \
+            -v "$PWD/.sessions-restore":/sessions-restore:ro \
+            -e SEAT="${SEAT}" -e BRIEF="${BRIEF}" \
+            -e QODER_PERSONAL_ACCESS_TOKEN -e ZAI_API_KEY \
+            agent-harness:local bash /workspace/.turn-inside.sh \
+            > /tmp/.turn-out.txt 2>&1; then
+            echo "container verdict captured"
+          else
+            echo "docker run failed — see output below for the cause"
+            tail -30 /tmp/.turn-out.txt || true
+            echo "TURN_RESULT=BLOCKED (docker run failed — see log)" > "$PWD/.turn-result.txt"
+          fi
+          sed -n '/TURN_RESULT=/p' /tmp/.turn-out.txt > /tmp/.turn-result.tmp || true
+          if [ -s /tmp/.turn-result.tmp ]; then
+            cp /tmp/.turn-result.tmp "$PWD/.turn-result.txt"
+          fi
+          [ -s "$PWD/.turn-result.txt" ] || echo "TURN_RESULT=BLOCKED (container wrote no verdict — see log)" > "$PWD/.turn-result.txt"
+          cat "$PWD/.turn-result.txt" >> "$GITHUB_ENV"
+          echo "---- container output (up to 80 lines) ----"
+          sed -n '1,80p' /tmp/.turn-out.txt || true
+
+          TURN_RESULT=$(sed 's/^TURN_RESULT=//' "$PWD/.turn-result.txt" | tail -1)
+          # HOST-SIDE COMMIT: the seat's sandbox may deny git — the host
+          # commits the workspace diff so work ALWAYS reaches the branch.
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            git add -A
+            git commit -m "turn(${SEAT}): segment work — host-committed" \
+              -m "result: ${TURN_RESULT}" || echo "::notice::workspace commit failed"
+          else
+            echo "workspace clean — no host commit needed"
+          fi
+          echo "result=${TURN_RESULT}" >> "$GITHUB_OUTPUT"
+          echo "## Turn — ${SEAT} @ ${GITHUB_SHA::7}" >> "$SUMMARY"
+          echo "" >> "$SUMMARY"
+          echo "objective: ${OBJECTIVE}" >> "$SUMMARY"
+          echo "branch: ${BRANCH}" >> "$SUMMARY"
+          echo "result: ${TURN_RESULT}" >> "$SUMMARY"
+          echo "TURN_SEAT=$SEAT" >> "$GITHUB_ENV"
+          rm -f "$PWD/.turn-inside.sh" "$PWD/.turn-result.txt" /tmp/.turn-out.txt /tmp/.turn-result.tmp
+
+      - name: Persist session files (scrub -> artifact)
+        id: sess
+        if: always() && steps.control.outputs.mode == 'work'
+        env:
+          SEAT: ${{ steps.control.outputs.seat }}
+        run: |
+          echo "found=no" >> "$GITHUB_OUTPUT"
+          [ -s "$PWD/.turn-sessions.tgz" ] || { echo "sessions: nothing collected"; exit 0; }
+          rm -rf /tmp/sess && mkdir -p /tmp/sess
+          tar xzf "$PWD/.turn-sessions.tgz" -C /tmp/sess 2>/dev/null || true
+          N=0
+          while IFS= read -r f; do
+            if out=$(bash .github/scripts/secret-guard.sh file "$f"); then N=$((N+1)); fi
+          done < <(find /tmp/sess -type f 2>/dev/null)
+          tar czf "/tmp/sessions-${SEAT}-${GITHUB_RUN_NUMBER}.tgz" -C /tmp/sess . 2>/dev/null || true
+          if [ -s "/tmp/sessions-${SEAT}-${GITHUB_RUN_NUMBER}.tgz" ]; then
+            mkdir -p "$PWD/.sessions-upload"
+            cp "/tmp/sessions-${SEAT}-${GITHUB_RUN_NUMBER}.tgz" "$PWD/.sessions-upload/"
+            echo "found=yes" >> "$GITHUB_OUTPUT"
+            echo "sessions: ${N} file(s) had secret hits — redacted before upload" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          rm -f "$PWD/.turn-sessions.tgz"
+
+      - name: Upload session artifact (30-day retention)
+        if: always() && steps.sess.outputs.found == 'yes'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sessions-${{ steps.control.outputs.seat }}-${{ github.run_number }}
+          path: .sessions-upload/sessions-*.tgz
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Push work branch, advance rotation, commit control file
+        id: push
+        if: always() && steps.control.outputs.mode == 'work'
+        run: |
+          bash .github/scripts/secret-guard.sh branch origin/ai/quickstart
+          git fetch origin ai/quickstart || true
+          git rebase origin/ai/quickstart "${TURN_BRANCH:-ai/turn-orphan}" 2>/dev/null \
+            || { git rebase --abort 2>/dev/null || true; echo "::warning::branch rebase skipped"; }
+          git push origin "${TURN_BRANCH:-ai/turn-orphan}" || echo "::notice::no work branch to push"
+          echo "branch=${TURN_BRANCH:-}" >> "$GITHUB_OUTPUT"
+          CTL=agent-team/TEAM-CONTROL.org
+          case "${{ steps.control.outputs.seat }}" in
+            implementer-deepseek) NEXT="deepseek-flash@qoder (Implementer)" ;;
+            implementer)          NEXT="deepseek-flash@qoder (Implementer)" ;;
+            *)                    NEXT="qwen3.8-flash@qoder (Implementer)" ;;
+          esac
+          git checkout -f ai/quickstart
+          git fetch origin ai/quickstart
+          git reset --hard origin/ai/quickstart
+          sed -i "s|^\#+TURN:.*|\#+TURN: ${NEXT}|" "$CTL"
+          git add "$CTL"
+          git commit -m "ci-turn: ${TURN_SEAT:-unknown} done — next turn ${NEXT}" \
+            -m "result: ${TURN_RESULT:-unknown}" || echo "::notice::nothing to commit"
+          CPUSH=no
+          for i in 1 2 3; do
+            if git push origin "ai/quickstart"; then CPUSH=yes; break; fi
+            git fetch origin ai/quickstart && git reset --hard origin/ai/quickstart
+            sed -i "s|^\#+TURN:.*|\#+TURN: ${NEXT}|" "$CTL"
+            git add "$CTL"
+            git commit -m "ci-turn: ${TURN_SEAT:-unknown} done — next turn ${NEXT}" \
+              -m "result: ${TURN_RESULT:-unknown}" || true
+          done
+          [ "$CPUSH" = "yes" ] || echo "::warning::control push failed after 3 attempts"
+
+  finalize:
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    needs: [test, turn]
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ai/quickstart
+
+      - name: Auto-merge the turn branch (peer mail propagation)
+        id: merge
+        run: |
+          git config user.name "agent-team-ci"
+          git config user.email "agent-team-ci@users.noreply.github.com"
+          git remote set-url --push origin \
+            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          BRANCH="${{ needs.turn.outputs.turn_branch }}"
+          RESULT="${{ needs.turn.outputs.seg_result }}"
+          OUTCOME="no-branch"
+          if [ -n "$BRANCH" ] && git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            git fetch origin "$BRANCH"
+            if git merge --no-ff --no-edit "origin/$BRANCH"; then
+              OUTCOME="merged"
+            else
+              git merge --abort || true
+              OUTCOME="conflict-left-for-lead"
+            fi
+          fi
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "outcome=$OUTCOME" >> "$GITHUB_OUTPUT"
+          echo "MERGE: $OUTCOME (branch: ${BRANCH:-none}, segment result: ${RESULT:-none})"
+
+      - name: Run the landing gate
+        id: gate
+        if: steps.merge.outputs.outcome == 'merged'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq emacs-nox
+          BRANCH="${{ steps.merge.outputs.branch }}"
+          RESULT=conflict
+          for i in 1 2 3; do
+            git fetch origin ai/quickstart
+            git reset --hard origin/ai/quickstart
+            if ! git merge --no-ff --no-edit "origin/$BRANCH"; then
+              git merge --abort || true
+              echo "attempt $i: merge conflict vs moved main — retrying"
+              sleep 15
+              continue
+            fi
+            if bash .github/scripts/gate.sh; then
+              bash .github/scripts/secret-guard.sh staged
+              if git push origin "ai/quickstart"; then RESULT=green; break; fi
+              RESULT=push-retry
+              sleep 15
+            else
+              git reset --hard origin/ai/quickstart
+              RESULT=red
+              echo "gate red on attempt $i — merge undone, branch kept for the Lead"
+              break
+            fi
+          done
+          case "$RESULT" in
+            green)
+              echo "gate=green" >> "$GITHUB_OUTPUT"
+              git push origin --delete "$BRANCH" || true ;;
+            red)
+              echo "gate=red-merge-undone" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "gate=conflict-branch-kept" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Stall accounting + dispatch the next run (self-chain)
+        run: |
+          CTL=agent-team/TEAM-CONTROL.org
+          RESULT="${{ needs.turn.outputs.seg_result }}"
+          OUTCOME="${{ steps.merge.outputs.outcome }}"
+          GATE="${{ steps.gate.outputs.gate }}"
+          STALL=$(grep -oP '^\#\+STALL-COUNT:\s*\K\d+' "$CTL" | head -1); STALL=${STALL:-0}
+          PROGRESS=no
+          if [ "$OUTCOME" = "merged" ] && [ "$GATE" = "green" ]; then PROGRESS=yes; fi
+          case "$RESULT" in *BLOCKED*) PROGRESS=no ;; esac
+          if [ "$PROGRESS" = "yes" ]; then NEW=0; else NEW=$((STALL+1)); fi
+          if [ "$NEW" != "$STALL" ]; then
+            git fetch origin ai/quickstart
+            git reset --hard origin/ai/quickstart
+            sed -i "s|^\#+STALL-COUNT:.*|\#+STALL-COUNT: ${NEW}|" "$CTL"
+            git add "$CTL"
+            git commit -m "ci-chain: stall=${NEW} (segment ${OUTCOME}, result ${RESULT:-none})" \
+              || echo "::notice::stall commit empty"
+            git push origin "ai/quickstart" || echo "::warning::stall push failed"
+          fi
+          KILL=$(grep -oP '^\#\+KILL-SWITCH:\s*\K\w+' "$CTL" | head -1)
+          OBJSTATE=$(grep -oP '^\#\+OBJECTIVE-STATE:\s*\K\w+' "$CTL" | head -1)
+          OBJECTIVE=$(grep -oP '^\#\+OBJECTIVE:\s*\K.*' "$CTL" | head -1)
+          DECISION="dispatch"
+          if [ "${KILL:-OFF}" = "ON" ]; then DECISION="kill-switch"; fi
+          if [ "${OBJSTATE:-OPEN}" = "COMPLETE" ]; then DECISION="objective-complete"; fi
+          if [ -z "$OBJECTIVE" ]; then DECISION="no-objective"; fi
+          if [ "${{ needs.test.result }}" = "failure" ]; then
+            DECISION="tests-red-halt"
+          fi
+          if [ "$NEW" -ge 4 ] && [ "$DECISION" = "dispatch" ]; then
+            DECISION="backoff-dispatch"
+          fi
+          echo "CHAIN_DECISION=$DECISION" >> "$GITHUB_ENV"
+          echo "CHAIN_STALL=$NEW" >> "$GITHUB_ENV"
+          DISPATCH_CODE="n/a"
+          if [ "$DECISION" = "dispatch" ] || [ "$DECISION" = "backoff-dispatch" ]; then
+            if [ "$DECISION" = "backoff-dispatch" ]; then
+              echo "backoff: lane dead ${NEW} segments straight — waiting 5 min before the next attempt"
+              sleep 300
+            else
+              sleep 20
+            fi
+            DISPATCH_CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+              -H "Authorization: Bearer ${{ github.token }}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/workflows/agent-team.yml/dispatches" \
+              -d '{"ref":"ai/quickstart"}')
+          fi
+          SUMMARY="$GITHUB_STEP_SUMMARY"
+          echo "## Chain — finalize" >> "$SUMMARY"
+          echo "" >> "$SUMMARY"
+          echo "- merge: ${OUTCOME} (${{ steps.merge.outputs.branch }})" >> "$SUMMARY"
+          echo "- landing gate: ${GATE:-skipped}" >> "$SUMMARY"
+          echo "- stall count: ${NEW} (>=4 = 5-min backoff mode)" >> "$SUMMARY"
+          echo "- chain decision: **${DECISION}** (dispatch HTTP ${DISPATCH_CODE})" >> "$SUMMARY"
+
+      # TG DEDUPE LAW (Owner 2026-10-21 03:53Z: "I keep getting the same
+      # msgs on Telegram"): the mirror fires ONLY when a segment actually
+      # RAN (seg_result non-empty) AND the verdict differs from the last
+      # one recorded in #+LAST-VERDICT. Hourly safety-net no-ops are
+      # silent by construction.
+      - name: Mirror chain verdict to Telegram (owner-locked, deduped)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_OWNER_ID: ${{ secrets.TELEGRAM_OWNER_ID }}
+          TG_LEARNED_CHAT: ${{ needs.turn.outputs.tg_chat }}
+        run: |
+          SEG="${{ needs.turn.outputs.seg_result }}"
+          [ -n "$SEG" ] || { echo "telegram mirror: turn skipped — silent (dedupe law)"; exit 0; }
+          CHAT="${TELEGRAM_OWNER_ID:-${TG_LEARNED_CHAT}}"
+          [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$CHAT" ] || { echo "telegram mirror: silent (no token or chat id yet)"; exit 0; }
+          VH=$(printf '%s' "$SEG" | sha256sum | cut -c1-12)
+          CTL=agent-team/TEAM-CONTROL.org
+          LAST=$(grep -oP '^\#\+LAST-VERDICT:\s*\K.*' "$CTL" | head -1)
+          if [ "$LAST" = "$VH" ]; then
+            echo "telegram mirror: identical verdict ${VH} already mirrored — silent (dedupe law)"
+            exit 0
+          fi
+          TXT="$(printf 'FROM: team-lead (glm-5.3-flash, Agent Team)\nTO: @owner\n\n[agent-org] segment done\nbranch: %s\nresult: %s\nmerge: %s\ngate: %s\nstall: %s\ndecision: %s' \
+            "${{ needs.turn.outputs.turn_branch }}" \
+            "$SEG" \
+            "${{ steps.merge.outputs.outcome }}" \
+            "${{ steps.gate.outputs.gate }}" \
+            "${CHAIN_STALL:-?}" \
+            "${CHAIN_DECISION:-unknown}")"
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${CHAT}" \
+            --data-urlencode "text=${TXT}") || CODE="curl-failed"
+          echo "telegram mirror: HTTP ${CODE}"
+          if [ "$CODE" = "200" ] || [ "$CODE" = "curl-failed" ]; then :; fi
+          git config user.name "agent-team-ci"
+          git config user.email "agent-team-ci@users.noreply.github.com"
+          git remote set-url --push origin \
+            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git fetch origin ai/quickstart && git reset --hard origin/ai/quickstart
+          sed -i "s|^\#+LAST-VERDICT:.*|\#+LAST-VERDICT: ${VH}|" "$CTL"
+          git add "$CTL"
+          git commit -m "ci-chain: verdict ${VH} mirrored" || exit 0
+          for i in 1 2 3; do git push origin "ai/quickstart" && break; git fetch origin ai/quickstart && git reset --hard origin/ai/quickstart; sed -i "s|^\#+LAST-VERDICT:.*|\#+LAST-VERDICT: ${VH}|" "$CTL"; git add "$CTL"; git commit -m "ci-chain: verdict ${VH} mirrored" || exit 0; done
+
+      # Owner order 2026-10-21 03:53Z: per-project channels. This repo's
+      # channel = the agent-org Discord channel (secret
+      # DISCORD_WEBHOOK_TEAM_AGENTORG, a channel webhook the Owner creates
+      # in one click). Mirrors the chain verdict + every TEAM-CHAT.org
+      # message this segment appended. SILENT until the webhook exists.
+      - name: Mirror verdict + new GLM chats to Discord (silent without secret)
+        env:
+          DISCORD_WEBHOOK_TEAM: ${{ secrets.DISCORD_WEBHOOK_TEAM_AGENTORG }}
+          BASE_SHA: ${{ needs.turn.outputs.base_sha }}
+          TURN_BRANCH: ${{ needs.turn.outputs.turn_branch }}
+          SEG_RESULT: ${{ needs.turn.outputs.seg_result }}
+        run: |
+          [ -n "$DISCORD_WEBHOOK_TEAM" ] || { echo "discord mirror: silent (no DISCORD_WEBHOOK_TEAM_AGENTORG secret yet)"; exit 0; }
+          [ -n "$SEG_RESULT" ] || { echo "discord mirror: turn skipped — silent (dedupe law)"; exit 0; }
+          post() {
+            local txt="$1"
+            while [ -n "$txt" ]; do
+              local chunk="${txt:0:1900}"; txt="${txt:1900}"
+              curl -sS -o /dev/null -w 'discord mirror: HTTP %{http_code}\n' \
+                "$DISCORD_WEBHOOK_TEAM" \
+                -H 'Content-Type: application/json' \
+                -d "$(python3 -c 'import json,sys; print(json.dumps({"content": sys.stdin.read()}))' <<< "$chunk")" || true
+            done
+          }
+          FROM="FROM: team-lead (glm-5.3-flash, Agent Team @khaalidrafi/agent-org)"
+          post "$(printf '%s\nTO: @team (discord, agent-org channel)\n\n[agent-org] segment done\nbranch: %s\nresult: %s\ndecision: %s\nstall: %s' \
+            "$FROM" "${TURN_BRANCH:-?}" "${SEG_RESULT:-?}" "${CHAIN_DECISION:-unknown}" "${CHAIN_STALL:-?}")"
+          if [ -n "$BASE_SHA" ] && git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            ADDED=$(git diff "$BASE_SHA" HEAD -- agent-team/TEAM-CHAT.org 2>/dev/null \
+              | grep '^+' | grep -v '^+++' | sed 's/^+//')
+            if [ -n "$ADDED" ]; then
+              post "$(printf '%s\nTO: @team (discord, agent-org channel)\n--- GLM chat, this segment ---\n%s' "$FROM" "$ADDED")"
+            else
+              echo "discord mirror: no new chat entries this segment"
+            fi
+          else
+            echo "discord mirror: base sha unavailable — verdict only"
+          fi

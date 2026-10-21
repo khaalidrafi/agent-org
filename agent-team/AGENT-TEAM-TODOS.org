@@ -8,3 +8,18 @@
   - BLOCKED + reason; :OWN: = owner ruling
   - REVIEW + completion note (invalid without)
   - BLOCKED never terminal; only the EM flips DONE
+** TODO WO-1 cross-agent sessions — Qoder <-> Codebuddy (design DONE, code NOT started) — TODOs.org §Cross-agent
+** TODO WO-2 model selection menu — TODOs.org §Model selection menu
+** TODO WO-3 steer — inject into the live turn — TODOs.org §Steer
+** TODO WO-4 hooks on the response boundary + automation — TODOs.org §Hooks
+** TODO WO-5 permission prompts without blocking — TODOs.org §Permission prompts
+** TODO WO-6 tool-call grouping — TODOs.org §Tool-call grouping
+** TODO WO-7 input history ring — TODOs.org §Input history ring
+** TODO WO-8 fork session — TODOs.org §Fork session
+** TODO WO-9 copy session id command — TODOs.org §Copy session id
+** TODO WO-10 clock display survives stale org-element cache — TODOs.org §clock display
+** TODO WO-11 separate interactive response-clocking commands — TODOs.org §Separate interactive
+** TODO WO-12 idle time shown while streaming — TODOs.org §Idle time
+** TODO WO-13 clock seconds fix (designed, not written) — TODOs.org §Clock seconds
+** TODO WO-14 "later" porting bucket — TODOs.org §Later
+** TODO WO-15 tracker: everything else still open — TODOs.org §Everything else
