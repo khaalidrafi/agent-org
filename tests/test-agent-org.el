@@ -6595,10 +6595,12 @@ killed, which is what releases the agent process spawned for it
   "A candidate for an older session is only usable if you can tell its
 age: today, yesterday, this year's date, or a dated year.  The id stays
 last, because it is what actually selects the session."
-  (let* ((today (format-time-string "%Y-%m-%dT%H:%M:%S+0600"))
+  (let* ((today (format-time-string "%Y-%m-%dT%H:%M:%S+0600" nil
+                                   "Asia/Dhaka"))
          (yesterday (format-time-string "%Y-%m-%dT12:00:00+0600"
                                         (time-subtract (current-time)
-                                                       (days-to-time 1))))
+                                                       (days-to-time 1))
+                                        "Asia/Dhaka"))
          (resp `((sessions . [((sessionId . "t") (title . "Today one")
                                (updatedAt . ,today))
                               ((sessionId . "y") (title . "Yesterday one")
