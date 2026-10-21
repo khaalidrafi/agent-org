@@ -1676,20 +1676,30 @@ session you want to leave alone."
 
 ;;;; Model selection
 
+(defun agent-org--model-candidates (option)
+  "OPTION's advertised models as ((LABEL . VALUE) ...) in wire order.
+LABEL is the human name (an option without a `name' shows its id minus
+the provider path — `minimax/MiniMax-M3' reads \"MiniMax-M3\" — because
+the menu's contract is that the user never completes over bare ids),
+VALUE is the wire string `agent-org-set-session-model' must send."
+  (seq-map (lambda (o)
+             (let ((value (map-elt o 'value)))
+               (cons (agent-org-buffer--label
+                      (or (map-elt o 'name)
+                          (car (last (split-string value "/" t)))))
+                     value)))
+           (agent-org--wire-list (map-elt option 'options))))
+
 (defun agent-org--read-model ()
   "Complete a model id out of the current chat buffer's advertised options.
 Returns the wire value; the candidate shown is the agent's own label
-(e.g. \"OpenCode Zen/MiniMax-M2.7\"), which is why candidates are paired
-with their values instead of being a plain list of strings."
+(e.g. \"OpenCode Zen/MiniMax-M2.7\"), or the cleaned id when the agent
+advertises no name, which is why candidates are paired with their values
+instead of being a plain list of strings."
   (let* ((session (agent-org--session-for-buffer (current-buffer)))
          (option (and session
                       (agent-org--model-option (agent-org--session-config session))))
-         (candidates
-          (seq-map (lambda (o)
-                     (cons (agent-org-buffer--label
-                            (or (map-elt o 'name) (map-elt o 'value)))
-                           (map-elt o 'value)))
-                   (agent-org--wire-list (map-elt option 'options)))))
+         (candidates (and option (agent-org--model-candidates option))))
     (unless candidates
       (user-error "This agent offers no model options"))
     ;; same label-keyed lookup as `agent-org--read-session-id': the display

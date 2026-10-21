@@ -905,7 +905,7 @@ equivalent.
 process filter).  agent-shell surfaces them in its UI; a deferred,
 buffer-local accept/deny affordance would keep the chat responsive.
 
-** TODO Tool-call grouping
+** DONE Tool-call grouping
 agent-shell has =--group-tool-calls= (agent-shell.el:2763): consecutive
 calls of one kind fold under a summary heading.  Most of that is now the
 shape here anyway -- calls and their output are items of one =:tool:=
@@ -917,16 +917,41 @@ one board item reading
 =agent-org-buffer--tools= -- the
 list is the record, one entry per =toolCallId=, and collapsing is
 rendering.
+/Steward:/ landed 2026-10-21 --- =agent-org-buffer--tool-board-groups=
+folds CONSECUTIVE same-title same-status calls into one item with the
+count (=  - COMPLETE run tests (x3)=); every call's output is kept
+beneath it, call order preserved; a RUNNING call never folds into
+COMPLETED ones (a folded state would lie about all of them); the record
+(=agent-org-buffer--tools=) is untouched --- rendering only.  Groups
+reverse-normalized so the fold never reorders the board.  Tests:
+=test-agent-org-tool-board-folds-consecutive-same-calls=,
+=test-agent-org-tool-board-does-not-fold-across-status=.  Evidence: ERT
+432/432 green 2026-10-21T04:35Z.
 
-** TODO Copy session id command
+** DONE Copy session id command
 agent-shell's =agent-shell-copy-session-id= (agent-shell.el:2033):
 kill-ring the current session id.  One-liner for agent-org.
+/Steward:/ landed before the flip --- =agent-org-copy-session-id=
+(agent-org.el:1115, =C-c= autoloadable): kill-ring the chat's session
+id, refuses with =user-error= while the handshake has not finished so
+nil is never copied.  Tests:
+=tests/test-agent-org.el:10903= (kills the id) and =:10918= (refuses
+before the handshake).  Evidence: ERT suite 432/432 green
+2026-10-21T04:35Z.
 
-** TODO Model selection menu
+** DONE Model selection menu
 =agent-shell-set-session-model= completion over =agent-shell--get-available-models=.
 agent-org already has =agent-org-set-session-model= (C-c a m) over
 =:want-model= values; add the model NAMES to the candidates so the
 user never sees bare ids.
+/Steward:/ labels already rode the menu (=agent-org--read-model=
+completes over the agent's own =name=); the bare-id hole closed
+2026-10-21 --- =agent-org--model-candidates= factors the candidate
+build, and an option without a =name= now shows its id MINUS the
+provider path (=minimax/MiniMax-M3= reads "MiniMax-M3"), so the user
+never completes over a bare id; the wire value stays the cdr.
+Test: =test-agent-org-model-candidates-clean-bare-ids=.  Evidence: ERT
+432/432 green 2026-10-21T04:35Z.
 
 ** DONE The agent learns its own model, session id and agent name
 User order: "Add a way for agents to know the currently selected model,
