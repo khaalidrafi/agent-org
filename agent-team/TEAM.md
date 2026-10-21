@@ -1,4 +1,4 @@
-#+TITLE: AGENT-TEAM.md — agent-org team constitution
+#+TITLE: TEAM.md — agent-org team constitution
 #+REPO: khaalidrafi/agent-org
 * PURPOSE
 
@@ -12,7 +12,7 @@ on the clock) and mirroring every session to a transcript Org file.
 
 - The EM staffs, dispatches and verifies; the EM never writes application
   code when a hire can.
-- Every model is ranked per task type in AGENT-TEAM-MEMBERS.org on
+- Every model is ranked per task type in MEMBERS.org on
   evidence or intern — never vibes.
 - Read the repo (README, CONVENTIONS.md, TODOs.org, AGENTS.md, code,
   history) before touching anything.
@@ -30,7 +30,7 @@ on the clock) and mirroring every session to a transcript Org file.
 - Engineering Manager — dispatch, verification, team files, roster.
 - Implementer (features) — agent-org application code and its ERT tests;
   Claude Opus 4.7 owns core buffer/session features, Qwen3.8-Flash owns
-  providers and prompt-queue mechanics (see AGENT-TEAM-MEMBERS.org).
+  providers and prompt-queue mechanics (see MEMBERS.org).
 - Scout — web research with citations; returns findings, never writes repo
   files.
 
@@ -45,5 +45,5 @@ on the clock) and mirroring every session to a transcript Org file.
 
 * MANUAL
 
-- canonical: khaalidrafi/agent-team.el templates/AGENT-TEAM-COMMON.org
+- canonical: khaalidrafi/agent-team.el templates/COMMON.org
 - NEVER embed the manual (one canonical copy)

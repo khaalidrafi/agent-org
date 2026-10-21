@@ -238,7 +238,7 @@ jobs:
         run: |
           SEAT="${{ steps.control.outputs.seat }}"
           OBJECTIVE=$(grep -oP '^\#\+OBJECTIVE:\s*\K.*' agent-team/TEAM-CONTROL.org | head -1)
-          BOARD=agent-team/AGENT-TEAM-TODOS.org
+          BOARD=agent-team/TODOS.org
           SUMMARY="$GITHUB_STEP_SUMMARY"
           TOP=$(grep -E '^\*+ (TODO|ONGOING|PENDING|WAIT)' "$BOARD" | head -8 | sed 's/^\*\** //' || true)
           BRANCH="ai/turn-$(date -u +%Y%m%d-%H%M)"
@@ -247,12 +247,12 @@ jobs:
 
           BRIEF="You are the on-turn member of the agent-org Agent Team, seat ${SEAT}.
           TEAM OBJECTIVE (from agent-team/TEAM-CONTROL.org): ${OBJECTIVE}
-          Board: agent-team/AGENT-TEAM-TODOS.org (rotation pointer).
+          Board: agent-team/TODOS.org (rotation pointer).
           THE SPEC: TODOs.org at repo root — every '** TODO' item is a full
           port spec (agent-shell mechanism -> agent-org design), with the
           agent-org functions it touches. Read the item you pick COMPLETELY
           before coding; its sub-bullets ARE the acceptance criteria.
-          Roster: agent-team/AGENT-TEAM-MEMBERS.org. Manual: AGENTS.md +
+          Roster: agent-team/MEMBERS.org. Manual: AGENTS.md +
           CONVENTIONS.md (rendering rules + measurements — they outrank
           taste). Code: agent-org*.el at repo root; tests in tests/.
           PEER MESH — ONE CHAT BUFFER: agent-team/TEAM-CHAT.org. Append ONE
