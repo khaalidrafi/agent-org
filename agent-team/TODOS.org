@@ -1,4 +1,4 @@
-#+TITLE: AGENT-TEAM-TODOS.org — team board (single source of truth)
+#+TITLE: TODOS.org — team board (single source of truth)
 #+TODO: TODO PROGRESS BLOCKED REVIEW | DONE CANCELLED DEFERRED
 * Board
 ** DONE DISPATCH #2 staffing — ai/staffing
