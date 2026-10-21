@@ -1,4 +1,4 @@
-#+TITLE: AGENT-TEAM-MEMBERS.org — ranked members, ordered by roles
+#+TITLE: MEMBERS.org — ranked members, ordered by roles
 #+ROSTER: API roster authority = GET /v1/models on the gateway
 #+ROSTER_STATUS: gateway URL not in dispatch; 8 candidate hosts DNS-fail 2026-10-19;
   bodies below are provisional until GET /v1/models confirms them
