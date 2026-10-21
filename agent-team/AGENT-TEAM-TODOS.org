@@ -9,14 +9,14 @@
   - REVIEW + completion note (invalid without)
   - BLOCKED never terminal; only the EM flips DONE
 ** TODO WO-1 cross-agent sessions — Qoder <-> Codebuddy (design DONE, code NOT started) — TODOs.org §Cross-agent
-** TODO WO-2 model selection menu — TODOs.org §Model selection menu
+** DONE WO-2 model selection menu — labels + cleaned-id fallback; ERT 432/432 (agent-org.el:1679)
 ** TODO WO-3 steer — inject into the live turn — TODOs.org §Steer
 ** TODO WO-4 hooks on the response boundary + automation — TODOs.org §Hooks
 ** TODO WO-5 permission prompts without blocking — TODOs.org §Permission prompts
-** TODO WO-6 tool-call grouping — TODOs.org §Tool-call grouping
+** DONE WO-6 tool-call grouping — consecutive same-title/status fold w/ count; ERT 432/432 (agent-org-buffer.el:4932)
 ** TODO WO-7 input history ring — TODOs.org §Input history ring
 ** TODO WO-8 fork session — TODOs.org §Fork session
-** TODO WO-9 copy session id command — TODOs.org §Copy session id
+** DONE WO-9 copy session id command — pre-existing impl verified w/ tests (agent-org.el:1115)
 ** TODO WO-10 clock display survives stale org-element cache — TODOs.org §clock display
 ** TODO WO-11 separate interactive response-clocking commands — TODOs.org §Separate interactive
 ** TODO WO-12 idle time shown while streaming — TODOs.org §Idle time

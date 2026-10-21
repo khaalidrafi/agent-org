@@ -4929,6 +4929,34 @@ the call would never appear."
             agent-org-buffer--tool-drawer-live-p nil
             agent-org-buffer--tools-shown nil))))
 
+(defun agent-org-buffer--tool-board-groups (entries)
+  "Fold ENTRIES into consecutive groups of one label and one status.
+Each group is (LABEL STATUS . CALLS), CALLS in wire order.  Only
+CONSECUTIVE calls of the same title and status fold — the board is a
+window over the record, and a repeated title says \"the agent ran this
+again\", which is information; splitting the run would read as one call.
+Collapsing is RENDERING: `agent-org-buffer--tools' stays one entry per
+`toolCallId' and nothing in it is touched."
+  (let (groups)
+    (dolist (entry entries)
+      (let* ((label (agent-org-buffer--label
+                     (or (plist-get (cdr entry) :title) "tool")))
+             (status (plist-get (cdr entry) :status)))
+        ;; a group is (LABEL STATUS . CALLS); the tail is the call list, so
+        ;; the status sits at (cadr ...) and `cdar' would drag the calls in
+        (if (and groups
+                 (equal (caar groups) label)
+                 (equal (cadr (car groups)) status))
+            (setcar groups (cons label
+                                 (cons status
+                                       (cons entry (cddar groups)))))
+          (push (cons label (cons status (list entry))) groups))))
+    ;; groups were pushed newest-first (the same way LINES is pushed);
+    ;; the board renders oldest-first, so the fold must not reorder
+    (nreverse (mapcar (lambda (g) (cons (car g) (cons (cadr g)
+                                                      (nreverse (cddr g)))))
+                      groups))))
+
 (defun agent-org-buffer--tool-board-body ()
   "This turn's `:tool:' drawer body: one item per call, its output under it.
 Built from `agent-org-buffer--tools', so the drawer cannot drift from the
@@ -4937,6 +4965,13 @@ text is the item's body at four columns.  A call is named by its TITLE and
 needs no number to point at a second drawer, because there is no second
 drawer -- the user's order: \"Tool call outputs belong to the same TODO
 headings\", after \"Consecutive tool calls belong to a single drawer\".
+
+Consecutive calls of one title and one status fold into a single item
+carrying the count — three completed `run tests' calls read
+`  - COMPLETE run tests (x3)' — with every call's output kept beneath it,
+in call order (the user's ruling 2026-10-21, TODOs.org §Tool-call
+grouping).  A RUNNING call never folds into COMPLETED ones: the keyword
+is the item's state, and a folded state would be a lie about all of them.
 
 THE BOARD IS A WINDOW, not the whole turn: only the calls from
 `agent-org-buffer--tool-group-start' onward are drawn, because the ones before
@@ -4960,19 +4995,33 @@ dissolving the drawer), and a non-blank line then takes three further
 spaces to reach the item's content column.  The title is flattened by
 `agent-org-buffer--label': agent titles are whole shell commands."
   (let (lines)
-    (dolist (entry (nthcdr agent-org-buffer--tool-group-start
-                          agent-org-buffer--tools))
-      (push (format "  - %s %s"
-                    (agent-org-buffer--tool-keyword
-                     (plist-get (cdr entry) :status))
-                    (agent-org-buffer--label
-                     (or (plist-get (cdr entry) :title) "tool")))
-            lines)
-      (let ((output (plist-get (cdr entry) :output)))
-        (when (and output (not (string-empty-p output)))
-          (dolist (line (agent-org-buffer--drawer-safe-lines output))
-            (push (if (string-empty-p line) "" (concat "   " line)) lines))))
-      (push "" lines))
+    (dolist (group (agent-org-buffer--tool-board-groups
+                    (nthcdr agent-org-buffer--tool-group-start
+                            agent-org-buffer--tools)))
+      (let ((label (car group))
+            (status (cadr group))
+            (members (cddr group))
+            drew-output)
+        (push (format "  - %s %s%s"
+                      (agent-org-buffer--tool-keyword status)
+                      label
+                      (if (> (length members) 1)
+                          (format " (x%d)" (length members))
+                        ""))
+              lines)
+        ;; every call's body survives the fold, call order preserved; each
+        ;; member's blank line separates its output from what follows
+        (dolist (entry members)
+          (let ((output (plist-get (cdr entry) :output)))
+            (when (and output (not (string-empty-p output)))
+              (setq drew-output t)
+              (dolist (line (agent-org-buffer--drawer-safe-lines output))
+                (push (if (string-empty-p line) "" (concat "   " line))
+                      lines))
+              (push "" lines))))
+        ;; a group with no output still closes with one blank, the same
+        ;; rhythm a lone outputless item had before the fold existed
+        (unless drew-output (push "" lines))))
     (nreverse lines)))
 
 (defun agent-org-buffer--tool-part-lines (entry)
