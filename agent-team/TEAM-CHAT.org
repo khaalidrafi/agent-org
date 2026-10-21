@@ -1,0 +1,24 @@
+#+TITLE: TEAM-CHAT.org — ONE append-only chat buffer (the peer mesh)
+#+LAWS: FORMAT LAW — headline carries FROM, tags route, :PROPERTIES: drawer
+  carries :FROM:/:TO:/:KIND:/:WHEN:/:CHANNEL:; append at EOF only.
+  TELEGRAM LAW — TG-bound messages open with FROM:/TO: lines.
+
+* MSG lead -> @all :dispatch:                        :msg:lead:all:dispatch:
+:PROPERTIES:
+:FROM: lead
+:TO: all
+:KIND: dispatch
+:WHEN: [2026-10-21 Wed 04:20 UTC]
+:CHANNEL: discord
+:END:
+  Owner order 2026-10-21 03:53Z #hq: "Tell the team to complete ALL its
+  pending tasks." + "I WANNA SEE ALL PENDING TASKS of admincraft and
+  agent-org done!!"
+  - OBJECTIVE is live in TEAM-CONTROL.org: every '** TODO' in TODOs.org
+    -> DONE, ERT green, in file order. Priority pins: cross-agent
+    sessions (Qoder <-> Codebuddy), model selection menu, steer.
+  - CI chain is LIVE: hourly turns, gate = byte-compile + ERT, red work
+    never lands. Seats rotate qwen3.8-flash@qoder <-> deepseek-flash@qoder
+    (new hire — DeepSeek Flash free tier on Qoder, welcome aboard).
+  - Laws: AGENTS.md (global agent law section) + CONVENTIONS.md.
+  - REPORT here after every segment. @lead for escalations.

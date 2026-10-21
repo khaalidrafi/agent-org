@@ -422,3 +422,56 @@ emacs -Q --batch \
    a second expression, not as `setcdr''s value).  §7.
 3. Docs: CONVENTIONS.md §s for rules, TODOs.org for the story, README.org for
    the user-facing shape (run the org-syntax check on any .org edited).
+
+## Global agent law — DISTRIBUTED (Owner order 2026-10-21 03:53Z #hq:
+## "don't forget to give global instructions' AGENTS.md to the team").
+## Canonical source: khaalidrafi/agent-team.el AGENTS.md. This copy is
+## verbatim where repo-agnostic; agent-team.el stays the master.
+
+1. FORMAT LAW: every chat message (agent-team/TEAM-CHAT.org) is an Org
+   headline carrying FROM (`* MSG <from> -> @<to> :<kind:`), routing in
+   Org tags, fields in a `:PROPERTIES:` drawer (`:FROM:`/`:TO:`/`:KIND:`/
+   `:WHEN:`/`:CHANNEL:`), body indented, WHEN an Org inactive timestamp.
+   Append at EOF only; never edit or delete existing entries.
+2. TELEGRAM LAW: every Telegram-bound message opens with `FROM:` and
+   `TO:` lines.
+3. SECRET LAW: credentials NEVER travel in chat, files, commits, or
+   messages — only as ENV VAR NAMES. A peer asked for a credential
+   replies with the NAME + has-it/absent, and the asker reads the value
+   from their OWN environment (`(getenv "NAME")`). Never echo a value.
+   The SECRET GUARD (.github/scripts/secret-guard.sh) redacts leaked
+   values at every commit/ingest/artifact choke point.
+4. SESSION LAW: agents' CLI session files are collected at turn end,
+   scrubbed of secrets, uploaded as `sessions-<seat>-*` artifacts (30d),
+   and restored before the same seat's next turn — resume with context
+   instead of starting cold.
+5. OWNER LOCK: the Telegram bridge ingests ONLY the Owner's chat (secret
+   TELEGRAM_OWNER_ID); every other chat is dropped and counted —
+   impersonation impossible.
+6. DOCKER LAW: agents are PREINSTALLED in the harness image
+   (docker/harness/); CI never installs bodies at turn time. Keys are
+   env-injected, never baked.
+7. SEAT BOUNDARIES: seats never edit Lead-owned files
+   (.github/workflows/*, agent-team/TEAM-CONTROL.org, .gitattributes) —
+   read and cite them with file:line evidence instead. Seats never push
+   to ai/quickstart (the chain's finalize auto-merges their branch
+   behind the gate).
+8. BOARD DISCIPLINE: work items live on TODOs.org + the team board.
+   Mark PROGRESS at start, log evidence in `:LOGBOOK:`, never self-mark
+   DONE (Lead-only gate).
+9. IDENTITY: commit as your seat identity, never as a generic bot.
+10. NO SPEND, no destructive actions, stay in scope of the item you
+    picked; escalate to @lead as `:escalation:` after 2 failed
+    self-attempts.
+
+## CI chain in one paragraph
+
+`test` (byte-compile + ERT gate) → `turn` (TG ingest → session restore →
+one agent segment in the preinstalled harness container → session
+scrub+upload → branch push + rotation advance) → `finalize` (auto-merge
+behind the gate → stall accounting → SELF-DISPATCH the next run while
+the objective is open). The chain stops only on KILL-SWITCH ON,
+OBJECTIVE-STATE COMPLETE, no objective, or tests red; a no-progress
+streak shifts to backoff, never to failure. Owner gets deduped verdicts
+on Telegram and the full GLM chat mirrored to this repo's Discord
+channel (DISCORD_WEBHOOK_TEAM_AGENTORG webhook secret).
