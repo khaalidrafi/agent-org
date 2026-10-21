@@ -72,3 +72,21 @@
     and falls back to the proven default, so a wrong id degrades to
     work-as-usual — if the fallback fires, REPORT the correct model id
     in chat as :note: @lead.
+
+* Relief Engineer — openrouter/minimax/minimax-m3.1-flash@goose (ACTING — FREE THROUGH 2026-10-25)
+  - :last-dispatch: 0
+  - duties: universal relief lane for every seat — overflow WO segments
+    and dead-lane rescue turns; the seat lead wires it into agent-team.yml
+    seat cases as the fallback slot BEFORE external accounts (zai →
+    minimax:free → codebuddy → qoder); never owns a board item first;
+    lane liveness :note: @lead after every run (quota/HTTP evidence)
+  - rank: HIRED per Owner order 2026-10-21 05:33Z #hq ("MiniMax M3.1 Flash
+    is free across a number of platforms... Hire 'em all.") — OpenRouter
+    :free promo ($0.00 in/out/cache, 1,000,000-token context, AA 43 /
+    Terminal-Bench 4.0 25.8), EXPIRY 2026-10-25 on record; INTERN until
+    one green segment lands here (proven-performance rule). Fallbacks
+    independent of the promo: zai/glm-4.7-flash → codebuddy@cli →
+    qwen3.8-flash@qoder. Body = goose (opencode body is
+    headless-defective, mesh/01 evidence in agent-team.el); OpenRouter
+    normalizes Goose's developer role server-side (demo/01 evidence).
+    Consumes the repo's existing OPENROUTER_API_KEY — no new secrets.
