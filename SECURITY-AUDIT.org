@@ -1,0 +1,24 @@
+#+TITLE: SECURITY-AUDIT.org — full-history secret audit (published per Owner order)
+#+AUDIT: 2026-10-21T04:20Z · auditor: Lead (glm-5.3-flash) · tool: scripts/audit_repo_secrets.py (agent-team.el)
+
+* SCOPE
+- every commit reachable from all refs: 86 commits, 448 unique blobs
+  (git rev-list --all x ls-tree -r x cat-file per blob)
+- worktree: recursive credential-shape scan
+
+* PATTERNS CHECKED
+github_pat_ / ghp_ / gho_ / x-access-token: / Telegram bot token shape
+(\d{8,10}:...) / sk- (word-bounded) / bearer JWT (eyJ...) / pt- (Qoder) /
+AKIA (AWS) / xox (Slack) / literal password=|secret= assignments
+
+* RESULT: CLEAN — zero credential-shaped strings in any commit or the
+  worktree.
+
+* NOTES
+- an earlier scan pass flagged two "sk-…" shapes in
+  tests/test-agent-org-review-teach.el — false positives: the regex bit
+  mid-word on "ri|sk-tiers-in-descending-order|". Word-bounded pattern
+  clears both. No rotation needed, nothing was ever a live credential.
+- law going forward: SECRET GUARD (.github/scripts/secret-guard.sh) is
+  wired at the tg-ingest / branch-push / staged-gate / session-artifact
+  choke points; credentials travel as ENV VAR NAMES only (SECRET LAW).
