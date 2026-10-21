@@ -252,7 +252,7 @@ jobs:
           port spec (agent-shell mechanism -> agent-org design), with the
           agent-org functions it touches. Read the item you pick COMPLETELY
           before coding; its sub-bullets ARE the acceptance criteria.
-          Roster: agent-team/MEMBERS.org. Global law: AGENTS.md (read FIRST; web\n          models get it inline in dispatch #1). Canonical manual (ref only):\n          khaalidrafi/agent-team.el templates/COMMON.org. Repo manual: +
+          Roster: agent-team/MEMBERS.org. Manual: AGENTS.md +
           CONVENTIONS.md (rendering rules + measurements — they outrank
           taste). Code: agent-org*.el at repo root; tests in tests/.
           PEER MESH — ONE CHAT BUFFER: agent-team/TEAM-CHAT.org. Append ONE
