@@ -59,3 +59,16 @@
     1588 Elo, cheapest near-leader at $0.75/M)
     (https://llm-stats.com/benchmarks/webdev-arena) ; INTERN for this team —
     no track record in repo or on gateway yet; intern round: 5 research tasks
+
+* Implementer (features) — DeepSeek-Flash @ qoder.com
+  - :last-dispatch: 0
+  - duties: second qoder seat — implements TODOs.org port items in file
+    order (agent-org*.el + ERT tests); pairs with the qwen3.8-flash seat
+    through TEAM-CHAT.org; takes priority-pin items when free
+  - rank: coding lane #2 (HIRED per Owner order 2026-10-21 03:53Z #hq:
+    "Qoder also has DeepSeek Flash free. Hire that, too.") — free tier,
+    zero spend; INTERN until one green segment lands on this team's CI
+    (proven-performance rule). Lane self-probes the qoder --model flag
+    and falls back to the proven default, so a wrong id degrades to
+    work-as-usual — if the fallback fires, REPORT the correct model id
+    in chat as :note: @lead.
