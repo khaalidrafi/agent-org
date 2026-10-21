@@ -11758,3 +11758,68 @@ folding story in this mode, and why it ships with no fold code of its own."
 
 (provide 'test-agent-org)
 ;;; test-agent-org.el ends here
+
+(ert-deftest test-agent-org-tool-board-folds-consecutive-same-calls ()
+  "Consecutive calls of one title and one status fold into one item
+carrying the count — `- COMPLETE run tests (x3)' — with every call's
+output kept beneath it, in call order (user ruling 2026-10-21,
+TODOs.org §Tool-call grouping).  The record is untouched: one entry per
+toolCallId, folding is rendering."
+  (let ((buf (agent-org-buffer-create "toolfold")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool
+     buf '((toolCallId . "a1") (title . "run tests") (status . "completed")
+           (rawOutput . ((formatted_output . "first run ok\n")))))
+    (agent-org-buffer-insert-tool
+     buf '((toolCallId . "a2") (title . "run tests") (status . "completed")
+           (rawOutput . ((formatted_output . "second run ok\n")))))
+    (agent-org-buffer-insert-tool
+     buf '((toolCallId . "a3") (title . "run tests") (status . "completed")
+           (rawOutput . ((formatted_output . "third run ok\n")))))
+    (agent-org-buffer-insert-tool
+     buf '((toolCallId . "b1") (title . "lint") (status . "completed")))
+    (let ((text (with-current-buffer buf (buffer-string))))
+      (should (= 1 (ao--count-occurrences
+                    text "^  - EXECUTED run tests [(]x3[)]$")))
+      (should (= 1 (ao--count-occurrences text "^  - EXECUTED lint$")))
+      ;; all three bodies survive the fold, call order preserved
+      (should (string-match-p "^    first run ok$" text))
+      (should (string-match-p "^    second run ok$" text))
+      (should (string-match-p "^    third run ok$" text))
+      (should (< (string-match "first run ok" text)
+                 (string-match "second run ok" text)
+                 (string-match "third run ok" text))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-tool-board-does-not-fold-across-status ()
+  "A RUNNING call never folds into COMPLETED ones of the same title:
+the keyword is the item's state, and a folded state would lie about
+every member.  Two calls that share a title but not a status stay two
+items, even back to back."
+  (let ((buf (agent-org-buffer-create "toolnofold")))
+    (agent-org-buffer-start-agent-turn buf nil)
+    (agent-org-buffer-insert-tool
+     buf '((toolCallId . "a1") (title . "run tests")
+           (status . "completed")))
+    (agent-org-buffer-insert-tool
+     buf '((toolCallId . "a2") (title . "run tests")
+           (status . "running")))
+    (let ((text (with-current-buffer buf (buffer-string))))
+      (should (= 1 (ao--count-occurrences text "^  - EXECUTED run tests$")))
+      (should (= 1 (ao--count-occurrences text "^  - RUNNING run tests$")))
+      (should-not (string-match-p "(x2)" text)))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-model-candidates-clean-bare-ids ()
+  "An option without a `name' shows its id minus the provider path:
+`minimax/MiniMax-M3' reads \"MiniMax-M3\".  The menu's contract is that
+the user never completes over bare ids, and the wire value stays the
+cdr so the request still sends what the agent advertised."
+  (let ((candidates (agent-org--model-candidates
+                     '((id . "model")
+                       (options . [((value . "minimax/MiniMax-M3")
+                                    (name . "MiniMax M3"))
+                                   ((value . "zai/glm-4.7-flash"))])))))
+    (should (equal candidates
+                   '(("MiniMax M3" . "minimax/MiniMax-M3")
+                     ("glm-4.7-flash" . "zai/glm-4.7-flash"))))))
