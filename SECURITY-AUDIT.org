@@ -22,3 +22,12 @@ AKIA (AWS) / xox (Slack) / literal password=|secret= assignments
 - law going forward: SECRET GUARD (.github/scripts/secret-guard.sh) is
   wired at the tg-ingest / branch-push / staged-gate / session-artifact
   choke points; credentials travel as ENV VAR NAMES only (SECRET LAW).
+
+* INDEPENDENT RE-VERIFICATION — 2026-10-21T05:04Z (auditor seat 16-b, dispatched by Team Lead)
+
+- VERDICT: first-pass audit CONFIRMED. CLEAN holds under independent re-scan with a superset of patterns. Rotation list: EMPTY.
+- Counts verified: 86 commits / 448 blobs match the pre-publication snapshot 0d753c8^ exactly. Current refs: 89 commits / 465 blobs / 725 objects across 7 refs; 0 unreachable; 0 stashes.
+- risk-tiers sk- FP claim verified: all 113 sk- history lines are identifiers/prose (longest suffix 25 chars < 32 required by token shape).
+- Findings: CONFIRMED 0 / LIKELY 0 / FALSE-POSITIVE 7 lines (${{ github.token }} interpolations in agent-team.yml, guard's own regex literal, audit doc pattern list, 3 README example UUIDs). Live-in-HEAD: all FP-class.
+- Hygiene orders (assign by best fit, claim in TEAM-CHAT.org): (1) secret-guard.sh GENERIC += gho_/gsk_/sk-ant-/AKIA/AIza/xox/Bearer/webhook URLs/PEM/JWT; (2) collect_values += DISCORD_* prefix; (3) .gitignore += .env*/key/pem classes; (4) audit tooling must force hidden-dir (.github/) coverage.
+- Full redacted report: docs/audit-2026-10-21-agent-org.md
