@@ -2443,6 +2443,9 @@ in the user's type-ahead box across the turn boundary."
                  (setf (plist-get session :turn)
                        (1+ (or (plist-get session :turn) 0)))
                  (plist-get session :turn))))
+    ;; the exact send moment — every transmitted prompt passes here
+    ;; (TIME LAW observers clock the task in at this instant)
+    (agent-org--run-prompt-send-hook text session)
     (setf (plist-get session :streaming) t)
     (agent-org-buffer-set-status buffer :state 'streaming
       :message (agent-org--queue-message "Sending…" session))
@@ -3654,6 +3657,29 @@ is non-nil and a response ends with an error."
   "Run `agent-org-response-finished-hook' with BUFFER, SESSION."
   (run-hook-with-args 'agent-org-response-finished-hook buffer session))
 
+(defcustom agent-org-prompt-send-hook nil
+  "Hook run immediately before a prompt goes on the wire to an agent.
+Fires at the EXACT send moment, once per transmitted prompt: typed sends
+(`agent-org-send'), programmatic sends (`agent-org-send-prompt-with-session')
+and queue drains (`agent-org--drain-queue' -> `agent-org--send-turn') all
+pass here.  Each function receives two arguments: PROMPT (the trimmed text)
+and SESSION (the session plist).  Hook errors are demoted to messages so a
+broken observer can never block or delay a send.
+
+Consumer example (khaalidrafi/agent-team.el agent-team-clock.el): the TIME
+LAW clock-in flips the dispatched board item to ONGOING and stamps the
+send instant into its :LOGBOOK: — the beginning of a task is the exact
+time its prompt is sent (Owner order 2026-10-26 10:42 #hq)."
+  :type 'hook
+  :group 'agent-org)
+
+(defun agent-org--run-prompt-send-hook (prompt session)
+  "Run `agent-org-prompt-send-hook' with PROMPT, SESSION; demote errors."
+  (condition-case err
+      (run-hook-with-args 'agent-org-prompt-send-hook prompt session)
+    (error (message "agent-org: prompt-send hook failed (ignored): %s"
+                    err))))
+
 (defun agent-org-send-prompt-with-session (prompt session)
   "Send PROMPT to the agent in SESSION.
 SESSION must be a session alist from `agent-org--session-for-buffer' or
@@ -3681,6 +3707,9 @@ as a new turn.  Returns the turn number if sent, nil if queued."
                        (setf (plist-get session :turn)
                              (1+ (or (plist-get session :turn) 0)))
                        (plist-get session :turn))))
+          ;; the exact send moment for programmatic sends (the queue drain
+          ;; path fires through `agent-org--send-turn' instead)
+          (agent-org--run-prompt-send-hook text session)
           (setf (plist-get session :streaming) t)
           (agent-org-buffer-set-status buffer :state 'streaming
             :message (agent-org--queue-message "Sending…" session))
