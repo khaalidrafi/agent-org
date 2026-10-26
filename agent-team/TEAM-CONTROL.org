@@ -2,6 +2,6 @@
 #+KILL-SWITCH: OFF
 #+OBJECTIVE: Port EVERY remaining ** TODO item in TODOs.org to DONE with green ERT tests, in file order; priority pins: Cross-agent sessions (Qoder <-> Codebuddy), Model selection menu, Steer. Owner deadline: 2026-10-21 morning Asia/Dhaka.
 #+OBJECTIVE-STATE: OPEN
-#+TURN: qwen3.8-flash@qoder (Implementer)
+#+TURN: deepseek-flash@qoder (Implementer)
 #+STALL-COUNT: 34
 #+LAST-VERDICT:
