@@ -19,7 +19,8 @@ $EMACS -Q --batch -l tests/acp-mock.el \
   --eval "(setq byte-compile-error-on-warn t)" \
   --eval "(batch-byte-compile)" \
   agent-org-autoloads.el agent-org-buffer.el agent-org-loader.el \
-  agent-org-providers.el agent-org-review-teach.el agent-org.el
+  agent-org-providers.el agent-org-review-teach.el agent-org.el \
+  agent-org-batch.el
 
 # 2) offline ERT suite (mock ACP in tests/, never a real package).
 $EMACS -Q --batch \
@@ -33,14 +34,21 @@ $EMACS -Q --batch \
   --eval "(add-to-list 'load-path \".\")" \
   --eval "(add-to-list 'load-path \"tests\")" \
   -l tests/acp-mock.el \
+  --eval "(load \"tests/test-agent-org-batch.el\")" \
+  --eval "(ert-run-tests-batch-and-exit)"
+
+$EMACS -Q --batch \
+  --eval "(add-to-list 'load-path \".\")" \
+  --eval "(add-to-list 'load-path \"tests\")" \
+  -l tests/acp-mock.el \
   --eval "(load \"tests/test-agent-org-review-teach.el\")" \
   --eval "(ert-run-tests-batch-and-exit)"
 
-# 3) loader smoke (same contract as run-loader-test.sh, offline).
-$EMACS -Q --batch \
-  --eval "(add-to-list 'load-path \".\")" \
-  -l tests/acp-mock.el \
-  --eval "(load \"loader-test.el\")" \
-  --eval "(ert-run-tests-batch-and-exit)"
+# 3) headless send E2E (the REAL landing proof for the send path:
+#    batch send over the pinned acp package against tests/fake-acp-agent.py
+#    — no model, no API key, no goose binary; the goose-dependent
+#    loader-test.el is a LIVE smoke, it never ran on a CI runner and
+#    kept this gate red for four days).
+bash tests/e2e-agent-org-batch.sh
 
-echo "GATE GREEN: byte-compile clean, ERT suite green, loader smoke green"
+echo "GATE GREEN: byte-compile clean, ERT suite green, send E2E green"
