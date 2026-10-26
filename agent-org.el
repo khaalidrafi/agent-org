@@ -882,6 +882,17 @@ value's truthiness."
   "Human name of the provider SESSION was opened with, for messages."
   (plist-get (agent-org--provider-spec (plist-get session :name)) :name))
 
+(defun agent-org--stamp-to-time (stamp)
+  "ISO-8601 session STAMP as a time value, or nil when it is not one.
+`date-to-time' is strict about the date-only spelling: Emacs 28 signals
+\"Invalid date: 2026-09-01\" on it while Emacs 29 reads it as midnight, and
+a bare `updatedAt' is exactly that shape from at least one agent.  A session
+from this year is worth a date on either Emacs, so a stamp with no clock
+part gets midnight appended before the second try."
+  (or (ignore-errors (date-to-time stamp))
+      (and (string-match-p "\\`[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\'" stamp)
+           (ignore-errors (date-to-time (concat stamp "T00:00:00"))))))
+
 (defun agent-org--format-session-date (stamp)
   "ISO-8601 session stamp STAMP as a short human date, or nil.
 Today and yesterday are spelled out, because they are the chats you are
@@ -891,7 +902,7 @@ worth reading on a session from 2024.  A missing or unparsable stamp
 yields nil rather than a candidate ending in \"(nil)\"."
   (when (and (stringp stamp) (not (string-empty-p stamp)))
     (ignore-errors
-      (let ((then (date-to-time stamp)))
+      (when-let ((then (agent-org--stamp-to-time stamp)))
         (cond
          ((equal (format-time-string "%F" then) (format-time-string "%F"))
           (format "Today, %s" (format-time-string "%H:%M" then)))
@@ -2017,7 +2028,7 @@ kind is handled here and nothing is delegated to another handler."
          (agent-org-buffer-set-status buffer :state 'awaiting :message "Permission required")
          (unwind-protect
              (condition-case nil
-                 (let ((option-id (agent-org--prompt-permission opts)))
+                 (let ((option-id (agent-org--prom[REDACTED:pattern] opts)))
                    (acp-send-response
                     :client client
                     :response
@@ -2036,7 +2047,7 @@ kind is handled here and nothing is delegated to another handler."
        (agent-org-buffer-set-status
         buffer :message (format "Unhandled request: %s" method))))))
 
-(defun agent-org--prompt-permission (options)
+(defun agent-org--prom[REDACTED:pattern] (options)
   "Prompt the user over ACP permission OPTIONS; return the chosen optionId.
 
 OPTIONS are PermissionOption objects -- alists keyed `optionId', `name'
@@ -3041,7 +3052,7 @@ SEQUENCE -- space then tab -- never splits at all, and leaves a whole
 `/proc/loadavg' line as one field.  Measured here: it answered nil."
   (let ((fields (split-string (or text "") "[ \t\n\r]+" t)))
     (when (>= (length fields) 3)
-      (mapcar #'string-to-number (take 3 fields)))))
+      (mapcar #'string-to-number (seq-take fields 3)))))
 
 (defun agent-org--load-average ()
   "The 1, 5 and 15 minute load averages as three numbers, or nil.
@@ -3195,9 +3206,8 @@ separator, and a table without one is not a table to the parser."
    "| " (mapconcat #'agent-org--table-cell headers " | ") " |\n"
    "| " (mapconcat (lambda (_) "---") headers " + ") " |\n"
    (mapconcat (lambda (row)
-                (concat "| " (mapconcat #'agent-org--table-cell row " | ")
-                        " |\n"))
-              rows)
+                (concat "| " (mapconcat #'agent-org--table-cell row " | ")))
+              rows "\n")
    "\n"))
 
 (defun agent-org--resource-block (sessions)
@@ -3449,7 +3459,7 @@ nothing at all."
 
 (defun agent-org--report-transcripts (directory)
   "Every `.org' transcript in DIRECTORY, newest first; nil if there is none.
-DIRECTORY is the result of resolving `agent-org-transcript-directory' the way
+DIRECTORY is the result of resolving `agent-org-transcri[REDACTED:pattern]' the way
 `agent-org-buffer--transcript-file' resolves it -- a relative name against
 the calling buffer's `default-directory', which in a chat is the session's
 own cwd -- so one project's report reads one project's chats.  A missing
@@ -3550,7 +3560,7 @@ report is never stale in the way a cached summary is: it is a fresh read of
 data that only a turn boundary changes."
   (interactive "P")
   (let* ((directory (file-name-as-directory
-                     (expand-file-name agent-org-transcript-directory)))
+                     (expand-file-name agent-org-transcri[REDACTED:pattern])))
          (session (and only-this (agent-org--session-for-buffer (current-buffer))))
          (id (plist-get session :session-id))
          (summaries (mapcar #'agent-org--report-summary

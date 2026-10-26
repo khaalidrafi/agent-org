@@ -107,6 +107,40 @@
   :group 'agent-org
   :prefix "agent-org-buffer-")
 
+;;;; Fold primitives, on whatever Org is loaded.
+
+(eval-when-compile
+  ;; Org 9.6 renamed the two fold entry points we need; Emacs 28's BUILT-IN
+  ;; Org (9.5.5) still spells them `org-flag-region' and
+  ;; `org-hide-drawer-toggle'.  Declare both spellings regardless of which
+  ;; half is present here, because `byte-compile-error-on-warn' turns an
+  ;; unknown function into a build error, not a warning.
+  (declare-function org-fold-region "org-fold" (beg end &optional direction d))
+  (declare-function org-fold-hide-drawer-toggle "org-fold" (&optional hide))
+  (declare-function org-hide-drawer-toggle "org" (&optional hide force no-error element))
+  (declare-function org-flag-region "org-macs" (from to flag spec)))
+
+(defun agent-org-buffer--fold-region (beg end hide)
+  "Fold (HIDE non-nil) or reveal the region BEG..END as a drawer body.
+Org 9.6+ does this through `org-fold-region'; the built-in Org of Emacs 28
+has no such function and flags the region with `org-flag-region' and the
+`outline' category a drawer fold used there.  Both spellings mark the same
+bytes, so `invisible-p' — the only reader of the result, and the guard that
+keeps a repaint from walking a board it need not touch — answers the same
+either way."
+  (if (fboundp 'org-fold-region)
+      (org-fold-region beg end hide 'drawer)
+    (org-flag-region beg end hide 'outline)))
+
+(defun agent-org-buffer--drawer-toggle ()
+  "Toggle the drawer at point, on whatever Org is loaded.
+The user's own gesture, so the org-element cache is warm — the mid-stream
+repaint deliberately avoids this path and drives
+`agent-org-buffer--fold-region' instead (CONVENTIONS.md §5)."
+  (if (fboundp 'org-fold-hide-drawer-toggle)
+      (org-fold-hide-drawer-toggle)
+    (org-hide-drawer-toggle)))
+
 ;;;; Lite mode (the minimum-resources scope)
 
 (defcustom agent-org-lite-mode nil
@@ -1168,7 +1202,7 @@ box stays typeable.  nil when no box is open.")
 (defvar-local agent-org-buffer--turn-anchor nil
   "Marker at the start of the current exchange's heading, if any.
 The heading's text is the user's prompt, and one heading covers the whole
-prompt-response pair.  The pair's drawers are located relative to this
+prom[REDACTED:pattern] pair.  The pair's drawers are located relative to this
 anchor, not to the buffer end, because the body trails it: the answer's
 quote block, the `:thinking:' drawer, the `:tool:' drawer and the
 type-ahead box all live after the heading, so the heading is never the
@@ -2119,7 +2153,7 @@ read-only pass and no drawer re-fold."
                     (save-excursion
                       (goto-char beg)
                       (when (re-search-forward (format "^:%s:" (car state)) nil t)
-                        (org-fold-hide-drawer-toggle)))))))))))))
+                        (agent-org-buffer--drawer-toggle)))))))))))))
 
 ;;;; Protection + live prompt
 
@@ -2598,7 +2632,9 @@ he does not want back."
   (let ((out (copy-sequence prompts)))
     (dolist (text shown out)
       (let ((at (seq-position out text #'equal)))
-        (when at (setq out (seq-remove-at-position out at)))))))
+        ;; Splice, not `seq-remove-at-position' — that one is Emacs 29 and
+        ;; the splice is the same operation on any list.
+        (when at (setq out (append (seq-take out at) (seq-drop out (1+ at)))))))))
 
 (defun agent-org-buffer--queue-append (prompts)
   "Add PROMPTS as entries at the END of this buffer's queue region.
@@ -3407,8 +3443,8 @@ typed, because all of this is rendering and none of it is the wire."
       (if (string-empty-p flat) agent-org-buffer--prompt-word flat))))
 
 (defun agent-org-buffer-begin-exchange (buffer text)
-  "Open one prompt-response pair in BUFFER, headed by the question TEXT.
-User order: \"there will be ONE heading for each prompt-response pair.  The
+  "Open one prom[REDACTED:pattern] pair in BUFFER, headed by the question TEXT.
+User order: \"there will be ONE heading for each prom[REDACTED:pattern] pair.  The
 heading will contain the prompt.\"  So this replaces the old `* PROMPT' echo
 heading: the sent question is no longer body text under a generic word, it IS
 the heading, and the answer that follows belongs to it
@@ -4529,7 +4565,8 @@ STARTS below the answer's closing `#+end_quote', not at the heading, because
 an agent that quotes a transcript back at you can put the word `:thinking:'
 in its own text, and a search from the heading would find that line and
 redraw the reply instead of the drawer.  Fold
-state is driven with `org-fold-region' directly:
+state is driven with `agent-org-buffer--fold-region' directly — the loaded
+Org's own region fold, whichever name it answers to:
 `org-fold-hide-drawer-toggle' validates the org-element cache, which
 is stale for the just-streamed region until it is re-fontified, and
 raises \"Not at a drawer\".
@@ -4599,7 +4636,7 @@ one drawer's body."
                     (forward-line 1)
                     (let ((content (point)))
                       (re-search-forward "^:end:$")
-                      (org-fold-region content (line-end-position) t 'drawer))))
+                      (agent-org-buffer--fold-region content (line-end-position) t))))
                 ;; Pull the answer's marker back above the drawer we just laid
                 ;; down.  A rear-advancing marker sits at the end of the answer
                 ;; text, and a drawer created here -- which is `render-end',
@@ -4637,7 +4674,7 @@ one drawer's body."
                    ;; org.el:7089), and a board that stayed folded after
                    ;; that would hide what the agent is doing right now.
                    (keep (and fold (invisible-p content))))
-              ;; Only when the body really IS folded: `org-fold-region'
+              ;; Only when the body really IS folded: a region fold
               ;; walks the region, and an unconditional call on the open
               ;; board of a heavy turn doubled the per-paint cost (measured
               ;; in `test-agent-org-one-drawer-board-redraw-cost').  The
@@ -4645,13 +4682,13 @@ one drawer's body."
               ;; fold Org stores as an overlay would otherwise survive it
               ;; and cover the freshly inserted body.
               (when (invisible-p content)
-                (org-fold-region content drawer-end keep 'drawer))
+                (agent-org-buffer--fold-region content drawer-end keep))
               (delete-region content body-end)
               (goto-char content)
               (insert body "\n")
               (agent-org-buffer--protect content (point))
               (when keep
-                (org-fold-region content (line-end-position) t 'drawer)))))))))
+                (agent-org-buffer--fold-region content (line-end-position) t)))))))))
 
 (defun agent-org-buffer--none-flush (lines)
   "Return LINES with the drawer body's two columns removed.
@@ -5164,7 +5201,7 @@ renderer — the buffer — and the file simply agrees with it."
   :type 'boolean
   :group 'agent-org-buffer)
 
-(defcustom agent-org-transcript-directory ".agent-org"
+(defcustom agent-org-transcri[REDACTED:pattern] ".agent-org"
   "Where the per-session Org transcripts go, relative to the chat's project.
 The default is a RELATIVE directory name, and a relative name is resolved
 against the chat buffer's `default-directory' — the session's cwd — so
@@ -5210,7 +5247,7 @@ transcript editable like any other Org file."
   "Non-nil when FILE is an agent-org transcript, judged by its directory.
 The transcript's NAME is a sanitized session id and carries no marker of its
 own, so the containing DIRECTORY is the signal: transcripts sit directly
-inside a directory named like `agent-org-transcript-directory' (`.agent-org'
+inside a directory named like `agent-org-transcri[REDACTED:pattern]' (`.agent-org'
 by default, or whatever basename an absolute setting ends in).  A relative
 setting is reduced to its basename here, so the answer is the same whatever
 `default-directory' happens to resolve it against.
@@ -5221,7 +5258,7 @@ is exactly when a person `find-file's a transcript to read it."
               (parent (file-name-nondirectory (directory-file-name dir)))
               (wanted (file-name-nondirectory
                         (directory-file-name
-                         (expand-file-name agent-org-transcript-directory)))))
+                         (expand-file-name agent-org-transcri[REDACTED:pattern])))))
     (and (> (length parent) 0)
          (string-equal parent wanted))))
 
@@ -5288,14 +5325,14 @@ the user turned off."
 
 (defun agent-org-buffer--transcript-file (session-id)
   "Path of SESSION-ID's transcript, resolved against THIS buffer's project.
-`agent-org-transcript-directory' is a relative name by default, and
+`agent-org-transcri[REDACTED:pattern]' is a relative name by default, and
 `expand-file-name' is what turns that into \"the chat's own directory\":
 called with the chat buffer current, `default-directory' is the session cwd
 the buffer was created in.  An absolute setting expands to itself, so one
 global pool is still a setting away rather than a code change."
   (expand-file-name (agent-org-buffer--transcript-name session-id)
                     (file-name-as-directory
-                     (expand-file-name agent-org-transcript-directory))))
+                     (expand-file-name agent-org-transcri[REDACTED:pattern]))))
 
 (defun agent-org-buffer-transcript-queue (session-id)
   "The prompts SESSION-ID's transcript has waiting, oldest first; nil if none.

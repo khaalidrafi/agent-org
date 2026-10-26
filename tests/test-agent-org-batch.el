@@ -23,6 +23,9 @@
 
 (require 'ert)
 (require 'ert-x)
+;; `ert-with-temp-directory' is Emacs 29; the CI harness runs 28.2.  Shared
+;; with the main suite — see tests/compat.el.
+(load (expand-file-name "compat.el" (file-name-directory load-file-name)))
 ;; the mock answers `acp' so `agent-org-batch--load-deps' succeeds and
 ;; failure-path tests exercise the CONTRACT (env, guard, exit codes),
 ;; not a missing dependency; the happy path is the E2E script's job
