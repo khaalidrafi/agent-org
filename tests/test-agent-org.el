@@ -22,8 +22,11 @@
 
 (require 'ert)
 ;; `ert-with-temp-directory' — the transcript tests are the first here to
-;; touch the disk, and that macro lives in ert-x, not ert.
+;; touch the disk, and that macro lives in ert-x, not ert.  Emacs 28's ert-x
+;; has no such macro and no `setopt' either, so both suites share the prelude
+;; below rather than each re-deriving them.
 (require 'ert-x)
+(load (expand-file-name "compat.el" (file-name-directory load-file-name)))
 ;; A `.elc' beside the sources wins the load race, so a suite run after a
 ;; package-compile step would test the 4-am image of the code rather than
 ;; the edit under test — silently, and the warning only goes to
@@ -31,7 +34,7 @@
 (setq load-prefer-newer t)
 ;; The transcript writer is ON by default, and most fixtures below produce a
 ;; Ready session with an id — so without this guard every such test mirrors its
-;; chat into `agent-org-transcript-directory', which for a relative default is
+;; chat into `agent-org-transcri[REDACTED:pattern]', which for a relative default is
 ;; the directory the suite happens to be running in.  Measured: a full run
 ;; dropped 22 `sid-*.org' files in the package tree.  A test that cares about
 ;; the file says so with `ao--transcript-in', which turns the writer back on
@@ -785,6 +788,10 @@ fold choice per drawer, and the two differ."
 package just opened.  A default that an unrelated subsystem can take away
 is not a default, so the variable goes buffer-local NIL here and stays t
 for every other Org buffer."
+  ;; Org grew this startup fold, and the variable that refuses it, in 9.6; on
+  ;; the built-in Org of Emacs 28 there is no such default to refuse, so the
+  ;; question below has no subject.
+  (skip-unless (boundp 'org-hide-drawer-startup))
   (let ((buf (agent-org-buffer-create "startfold")))
     (with-current-buffer buf
       (should-not org-hide-drawer-startup)
@@ -1465,7 +1472,7 @@ what it must not do twice."
 
 ;;;; Prompt protection helpers
 
-(ert-deftest test-agent-org-buffer-insert-prompt-idempotent ()
+(ert-deftest test-agent-org-buffer-insert-prom[REDACTED:pattern] ()
   "insert-prompt adds one box; repeats -- streaming included -- are no-ops.
 The box is persistent (agent-shell's model): streaming cannot stack a
 second one, because the open box IS the type-ahead while the turn runs."
@@ -1670,7 +1677,7 @@ line, `read-only' and all."
          (session (list :name 'test :client nil :buffer buf :session-id "s"))
          (made nil)
          (sent 0))
-    (cl-letf (((symbol-function 'agent-org--prompt-permission)
+    (cl-letf (((symbol-function 'agent-org--prom[REDACTED:pattern])
                (lambda (_opts) (signal 'quit nil)))
               ((symbol-function 'acp-make-session-request-permission-response)
                (lambda (&rest kw) (push kw made) kw))
@@ -4242,13 +4249,33 @@ page the directory again, even when the first lookup came back empty."
       (save-excursion
         (goto-char (point-min))
         (re-search-forward "^:MODES:")
-        (org-fold-hide-drawer-toggle))
+        (agent-org-buffer--drawer-toggle))
       (agent-org-buffer-refresh-metadata buf)
       (should-not (ao--drawer-folded-p "MODES"))
       (should (ao--drawer-folded-p "CONFIG"))
       ;; still a single block
       (should (= 1 (ao--count-occurrences (buffer-string) "^:MODES:"))))
     (kill-buffer buf)))
+
+(ert-deftest test-agent-org-fold-region-speaks-the-loaded-org ()
+  "The fold helper hides and shows with whichever API this Org actually has.
+Org 9.6 renamed `org-flag-region' to `org-fold-region', so calling either
+name directly is a void-function on one of the two machines this package is
+built on — CI runs the built-in Org of Emacs 28, the user runs ELPA 9.8.
+Every fold the package performs goes through `agent-org-buffer--fold-region'
+so the two spellings must mark the same bytes: `invisible-p' is the only
+reader, both of what the repaint consults before walking a board and of
+every drawer-fold assertion below."
+  (with-temp-buffer
+    (org-mode)
+    (let ((inhibit-read-only t))
+      (insert ":probe:\nhidden line\n:end:\n"))
+    (let ((beg (save-excursion (goto-char (point-min)) (line-beginning-position 2)))
+          (end (save-excursion (goto-char (point-min)) (line-beginning-position 3))))
+      (agent-org-buffer--fold-region beg end t)
+      (should (invisible-p beg))
+      (agent-org-buffer--fold-region beg end nil)
+      (should-not (invisible-p beg)))))
 
 (ert-deftest test-agent-org-metadata-refresh-idempotent ()
   "Repeated ready/notification updates never duplicate the block."
@@ -4521,7 +4548,7 @@ would hijack every visit (see the test after this one)."
   (let* ((dir (locate-user-emacs-file "agent-org-test-transcripts/"))
          ;; a transcript is judged by its directory, so binding the option to
          ;; this one makes everything inside it a mirror
-         (agent-org-transcript-directory (file-name-as-directory dir))
+         (agent-org-transcri[REDACTED:pattern] (file-name-as-directory dir))
          (file (concat dir "sid-kw.org"))
          (agent-org-transcribe nil)
          buffer)
@@ -6500,7 +6527,7 @@ before the id, because that is what a completion UI lines up."
                               (string-width (substring l 0 (string-match-p "\\[" l))))
                             labels)))))
 
-(ert-deftest test-agent-org-prompt-collection-pins-our-order ()
+(ert-deftest test-agent-org-prom[REDACTED:pattern]-pins-our-order ()
   "The candidate order IS information (newest first, `New session' on
 top), and a completion UI is free to re-sort a plain list collection.
 Handing over a function with `display-sort-function' set to `identity' is
@@ -6616,6 +6643,19 @@ last, because it is what actually selects the session."
     (dolist (label labels)
       (should (string-match-p "\\[[a-z]+\\]\\'" label))
       (should-not (string-match-p "\n" label)))))
+
+(ert-deftest test-agent-org-format-session-date-reads-a-date-only-stamp ()
+  "A stamp with no clock part is still a date, on either Emacs.
+Agents do send `updatedAt' as a bare `2026-09-01', and `date-to-time'
+refuses exactly that spelling on Emacs 28 while 29 reads it as midnight —
+so on the older one every candidate would lose its recency column and the
+list would say nothing about which chat is newer.  The fallback is the
+midnight 29 infers, not a made-up clock."
+  (should (string-match-p "\\`Sep 01, "
+                          (agent-org--format-session-date "2026-09-01")))
+  (should-not (agent-org--format-session-date "not a date"))
+  (should-not (agent-org--format-session-date ""))
+  (should-not (agent-org--format-session-date nil)))
 
 (ert-deftest test-agent-org-resume-uses-the-paged-listing-too ()
   "Resume and start share the pager, because two renderers would drift;
@@ -7142,7 +7182,7 @@ The feature has exactly two knobs and every writer test wants both:
 `user-emacs-directory' where the user's own transcripts live."
   (declare (indent 1))
   `(let ((agent-org-transcribe t)
-         (agent-org-transcript-directory ,dir))
+         (agent-org-transcri[REDACTED:pattern] ,dir))
      ,@body))
 
 (defun ao--transcript-files (dir)
@@ -7242,7 +7282,7 @@ agent split its reply, the document is the reply."
                                    "^:tool:$" "^  - RUNNING grep -rn foo$")))
               (kill-buffer buf))))))))
 
-(ert-deftest test-agent-org-transcript-rewrites-a-tool-line-instead-of-logging-it ()
+(ert-deftest test-agent-org-transcri[REDACTED:pattern]-a-tool-line-instead-of-logging-it ()
   "A tool that finished appears as EXECUTED once — no RUNNING line above it.
 This is the test that says \"mirror, not append log\": a per-chunk append can
 only add, so an in-place state change would leave the superseded line in the
@@ -7409,7 +7449,7 @@ direction: someone whose transcripts are their own org files under version
 control must be able to turn the writer off without patching it out."
   (ert-with-temp-directory temp-dir
     (let ((agent-org-transcribe nil)
-          (agent-org-transcript-directory temp-dir))
+          (agent-org-transcri[REDACTED:pattern] temp-dir))
       (ao--capture-wire
         (let* ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-off"))
                (sent nil))
@@ -7573,7 +7613,7 @@ skips, never this.  A silent success would read as \"the transcript updated\"
 when no transcript exists to update."
   (ert-with-temp-directory temp-dir
     (let ((agent-org-transcribe nil)
-          (agent-org-transcript-directory temp-dir))
+          (agent-org-transcri[REDACTED:pattern] temp-dir))
       (let* ((pair (ao--make-test-session "off-sync"))
              (buf (car pair)))
         (agent-org-buffer-set-status buf :session-id "sid-nooff" :state 'ready)
@@ -7582,7 +7622,7 @@ when no transcript exists to update."
         (should (null (ao--transcript-files temp-dir)))
         (kill-buffer buf)))))
 
-(ert-deftest test-agent-org-transcript-sanitizes-an-id-that-looks-like-a-path ()
+(ert-deftest test-agent-org-transcri[REDACTED:pattern]-an-id-that-looks-like-a-path ()
   "A session id is agent text, and it never gets to choose where a file lands.
 Qoder issues UUIDs and Goose issues timestamps, but the id arrives over the
 wire and becomes a file name, so every separator becomes a dash:
@@ -7602,7 +7642,7 @@ server the user pointed Emacs at."
                                                         (directory-file-name temp-dir)))))
           (kill-buffer buf))))))
 
-(ert-deftest test-agent-org-transcript-directory-default-is-a-project-dot-directory ()
+(ert-deftest test-agent-org-transcri[REDACTED:pattern]-default-is-a-project-dot-directory ()
   "The default is the RELATIVE name `.agent-org', not a path under ~/.emacs.d.
 User order: \"Transcripts should live under a project's .agent-org/.\"  A
 chat's own directory is the one place its transcript is found without a
@@ -7611,8 +7651,8 @@ default is what makes it so, because `expand-file-name' resolves it against
 the buffer's `default-directory', which is the session cwd.  An absolute
 value is still honoured (see the test below), so one global pool is a
 setting away."
-  (should (equal agent-org-transcript-directory ".agent-org"))
-  (should-not (file-name-absolute-p agent-org-transcript-directory)))
+  (should (equal agent-org-transcri[REDACTED:pattern] ".agent-org"))
+  (should-not (file-name-absolute-p agent-org-transcri[REDACTED:pattern])))
 
 (ert-deftest test-agent-org-transcript-lands-in-the-chats-own-project ()
   "A chat of ~/proj writes ~/proj/.agent-org/<sid>.org.
@@ -7622,7 +7662,7 @@ under the project, after the handshake that names the session.  A project
 keeps its own transcript the way it keeps its own README."
   (ert-with-temp-directory project
     (let ((agent-org-transcribe t)
-          (agent-org-transcript-directory ".agent-org")
+          (agent-org-transcri[REDACTED:pattern] ".agent-org")
           (default-directory (file-name-as-directory project)))
       (ao--capture-wire
         (let ((buf (ao--chat-on-model "qmodel-large" "QModel Large"
@@ -7640,7 +7680,7 @@ are Ready with the same model, so only the cwd distinguishes them."
   (ert-with-temp-directory proj-a
     (ert-with-temp-directory proj-b
       (let ((agent-org-transcribe t)
-            (agent-org-transcript-directory ".agent-org"))
+            (agent-org-transcri[REDACTED:pattern] ".agent-org"))
         (ao--capture-wire
           (let* ((default-directory (file-name-as-directory proj-a))
                  (buf-a (ao--chat-on-model "qmodel-large" "QModel Large" "sid-a"))
@@ -7662,7 +7702,7 @@ relative setting work."
   (ert-with-temp-directory project
     (ert-with-temp-directory pool
       (let ((agent-org-transcribe t)
-            (agent-org-transcript-directory (file-name-as-directory pool))
+            (agent-org-transcri[REDACTED:pattern] (file-name-as-directory pool))
             (default-directory (file-name-as-directory project)))
         (ao--capture-wire
           (let ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-abs")))
@@ -7884,7 +7924,7 @@ change the status, and it stays open
         (save-excursion
           (goto-char (point-min))
           (re-search-forward "^:COMMANDS:")
-          (org-fold-hide-drawer-toggle))
+          (agent-org-buffer--drawer-toggle))
         (agent-org-buffer-set-status
          buf :config (list `((name . "Model") (currentValue . "qmodel-large"))))
         (agent-org-buffer-refresh-metadata buf)
@@ -8056,7 +8096,7 @@ Most resumes have nothing waiting, and one invented from a stale file
 would spend tokens the user never asked for.  Absent block, absent
 `session/prompt'."
   (ert-with-temp-directory temp-dir
-    (let ((agent-org-transcript-directory temp-dir)
+    (let ((agent-org-transcri[REDACTED:pattern] temp-dir)
           (agent-org-transcribe nil))
       (with-temp-file
           (expand-file-name (agent-org-buffer--transcript-name "sid-none")
@@ -8080,7 +8120,7 @@ A session resumed with `agent-org-transcribe' off, or one that predates
 the feature, has nothing to read — and a resume that failed on a missing
 file would be a regression for every user who never queued a prompt."
   (ert-with-temp-directory temp-dir
-    (let ((agent-org-transcript-directory
+    (let ((agent-org-transcri[REDACTED:pattern]
            (expand-file-name "nope/" temp-dir))
           (agent-org-transcribe nil))
       (ao--capture-wire
@@ -8842,9 +8882,9 @@ session streaming, so the caller decides how the turn ends."
   (agent-org-send))
 
 (ert-deftest test-agent-org-exchange-heading-wears-the-prompt ()
-  "ONE heading per prompt-response pair, and its text IS the prompt.
+  "ONE heading per prom[REDACTED:pattern] pair, and its text IS the prompt.
 User order: \"From now on, there will be ONE heading for each
-prompt-response pair.  The heading will contain the prompt.\"  So the sent
+prom[REDACTED:pattern] pair.  The heading will contain the prompt.\"  So the sent
 question is no longer echoed under a `* PROMPT' heading: it becomes the
 heading itself, and the exchange has exactly one.  The type-ahead box keeps
 its `* PROMPT' heading because it is an input control, not a pair."
@@ -10944,12 +10984,12 @@ confidence."
 ;; drawer shape was chosen to avoid.
 
 (defmacro ao--report-in (dir &rest body)
-  "Run BODY with `agent-org-transcript-directory' bound to DIR.
+  "Run BODY with `agent-org-transcri[REDACTED:pattern]' bound to DIR.
 The report has one input, a directory; binding it is the whole setup, and
 DIR is absolute because a test that read the user's real `.agent-org/'
 would be a test that reports the user's chats."
   (declare (indent 1))
-  `(let ((agent-org-transcript-directory (file-name-as-directory ,dir)))
+  `(let ((agent-org-transcri[REDACTED:pattern] (file-name-as-directory ,dir)))
      ,@body))
 
 (defun ao--report-transcript (dir name title provider model turns)
@@ -11008,7 +11048,7 @@ compare two chats and the table to see the day."
 
 (ert-deftest test-agent-org-clock-report-reads-one-projects-directory-only ()
   "Scope is the project's transcript directory, never the user's agenda.
-`agent-org-transcript-directory' is RELATIVE by default and resolves against
+`agent-org-transcri[REDACTED:pattern]' is RELATIVE by default and resolves against
 `default-directory' exactly as the writer resolves it, so one project's
 report cannot drag in another project's chats -- and it must not do so
 through `org-agenda-files' either, which is a global list of a person's own
@@ -11026,11 +11066,11 @@ planted as a transcript in a directory the report is NOT pointed at."
                    (expand-file-name ".agent-org/sid-in.org" project))
       ;; `let*', not `let': a plain `let' evaluates every init form in the
       ;; OUTER environment, so `(agent-org-clock-report)' would run BEFORE
-      ;; `default-directory' and `agent-org-transcript-directory' were bound
+      ;; `default-directory' and `agent-org-transcri[REDACTED:pattern]' were bound
       ;; and read the real repo's `.agent-org' instead of this project's.
       (let* ((org-agenda-files (list (expand-file-name "sid-out.org" elsewhere)))
              (default-directory (file-name-as-directory project))
-             (agent-org-transcript-directory ".agent-org")
+             (agent-org-transcri[REDACTED:pattern] ".agent-org")
              (buffer (agent-org-clock-report)))
         (unwind-protect
             (with-current-buffer buffer

@@ -17,7 +17,7 @@ Top to bottom, a session buffer is exactly:
 
 1. **One auto-managed metadata block** at `point-min` (see §2).
 2. A blank line separating it from the conversation.
-3. The conversation: **one exchange per prompt-response pair**, each exchange
+3. The conversation: **one exchange per prom[REDACTED:pattern] pair**, each exchange
    ONE level-1 heading whose text is the prompt, the answer under it inside an
    Org `quote` block preceded by `#+ATTR_TEXINFO: :author <model>` (see the
    exchange rule below).  The exchange carries a `:thinking:` drawer of the
@@ -80,7 +80,7 @@ Nothing else may live in the body.  Status, progress and errors never
 become text — see §6.
 
 **One heading per exchange, and the heading IS the prompt** — the user's order:
-*"From now on, there will be ONE heading for each prompt-response pair.  The
+*"From now on, there will be ONE heading for each prom[REDACTED:pattern] pair.  The
 heading will contain the prompt.  And, the response should be contained in an Org
 quote block, with the narrator/author as the model name."*  So `agent-org-buffer-begin-exchange`
 writes the prompt as the heading (its first line after the `* `, every later line
@@ -446,13 +446,25 @@ agent produced first is drawn first.
 
 ## 5. Folding
 
-Fold state is driven **directly** with `org-fold-region`, never
+Fold state is driven **directly** with `agent-org-buffer--fold-region`, never
 `org-fold-hide-drawer-toggle`.  Reason (documented in our source, discovered
 the hard way): `org-fold-hide-drawer-toggle` validates the `org-element` cache
 before it acts, and while a turn streams that cache is stale — the drawer lines
 are rewritten underneath it by the render path — so it signals
-`"Not at a drawer"` and the fold silently does not happen.  `org-fold-region`
+`"Not at a drawer"` and the fold silently does not happen.  A region fold
 works on positions alone and is safe on the hot path.
+
+The helper exists because Org *renamed* the region fold: `org-fold-region`
+arrived with Org 9.6, and the built-in Org of Emacs 28.2 — the one the CI
+harness compiles and tests against (`apt-get install emacs-nox`) — is 9.5.5,
+where the same job is `org-flag-region … 'outline`.  Calling either name
+directly is a `void-function` on one of the two machines, which is exactly how
+the whole suite (356 of 432 tests) went red on CI while staying green on the
+user's Emacs.  `agent-org-buffer--drawer-toggle` is the same argument for the
+user's own gesture, whose only call site is the metadata refresh, where the
+cache is warm.  `invisible-p` is the only reader of the result, and both
+spellings mark the same bytes — pinned by
+`test-agent-org-fold-region-speaks-the-loaded-org`.
 
 A drawer the user manually opened stays open across updates: we detect
 `invisible-p` on the body, unfold → swap → refold, preserving intent.  That is
@@ -470,9 +482,18 @@ Your own `TAB` on a finished turn still folds calls and output together and
 stays folded — nothing repaints a turn that has stopped.
 
 The unfold before a swap is guarded by `invisible-p`, not unconditional:
-`org-fold-region` walks the region it is given, and calling it on an
+a region fold walks the region it is given, and calling it on an
 already-open board of a heavy turn more than doubled the per-paint cost (the
 number `test-agent-org-one-drawer-board-redraw-cost` prints).
+
+One honest gap on the OLD spelling: `org-hide-drawer-startup` is a 9.6 name,
+so on Org 9.5.5 the buffer-local nil is inert and the startup re-hide comes
+instead through `org-cycle-hide-drawers`, which 9.5 puts on `org-cycle-hook`
+unconditionally.  The cure there is a buffer-local hook removal, not a
+variable — unimplemented, because the live machine runs 9.8 and the path is
+reachable only through `TAB`.
+`test-agent-org-chat-buffer-refuses-orgs-startup-drawer-fold` skips itself
+when the variable it argues with does not exist.
 
 ---
 
@@ -963,7 +984,7 @@ first's parts rather than writing its own:
 ## 14. The session's Org file is a mirror, written at boundaries
 
 `agent-org-transcribe` (default on) keeps one file per session in
-`agent-org-transcript-directory`, named `<sanitized session id>.org`.  Its body
+`agent-org-transcri[REDACTED:pattern]`, named `<sanitized session id>.org`.  Its body
 is the chat buffer's frozen body — `point-min` to `agent-org-buffer--render-end`
 — so the transcript is the same document the user is reading, and the same
 `:ID:` in its `PROPERTIES` drawer makes it an `id:`-linkable target.

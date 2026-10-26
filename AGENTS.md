@@ -35,6 +35,16 @@ emacs -Q --batch \
 # please.  Check `(org-version)' in the live server before believing a green
 # suite covers an Org interaction — and note Org 9.8 changed the property-drawer
 # spelling (`RESPONSE: v', no leading colon), which 9.8 still READS in our form.
+# CI HARNESS SKEW, measured 2026-10-26: the gate installs `emacs-nox' with apt,
+# which answers Emacs 28.2 with built-in Org 9.5.5 — BELOW the Emacs 29.1 the
+# package declares, and with none of the 9.6 `org-fold-*' API, no `take', no
+# `setopt', no `ert-with-temp-directory'.  That is what made 356 of 432 tests
+# red for 34 straight stalled turns while the same tree was green at the
+# Owner's desk.  Both suites therefore load `tests/compat.el' (the two Emacs 29
+# macros, guarded by `fboundp' — no-ops on 29+), and every fold goes through
+# `agent-org-buffer--fold-region' / `--drawer-toggle'.  A new test that wants a
+# temp directory or `setopt' gets them from that prelude, never by calling the
+# 29 name blind.
 # LIVE-CACHE TRAP: in a big old chat buffer the 9.8 `org-element' cache can go
 # stale — our renders edit the buffer from acp callbacks — and then
 # `org-element-at-point' signals `wrong-type-argument number-or-marker-p nil',
@@ -154,10 +164,15 @@ emacs -Q --batch \
   subtree move), `:thinking:' FOLDED (keeps a fold the user made).
   `agent-org-mode' sets `org-hide-drawer-startup' nil BUFFER-LOCALLY (it is an
   alias and `setq-local' follows aliases, so one line covers both spellings).
-  Drive folds with `org-fold-region' directly, NOT
+  Drive folds with `agent-org-buffer--fold-region' directly, NOT
   `org-fold-hide-drawer-toggle' (whose org-element cache is stale mid-stream →
   "Not at a drawer"); guard the repaint's un-hide with `invisible-p' (an
-  unconditional one walked the region and doubled per-paint cost).  §5.
+  unconditional one walked the region and doubled per-paint cost).  The helper
+  is what keeps the fold working on BOTH Orgs: 9.6+ has `org-fold-region',
+  Emacs 28.2's built-in 9.5.5 has only `org-flag-region' — calling either name
+  outright is a void-function on one machine (that is what made 356 of 432
+  tests red on CI).  The user's gesture goes through
+  `agent-org-buffer--drawer-toggle' for the same reason.  §5.
 - Turn placement is MARKERS, never heading text: `--turn-anchor',
   `--render-end', and the rear-advancing `--quote-end' keep the block shut at
   every instant — every chunk and repaint inserts ABOVE `#+end_quote'.  A
