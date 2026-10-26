@@ -429,9 +429,19 @@ screen."
   "Run BODY; if the user quit the session prompt, release SESSION and yield nil.
 Both session readers complete with REQUIRE-MATCH, so nil is never a
 legitimate answer, and a caller that sees nil must send neither
-`session/new' nor `session/load'."
+`session/new' nor `session/load'.
+
+Plain `condition-case', NOT `condition-case-unless-debug': the latter
+expands to a `(debug quit)' clause, which DEFERS to the debugger when
+`debug-on-quit' (or `debug-on-error') is set — and a deferred quit
+never reaches the cancel handler, so the chat buffer stayed on
+\"Starting\"/\"Restoring\" with a live agent process and no registry
+cleanup.  A user's Ctrl-G on a session prompt is a UI decision, never
+a debugger event: with `toggle-debug-on-quit' on, every cancel would
+have leaked a buffer (ERT's batch runner binds `debug-on-error' t on
+emacs 29, which is how the leak was caught — four days of red CI)."
   (declare (indent 1) (debug t))
-  `(condition-case-unless-debug nil
+  `(condition-case nil
        (progn ,@body)
      (quit (agent-org--cancel-open ,session) nil)))
 
