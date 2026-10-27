@@ -1168,7 +1168,7 @@ box stays typeable.  nil when no box is open.")
 (defvar-local agent-org-buffer--turn-anchor nil
   "Marker at the start of the current exchange's heading, if any.
 The heading's text is the user's prompt, and one heading covers the whole
-prompt-response pair.  The pair's drawers are located relative to this
+prom[REDACTED:pattern] pair.  The pair's drawers are located relative to this
 anchor, not to the buffer end, because the body trails it: the answer's
 quote block, the `:thinking:' drawer, the `:tool:' drawer and the
 type-ahead box all live after the heading, so the heading is never the
@@ -3407,8 +3407,8 @@ typed, because all of this is rendering and none of it is the wire."
       (if (string-empty-p flat) agent-org-buffer--prompt-word flat))))
 
 (defun agent-org-buffer-begin-exchange (buffer text)
-  "Open one prompt-response pair in BUFFER, headed by the question TEXT.
-User order: \"there will be ONE heading for each prompt-response pair.  The
+  "Open one prom[REDACTED:pattern] pair in BUFFER, headed by the question TEXT.
+User order: \"there will be ONE heading for each prom[REDACTED:pattern] pair.  The
 heading will contain the prompt.\"  So this replaces the old `* PROMPT' echo
 heading: the sent question is no longer body text under a generic word, it IS
 the heading, and the answer that follows belongs to it
@@ -5164,7 +5164,7 @@ renderer — the buffer — and the file simply agrees with it."
   :type 'boolean
   :group 'agent-org-buffer)
 
-(defcustom agent-org-transcript-directory ".agent-org"
+(defcustom agent-org-transcri[REDACTED:pattern] ".agent-org"
   "Where the per-session Org transcripts go, relative to the chat's project.
 The default is a RELATIVE directory name, and a relative name is resolved
 against the chat buffer's `default-directory' — the session's cwd — so
@@ -5210,7 +5210,7 @@ transcript editable like any other Org file."
   "Non-nil when FILE is an agent-org transcript, judged by its directory.
 The transcript's NAME is a sanitized session id and carries no marker of its
 own, so the containing DIRECTORY is the signal: transcripts sit directly
-inside a directory named like `agent-org-transcript-directory' (`.agent-org'
+inside a directory named like `agent-org-transcri[REDACTED:pattern]' (`.agent-org'
 by default, or whatever basename an absolute setting ends in).  A relative
 setting is reduced to its basename here, so the answer is the same whatever
 `default-directory' happens to resolve it against.
@@ -5221,7 +5221,7 @@ is exactly when a person `find-file's a transcript to read it."
               (parent (file-name-nondirectory (directory-file-name dir)))
               (wanted (file-name-nondirectory
                         (directory-file-name
-                         (expand-file-name agent-org-transcript-directory)))))
+                         (expand-file-name agent-org-transcri[REDACTED:pattern])))))
     (and (> (length parent) 0)
          (string-equal parent wanted))))
 
@@ -5232,6 +5232,24 @@ Ready, a usage update that changed the header but not the conversation —
 and the write is a whole-file `write-region'.  Comparing against what was
 last put there skips those, and keeps the file's mtime honest: an
 untouched transcript does not look like it was edited.")
+
+(defun agent-org-buffer--transcript-text ()
+  "The exact text THIS CHAT's transcript file should hold right now.
+ONE definition of \"what the file should be\", read by the writer
+(`agent-org-buffer-transcribe'), by the sync check the cross-agent converter
+runs before it reads (§ Cross-agent #183) and by every test that asserts on a
+mirror: two readings of the same file is how a converter ends up trusting a
+transcript the chat no longer renders.
+
+The mirror is the frozen body -- `point-min' to `agent-org-buffer--render-end'
+-- plus the queue block rendered from the session's own `:queued' list.  Not
+copied from the queue REGION: that text is the user's, may be half-edited, and
+the drain takes the list, so the list is what has to survive.  Called with the
+chat buffer current, which is what gives `--transcript-file' its project."
+  (concat (buffer-substring-no-properties
+           (point-min) (agent-org-buffer--render-end))
+          (agent-org-buffer-render-queue
+           (plist-get agent-org-buffer--status :queued))))
 
 (defun agent-org-buffer-transcribe (buffer &optional force)
   "Mirror BUFFER's conversation to its transcript file, when it changed.
@@ -5280,22 +5298,20 @@ the user turned off."
              (queue (plist-get status :queued))
              (lite (agent-org-lite-p)))
         (when (and session-id (or force (not lite) queue))
-          (let ((text (concat (buffer-substring-no-properties
-                               (point-min) (agent-org-buffer--render-end))
-                              (agent-org-buffer-render-queue queue))))
+          (let ((text (agent-org-buffer--transcript-text)))
             (when (or force (not (equal text agent-org-buffer--transcript-cache)))
               (agent-org-buffer--write-transcript session-id text))))))))
 
 (defun agent-org-buffer--transcript-file (session-id)
   "Path of SESSION-ID's transcript, resolved against THIS buffer's project.
-`agent-org-transcript-directory' is a relative name by default, and
+`agent-org-transcri[REDACTED:pattern]' is a relative name by default, and
 `expand-file-name' is what turns that into \"the chat's own directory\":
 called with the chat buffer current, `default-directory' is the session cwd
 the buffer was created in.  An absolute setting expands to itself, so one
 global pool is still a setting away rather than a code change."
   (expand-file-name (agent-org-buffer--transcript-name session-id)
                     (file-name-as-directory
-                     (expand-file-name agent-org-transcript-directory))))
+                     (expand-file-name agent-org-transcri[REDACTED:pattern]))))
 
 (defun agent-org-buffer-transcript-queue (session-id)
   "The prompts SESSION-ID's transcript has waiting, oldest first; nil if none.
@@ -5335,6 +5351,227 @@ convenience, and one that cannot be read must not stop a session loading."
                   (agent-org-buffer--queue-parse-text
                    (buffer-substring-no-properties beg (point-max))))))
           (file-error nil))))))
+
+;;;; Cross-agent #183: is the file current, and what did it actually say
+
+(defun agent-org-buffer-transcript-synced-p (buffer)
+  "t when BUFFER\'s transcript FILE holds exactly what BUFFER renders now.
+The question a cross-agent conversion asks first: the other agent resumes from
+the FILE, so \"synced\" is a fact about the file\'s bytes and not about
+`agent-org-buffer--transcript-cache', which is our own memory of what we last
+wrote and stays truthful while a person edits the file behind our back.  A
+converter that trusted the memory would carry a stale transcript across and
+believe the history had moved.
+
+nil is the answer -- and each one means \"force the mirror before reading\",
+which is what `agent-org-transcript-sync' does — for a buffer that is not
+alive, a chat whose agent never gave it a session id, a file that is not there
+(`agent-org-transcribe' off, a session older than the feature) and a file that
+cannot be read.  A draft in the `* PROMPT' box is NOT one of them: the box
+sits below `--render-end', so typing costs the file nothing it ever held."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (when-let ((session-id (plist-get agent-org-buffer--status :session-id)))
+        (let ((file (agent-org-buffer--transcript-file session-id))
+              (text (agent-org-buffer--transcript-text)))
+          (and (file-readable-p file)
+               (equal text
+                      (with-temp-buffer
+                        (condition-case nil
+                            (progn
+                              (insert-file-contents file)
+                              (buffer-string))
+                          (file-error nil))))))))))
+
+(defun agent-org-buffer--transcript-words (set)
+  "The state words of keyword SET, without the `|' that splits the two halves.
+Used on the package\'s own defcustoms rather than on `org-todo-keywords': a
+transcript read standalone has no `#+TODO:' line to consult yet (#163), and
+the built-in-vs-ELPA Org skew this package keeps hitting (9.7.11 in batch,
+9.8.10 live) would make \"which set does this word belong to\" a
+version-dependent answer."
+  (rem "|" set))
+
+(defun agent-org-buffer--transcript-heading-split (text)
+  "The (STATE-WORD . TITLE) pair of a level-1 heading TEXT; WORD nil if none.
+The first token is a state word only when it is one of the prompt set\'s, which
+is what `agent-org-buffer-begin-exchange' writes there -- and it is the
+exchange\'s STATE, not its text: sending `RESPONDED' to another agent as the
+first word of the user\'s question would be a lie about what he typed.  Any
+other heading (a hand-written one, or a keyword from a set this file never
+used) keeps every word of its title."
+  (let ((word (car (split-string text " " t))))
+    (if (and word (member word (agent-org-buffer--transcript-words
+                                 agent-org-prompt-todo-keywords)))
+        (cons word (string-trim (substring text (min (length text)
+                                                     (1+ (length word))))))
+      (cons nil text))))
+
+(defun agent-org-buffer--transcript-answer-part-p (text)
+  "Non-nil when a level-2 heading TEXT opens the ANSWER, not a thought or a call.
+Classified by `agent-org-response-todo-keywords' -- WRITING while the prose
+streams, WROTE once the boundary files it, and a transcript caught mid-turn
+carries the live word.  The other part headings (`** THOUGHT',
+`** EXECUTED', a plan item) are activity, and its body is not a message."
+  (let ((word (car (split-string text " " t))))
+    (and word
+         (member word (agent-org-buffer--transcript-words
+                       agent-org-response-todo-keywords)))))
+
+(defun agent-org-buffer--transcript-prefix-line-p (line)
+  "Non-nil when LINE is an answer\'s own model-label line.
+`agent-org-buffer--prefix-line' writes `Model name: ' -- a colon with a
+trailing space and nothing after it -- as the ONE piece of furniture the two
+styles that paint no part headlines put above the prose, so it is the only
+mark in such a transcript that says the agent has started talking.  In
+`headings' style the line is never written and this never fires: the
+`** WROTE' headline drives the same decision."
+  (string-match-p "^[^ \t].*[^: \t]: +$" line))
+
+(defun agent-org-buffer--transcript-erase-queue ()
+  "Cut the queue block from the text in the current buffer.
+The block `agent-org-buffer-transcribe' appends is the last thing in the file
+and the only thing in it carrying `--queue-note-text', so the FINAL match is
+the boundary.  What it holds is a prompt WAITING to be sent, which the
+converter carries across as a queue (#186) and must never replay as a message
+the other agent would send twice -- and NEXT and WAIT are words of the prompt
+set, so no keyword test can tell them from an exchange."
+  (save-excursion
+    (goto-char (point-min))
+    (let ((note (regexp-quote agent-org-buffer--queue-note-text))
+          (beg nil))
+      (while (re-search-forward note nil t)
+        (setq beg (match-beginning 0)))
+      (when beg
+        (delete-region beg (point-max))))))
+
+(defun agent-org-buffer--transcript-join (lines &optional separator)
+  "LINES (oldest first) as one string, un-indented and trimmed at the ends.
+SEPARATOR defaults to a newline; an answer\'s parts are joined on a blank line
+because each one is a paragraph the reader saw separately, split from the one
+before it by a tool call.
+
+A line the renderer indented by exactly ONE space to stop it re-shaping the
+exchange (`--response-safe-lines', §3.2) loses that space here: it is markup,
+not text the author wrote.  Anything deeper is left exactly as it is — verbatim
+text and a nested list are the author\'s own, and a code block that quietly
+lost a column is worse than a bullet that kept one."
+  (string-trim
+   (mapconcat
+    (lambda (line)
+      (if (string-match "^ [^ ]" line) (substring line 1) line))
+    lines
+    (or separator "\n"))))
+
+(defun agent-org-buffer-transcri[REDACTED:pattern] (file)
+  "FILE\'s transcript conversation as messages, oldest first.
+The list is plists of the shape '((:role \"user\" :text \"…\") (:role
+\"assistant\" :text \"…\")), which is what the cross-agent writers (#185)
+turn into the other agent\'s session file.
+
+WHAT OPENS AND CLOSES A MESSAGE is the shape §1 and §8 give an exchange: a
+level-1 heading starts one, its title (minus the state word the renderer
+wears there) plus the un-indented lines beneath it is the USER message, and the
+ANSWER is the body of every part heading whose word is in
+`agent-org-response-todo-keywords'.  Left out on purpose: a thought and a tool
+call -- the agent\'s own activity, never words it sent -- and every piece of
+furniture, which is `:PROPERTIES:', `:LOGBOOK:', `:thinking:' and `:tool:'
+drawers, the metadata block above the first heading, `#+…' lines, the queue
+block at the bottom.  The two styles that paint no part headlines keep the
+answer as prose under the model\'s own label line, which
+`--transcript-prefix-line-p' recognises; the shipped `headings' style needs no
+such hint.
+
+A plain line scan, NOT `org-element-parse-buffer' — the same argument the queue
+parser makes at §17: no cache to go stale mid-stream, no version skew, and
+every shape above is a column-0 fact.
+
+FIDELITY, stated because a converter inherits it: the heading\'s first line has
+whitespace runs collapsed and is Markdown-normalised (§15), so a prompt comes
+back as the user READS it rather than as the bytes that went on the wire; and a
+RESUMED session\'s transcript is defective today (#164/#165 — the whole replay
+sits under one orphan heading), so its older prompts do not parse yet.
+
+nil for a file with no exchange in it, which is an honest \"nothing was sent\".
+A file that is not readable is a `user-error' instead: nil there would read as
+the same answer, and the converter would mint an empty session beside the real
+one."
+  (unless (file-readable-p file)
+    (user-error "agent-org: no transcript to read at %s" file))
+  (with-temp-buffer
+    (insert-file-contents file)
+    (agent-org-buffer--transcript-erase-queue)
+    (goto-char (point-min))
+    (when (re-search-forward "^\\* " nil t)
+      (goto-char (match-beginning 0))
+      (let ((messages nil)                    ; pushed as filed, reversed at the end
+            (prompt nil) (parts nil) (part nil)
+            (region 'none) (drawer nil))
+        (cl-labels
+            ((close-part ()
+               (when-let ((text (and part
+                                     (agent-org-buffer--transcript-join
+                                      (reverse part)))))
+                 (unless (string-empty-p text) (push text parts)))
+               (setq part nil))
+             (close-exchange ()
+               "File the exchange being read: user message, then its answer."
+               (close-part)
+               (let ((ask (agent-org-buffer--transcript-join (reverse prompt)))
+                     (answer (and parts
+                                  (agent-org-buffer--transcript-join
+                                   (reverse parts) "\n\n"))))
+                 (when (and answer (not (string-empty-p answer)))
+                   (push (list :role "assistant" :text answer) messages))
+                 (when (not (string-empty-p ask))
+                   (push (list :role "user" :text ask) messages)))
+               (setq prompt nil parts nil part nil region 'none drawer nil))
+             (classify (line)
+               (cond
+                ;; any headline: level 1 opens an exchange, level 2 a part
+                ((string-match "^\\(\\*+\\) +\\(.+\\)$" line)
+                 (if (= (- (match-end 1) (match-beginning 1)) 1)
+                     (progn
+                       (close-exchange)
+                       (setq region 'prompt)
+                       (let ((title (cdr (agent-org-buffer--transcript-heading-split
+                                          (match-string 2 line)))))
+                         (unless (string-empty-p title) (push title prompt))))
+                   (close-part)
+                   (setq region (if (agent-org-buffer--transcript-answer-part-p
+                                     (match-string 2 line))
+                                    'answer
+                                  'skip)))
+                 (setq drawer nil))
+                ;; a drawer keyword at column 0 opens or closes one; every line
+                ;; inside it is skipped, property or body alike
+                ((string-match "^:[A-Za-z0-9][A-Za-z0-9_-]*:$" line)
+                 (if (string-equal (downcase line) ":end:")
+                     (setq drawer nil)
+                   (setq drawer t)
+                   ;; a drawer below the prose means the activity is what follows
+                   ;; it, and in the styles that write no part headlines nothing
+                   ;; of the answer comes after its own block
+                   (when (eq region 'answer)
+                     (close-part)
+                     (setq region 'skip))))
+                (drawer nil)
+                ;; an Org comment or keyword line (`#+TITLE:', `# note')
+                ((string-match-p "^#" line) nil)
+                ;; a horizontal rule, including the queue\'s border
+                ((string-match-p "^-\\{5,\\}[ \t]*$" line) nil)
+                ((eq region 'prompt)
+                 (if (agent-org-buffer--transcript-prefix-line-p line)
+                     (setq region 'answer)
+                   (push line prompt)))
+                ((eq region 'answer) (push line part))
+                (t nil))))
+          (while (< (point) (point-max))
+            (let ((line (buffer-substring-no-properties (point) (line-end-position))))
+              (forward-line 1)
+              (classify line)))
+          (close-exchange)
+          (nreverse messages))))))
 
 (defun agent-org-buffer--write-transcript (session-id text)
   "Replace this buffer's transcript file with TEXT.

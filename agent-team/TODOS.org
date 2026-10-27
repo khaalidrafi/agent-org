@@ -8,7 +8,15 @@
   - BLOCKED + reason; :OWN: = owner ruling
   - REVIEW + completion note (invalid without)
   - BLOCKED never terminal; only the EM flips DONE
-** TODO WO-1 cross-agent sessions — Qoder <-> Codebuddy (design DONE, code NOT started) — TODOs.org §Cross-agent
+** PROGRESS WO-1 cross-agent sessions — Qoder <-> Codebuddy (design DONE, code NOT started) — TODOs.org §Cross-agent
+   :PROPERTIES:
+   :OWN: implementer-deepseek
+   :END:
+   :LOGBOOK:
+   CLOCK: [2026-10-27 Tue 22:10]
+   - Unit #183 (transcript sync check + Org->messages parser) started
+     on ai/turn-20261027-2200; shapes measured from a real mirror.
+   :END:
 ** DONE WO-2 model selection menu — labels + cleaned-id fallback; ERT 432/432 (agent-org.el:1679)
 ** TODO WO-3 steer — inject into the live turn — TODOs.org §Steer
 ** TODO WO-4 hooks on the response boundary + automation — TODOs.org §Hooks
