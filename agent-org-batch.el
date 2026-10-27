@@ -42,6 +42,28 @@
 ;;                         the provider spec entirely (tests, probes,
 ;;                         lanes with non-default argv); the child gets
 ;;                         the FULL process environment
+;;   AGENT_ORG_SESSION_ID  optional session id to RESUME (ACP
+;;                         `session/load') instead of `session/new' —
+;;                         the per-member context-preservation lane
+;;                         (Owner order 2026-10-27 #hq: reuse the same
+;;                         agent-org session for a team member).  Empty
+;;                         or unset = a fresh session.  A stale or
+;;                         unloadable id DEGRADES to a fresh session on
+;;                         a new process — lost context never fails the
+;;                         turn; a second failure means the agent
+;;                         process itself is broken (exit 42, CLI
+;;                         fallback).
+;;   AGENT_ORG_SESSION_OUT optional file the FINAL session id is
+;;                         written to (the caller persists it per member
+;;                         and feeds it back as AGENT_ORG_SESSION_ID).
+;;   AGENT_ORG_TRANSCRIPT_DIR optional directory for the auto-generated
+;;                         transcript Org files (`.agent-org' by the
+;;                         default layout).  Set = transcription ON and
+;;                         the session mirrored there; unset = the old
+;;                         batch law (no stray sid-*.org in the
+;;                         workspace).  CI sets it so the transcripts
+;;                         are preserved (Owner order 2026-10-27 #hq:
+;;                         preserve agent-org transcripts, esp. for CI).
 ;;
 ;; Exit codes: 0 the turn finished and AGENT_ORG_OUT was written; 42
 ;; for ANY failure (emacs too old, acp/agent-org unloadable, unknown
@@ -88,9 +110,13 @@
 (declare-function agent-org--open-session "agent-org.el" (spec))
 (declare-function agent-org--initialize "agent-org.el" (session &optional next))
 (declare-function agent-org--begin-start "agent-org.el" (session resp strategy))
+(declare-function agent-org--load-session "agent-org.el" (session session-id))
+(declare-function agent-org--supports-load-p "agent-org.el" (initialize-resp))
 (declare-function agent-org-send-prompt-with-session "agent-org.el" (prompt session))
 (declare-function agent-org-loader-begin "agent-org-loader.el" (buffer))
 (declare-function agent-org-buffer-append-chunk "agent-org-buffer.el" (buffer text session))
+
+(defvar agent-org-transcript-directory)  ; agent-org-buffer.el defcustom
 
 ;;;; The prompt-send hook consumer (the CI clock-in)
 
@@ -186,6 +212,48 @@ FULL process environment (nil :environment = acp passes nothing, and
 
 ;;;; The entry point
 
+(defun agent-org-batch--resume-id ()
+  "The pinned session id to resume, or nil.
+AGENT_ORG_SESSION_ID empty means \"start fresh\" — same contract as
+every other optional env here."
+  (let ((v (getenv "AGENT_ORG_SESSION_ID")))
+    (and v (not (string-empty-p v)) v)))
+
+(defun agent-org-batch--open-start (spec resume-id deadline)
+  "Open SPEC's agent, start (or RESUME-ID) it, return the live session.
+Resume goes through `agent-org--load-session' — the pinned-id path of
+`agent-org-resume-session' (Owner order 2026-10-27 #hq: reuse the same
+agent-org session for a team member, so context survives turns).  An
+agent that cannot load, or a load that fails (stale id after
+server-side pruning), DEGRADES to a fresh session on a new process:
+lost context never fails the turn.  A second failure means the agent
+process itself is broken — that propagates (exit 42, CLI fallback)."
+  (let* ((session (agent-org--open-session spec))
+         (buffer (plist-get session :buffer)))
+    (agent-org-loader-begin buffer)
+    (agent-org--initialize session
+      (lambda (resp)
+        (if (and resume-id (agent-org--supports-load-p resp))
+            (agent-org--load-session session resume-id)
+          (agent-org--begin-start session resp 'new))))
+    (agent-org-batch--wait
+     (lambda ()
+       (or (plist-get session :session-id)
+           (agent-org-batch--error-state-p buffer)))
+     deadline (if resume-id
+                  "agent session ready (resume)"
+                "agent session ready"))
+    (unless (plist-get session :session-id)
+      (unless resume-id
+        (signal 'agent-org-batch-precondition
+                (list "agent errored before session ready")))
+      ;; the resume failed (loader error state) — one degrade to a
+      ;; fresh session: context loss never fails the turn
+      (ignore-errors (acp-shutdown :client (plist-get session :client)))
+      (ignore-errors (kill-buffer buffer))
+      (setq session (agent-org-batch--open-start spec nil deadline)))
+    session))
+
 (defun agent-org-batch-send ()
   "One headless send; see this file's Commentary for the env contract.
 Exit code 0 means AGENT_ORG_OUT holds the agent's raw response text;
@@ -193,9 +261,14 @@ every other exit is 42 = fall back to the direct CLI lane."
   (condition-case err
       (let ((agent-org-batch--response nil)
             (agent-org-batch--failed nil))
-        ;; the batch run is its own transcript owner: no stray sid-*.org
-        ;; in the workspace the agent is about to commit
-        (setq agent-org-transcribe nil
+        ;; the batch run is its own transcript owner UNLESS the caller
+        ;; asks for the mirror: AGENT_ORG_TRANSCRIPT_DIR set = the
+        ;; auto-generated transcripts land there (CI preserves them);
+        ;; unset = the old law, no stray sid-*.org in the workspace
+        (setq agent-org-transcribe (and (getenv "AGENT_ORG_TRANSCRIPT_DIR") t)
+              agent-org-transcript-directory
+              (and (getenv "AGENT_ORG_TRANSCRIPT_DIR")
+                   (expand-file-name (getenv "AGENT_ORG_TRANSCRIPT_DIR")))
               ;; CI output is grepped (verdict tokens) — the agent's own
               ;; bytes, not the chat buffer's markdown rendering
               agent-org-convert-markdown nil)
@@ -224,20 +297,9 @@ every other exit is 42 = fall back to the direct CLI lane."
           ;; happens inside `agent-org--open-session'
           (when-let* ((model (getenv "AGENT_ORG_MODEL")))
             (plist-put spec :model model))
-          (let* ((session (agent-org--open-session spec))
+          (let* ((session (agent-org-batch--open-start
+                           spec (agent-org-batch--resume-id) deadline))
                  (buffer (plist-get session :buffer)))
-          (agent-org-loader-begin buffer)
-          (agent-org--initialize session
-            (lambda (resp)
-              (agent-org--begin-start session resp 'new)))
-          (agent-org-batch--wait
-           (lambda ()
-             (or (plist-get session :session-id)
-                 (agent-org-batch--error-state-p buffer)))
-           deadline "agent session ready")
-          (unless (plist-get session :session-id)
-            (signal 'agent-org-batch-precondition
-                    (list "agent errored before session ready")))
           (agent-org-send-prompt-with-session prompt session)
           (agent-org-batch--wait
            (lambda ()
@@ -253,10 +315,14 @@ every other exit is 42 = fall back to the direct CLI lane."
           (let ((write-region-inhibit-fsync t))
             (write-region agent-org-batch--response nil out-file
                           nil :quiet))
+          (when-let* ((sid-out (getenv "AGENT_ORG_SESSION_OUT"))
+                      (sid (plist-get session :session-id)))
+            (write-region sid nil sid-out nil :quiet))
           (ignore-errors
             (acp-shutdown :client (plist-get session :client)))
-          (message "agent-org-batch: response %d chars -> %s"
-                   (length agent-org-batch--response) out-file)
+          (message "agent-org-batch: response %d chars -> %s (session %s)"
+                   (length agent-org-batch--response) out-file
+                   (plist-get session :session-id))
           (kill-emacs 0))))
     (agent-org-batch-precondition
      (message "agent-org-batch: %s" (error-message-string err))
