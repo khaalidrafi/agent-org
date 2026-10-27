@@ -343,7 +343,7 @@ state of every call, and it would be a second renderer (CONVENTIONS.md
 §9: never add one).  Mirror also means the unsent draft is excluded by
 the same marker that protects it from a streaming turn.
 
-- =agent-org-transcribe= (default t) and =agent-org-transcript-directory=
+- =agent-org-transcribe= (default t) and =agent-org-transcri[REDACTED:pattern]=
   (default the RELATIVE =.agent-org=, resolved against the chat buffer's
   =default-directory= — so each project keeps its own transcripts; an
   absolute setting is one global pool), created on the first write.
@@ -734,7 +734,7 @@ reads buffer-local nil with the global default still =t=.
 The user's report, live on OpenCode and MiniMax: "a weird =Allow?= prompt in
 the minibuffer which provides two options - Cancel and =nil=."
 
-=agent-org--prompt-permission= built its candidates with =(map-elt o 'label)=
+=agent-org--prom[REDACTED:pattern]= built its candidates with =(map-elt o 'label)=
 and =(map-elt o 'id)=.  ACP sends neither: a PermissionOption is
 =((optionId . "allow_once") (name . "Allow once") (kind . "allow_once"))=
 ([[https://agentclientprotocol.com/protocol/schema#permissionoption]]), so both
@@ -752,7 +752,7 @@ Fixed as three changes in agent-org.el:
   errors on both and on neither) --- instead of comparing a sentinel string;
 - the tests stub =completing-read=, not the prompter.
   =test-agent-org-permission-quit-sends-cancelled= stubbed
-  =agent-org--prompt-permission= itself, so it never ran the key extraction:
+  =agent-org--prom[REDACTED:pattern]= itself, so it never ran the key extraction:
   same lesson as the acp-client alist in AGENTS.md --- a stub that does not
   mirror the dependency's data shape makes the suite test the stub.
 
@@ -901,7 +901,7 @@ agent-shell reuses comint's =comint-input-ring=
 equivalent.
 
 ** TODO Permission prompts without blocking
-=agent-org--prompt-permission= uses =completing-read= inline (blocks the
+=agent-org--prom[REDACTED:pattern]= uses =completing-read= inline (blocks the
 process filter).  agent-shell surfaces them in its UI; a deferred,
 buffer-local accept/deny affordance would keep the chat responsive.
 
@@ -982,7 +982,7 @@ prompt now goes out as TWO ACP text blocks:
 byte-compile clean; three mutations each seen to break 3, 6 and 8 tests.
 
 ** DONE One heading per exchange, the answer a quote block, authored by the model
-User order: "From now on, there will be ONE heading for each prompt-response
+User order: "From now on, there will be ONE heading for each prom[REDACTED:pattern]
 pair. The heading will contain the prompt. And, the response should be contained
 in an Org quote block, with the narrator/author as the model name. Read Org
 manual on how to set the author of a quote in a quote template."
@@ -1819,7 +1819,7 @@ scheduled work yet; the point is the option set.
   (org-contrib/org-velocity.org "The interface")
 
 ** Prompt and queue ergonomics
-- A prompt-template library (key + Org body with slots) completed into the queue,
+- A prom[REDACTED:pattern] library (key + Org body with slots) completed into the queue,
   optionally with =- [ ]= checklist steps the agent is told to tick off.
   (org-faq.org capture-template backquote trick; org-checklist.org; org-hacks.org
   "Integrate Org Capture with YASnippet")
@@ -1908,7 +1908,27 @@ written by the block builder, so a change alerts for exactly ONE turn.
 - Docs still to fold in (NOT done): the §18 bullet in AGENTS.md and CONVENTIONS.md,
   README.org, AI-REVIEW.org.
 
-** TODO Cross-agent sessions --- Qoder ⇄ Codebuddy (the urgent one; design DONE, code NOT started)
+** PROGRESS Cross-agent sessions --- Qoder ⇄ Codebuddy (the urgent one; design DONE, code NOT started)
+:LOGBOOK:
+- State "PROGRESS" from "TODO" [2026-10-27 Tue 23:36 UTC]
+  Unit #183 (parser) LANDED on ai/turn-20261027-2321: =agent-org-buffer--transcript-text=
+  extracted so the writer and the sync test share ONE definition of "what the file
+  should hold" (buffer.el:5236), =agent-org-buffer-transcript-synced-p= comparing the
+  FILE's bytes and never =--transcript-cache=, and
+  =agent-org-buffer-transcri[REDACTED:pattern]= parsing a transcript to =(:role "user"|
+  "assistant" :text …)= messages oldest first — classification by the package's own
+  keyword defcustoms (never =org-element=, so the 9.7.11/9.8.10 skew cannot bite).
+  Evidence: ERT 438/438 + batch 15/15 green, byte-compile clean with
+  =byte-compile-error-on-warn t=, 2026-10-27T23:35Z.  Six new tests
+  (=test-agent-org-transcri[REDACTED:pattern]-*=, =…-synced-p-reads-the-file-not-the-cache=,
+  =…-headline-reads-only-our-keywords=).  MEASURED, corrections to the plan above: a
+  prompt's continuation lines are NOT indented in a transcript (only a drawer body
+  takes §3.3's one space), so no un-indent step belongs in the parser; and the suite
+  binds =agent-org-activity-style= to =drawers= globally while the shipped default is
+  =headings= — the parser tests state =headings=, because only that style gives an
+  answer a =** WROTE= part to live in (the limit is documented in the parser).
+  #184 (mapping store), #185 (writers) and #186 (verbs + docs) still open.
+:END:
 User order, verbatim: "Urgently add a feature for cross-agent session handling by
 mapping the session IDs for EACH agent, for a cross-agent session… You'll take the
 Org transcript, confirm it's synced, then convert it to another agent's session
@@ -1969,7 +1989,7 @@ below are the whole plan, with the measurements already taken so nobody re-takes
   stays truthful while a person edits the file behind our back.  Missing/unreadable
   file → nil.  The convert command calls =agent-org-transcript-sync= (the forced
   re-mirror, agent-org.el:2513) when this answers nil, then reads the file.
-- =agent-org-buffer-transcript-messages (file)=: plists
+- =agent-org-buffer-transcri[REDACTED:pattern] (file)=: plists
   ='((:role "user" :text …) (:role "assistant" :text …))=, oldest first.  Rules:
   a level-1 heading opens an exchange; its text (=* RESPONDED foo= minus the leading
   state word, which is a word of =agent-org-prompt-todo-keywords=) plus the following
