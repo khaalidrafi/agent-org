@@ -882,26 +882,48 @@ value's truthiness."
   "Human name of the provider SESSION was opened with, for messages."
   (plist-get (agent-org--provider-spec (plist-get session :name)) :name))
 
+(defun agent-org--stamp-offset (stamp)
+  "UTC offset of ISO-8601 STAMP in seconds east (0 when naive or Z).
+date-to-time folds the offset into the instant, but the day math below
+needs the number back to render the stamp's OWN clock; a stamp without
+an offset counts as UTC, which is deterministic on any runner."
+  (if (string-match
+       "\\([+-]\\)\\([0-9][0-9]\\):?\\([0-9][0-9]\\)\\(?:[0-9][0-9]\\)?\\'"
+       stamp)
+      (* (if (string= (match-string 1 stamp) "-") -1 1)
+         (+ (* 3600 (string-to-number (match-string 2 stamp)))
+            (* 60 (string-to-number (match-string 3 stamp)))))
+    0))
+
 (defun agent-org--format-session-date (stamp)
   "ISO-8601 session stamp STAMP as a short human date, or nil.
 Today and yesterday are spelled out, because they are the chats you are
 most likely to want back; a stamp from this year shows the date and the
 clock; anything older shows its year instead of the time, which is not
-worth reading on a session from 2024.  A missing or unparsable stamp
+worth reading on a session from 2024.  Both the day math and the clock
+run in the STAMP'S OWN UTC offset (a +0600 stamp reads as the clock it
+carries, never the runner's), so Today/Yesterday land the same on a
+UTC CI runner and on a Dhaka laptop.  A missing or unparsable stamp
 yields nil rather than a candidate ending in \"(nil)\"."
   (when (and (stringp stamp) (not (string-empty-p stamp)))
     (ignore-errors
-      (let ((then (date-to-time stamp)))
+      (let* ((then (date-to-time stamp))
+             (zone (agent-org--stamp-offset stamp))
+             (now (current-time))
+             (today (format-time-string "%F" now zone))
+             (yesterday (format-time-string "%F"
+                                            (time-subtract
+                                             now (days-to-time 1))
+                                            zone)))
         (cond
-         ((equal (format-time-string "%F" then) (format-time-string "%F"))
-          (format "Today, %s" (format-time-string "%H:%M" then)))
-         ((equal (format-time-string "%F" then)
-                 (format-time-string "%F"
-                                     (time-subtract (current-time) (days-to-time 1))))
-          (format "Yesterday, %s" (format-time-string "%H:%M" then)))
-         ((equal (format-time-string "%Y" then) (format-time-string "%Y"))
-          (format-time-string "%b %d, %H:%M" then))
-         (t (format-time-string "%b %d, %Y" then)))))))
+         ((equal (format-time-string "%F" then zone) today)
+          (format "Today, %s" (format-time-string "%H:%M" then zone)))
+         ((equal (format-time-string "%F" then zone) yesterday)
+          (format "Yesterday, %s" (format-time-string "%H:%M" then zone)))
+         ((equal (format-time-string "%Y" then zone)
+                 (format-time-string "%Y" now zone))
+          (format-time-string "%b %d, %H:%M" then zone))
+         (t (format-time-string "%b %d, %Y" then zone)))))))
 
 (defun agent-org--session-stamp (session)
   "The recency stamp of a listed SESSION: `updatedAt', else `createdAt', else \"\".
