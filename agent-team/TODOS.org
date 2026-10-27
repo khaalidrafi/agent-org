@@ -8,7 +8,11 @@
   - BLOCKED + reason; :OWN: = owner ruling
   - REVIEW + completion note (invalid without)
   - BLOCKED never terminal; only the EM flips DONE
-** TODO WO-1 cross-agent sessions — Qoder <-> Codebuddy (design DONE, code NOT started) — TODOs.org §Cross-agent
+** PROGRESS WO-1 cross-agent sessions — Qoder <-> Codebuddy (design DONE, code NOT started) — TODOs.org §Cross-agent
+:LOGBOOK:
+- [2026-10-27 Tue 21:46 UTC] implementer-deepseek: unit #183 (transcript sync
+  check + Org->messages parser) written and tested; ERT 439/439, compile clean.
+  #184 mapping store, #185 writers, #186 verbs still open.
 ** DONE WO-2 model selection menu — labels + cleaned-id fallback; ERT 432/432 (agent-org.el:1679)
 ** TODO WO-3 steer — inject into the live turn — TODOs.org §Steer
 ** TODO WO-4 hooks on the response boundary + automation — TODOs.org §Hooks
