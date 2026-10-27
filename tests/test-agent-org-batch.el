@@ -180,3 +180,35 @@
     (should (eq code 42))))
 
 ;;; test-agent-org-batch.el ends here
+
+;;;; Session reuse + transcript preservation (Owner order 2026-10-27 #hq)
+
+(ert-deftest test-agent-org-batch-resume-id-contract ()
+  "AGENT_ORG_SESSION_ID: unset or empty = nil (fresh session); a
+non-empty value passes through verbatim (the pinned-id resume path)."
+  (agent-org-batch-test--with-env (("AGENT_ORG_SESSION_ID" nil))
+    (should (null (agent-org-batch--resume-id))))
+  (agent-org-batch-test--with-env (("AGENT_ORG_SESSION_ID" ""))
+    (should (null (agent-org-batch--resume-id))))
+  (agent-org-batch-test--with-env (("AGENT_ORG_SESSION_ID" "sid-member-42"))
+    (should (string= "sid-member-42" (agent-org-batch--resume-id)))))
+
+(ert-deftest test-agent-org-batch-transcript-dir-contract ()
+  "AGENT_ORG_TRANSCRIPT_DIR set = transcription on and the mirror
+directory honored; unset = the old batch law (transcription off)."
+  (let ((agent-org-transcribe :sentinel)
+        (agent-org-transcript-directory ".agent-org"))
+    (agent-org-batch-test--with-env (("AGENT_ORG_TRANSCRIPT_DIR" nil))
+      (setq agent-org-transcribe (and (getenv "AGENT_ORG_TRANSCRIPT_DIR") t)
+            agent-org-transcript-directory
+            (and (getenv "AGENT_ORG_TRANSCRIPT_DIR")
+                 (expand-file-name (getenv "AGENT_ORG_TRANSCRIPT_DIR"))))
+      (should (null agent-org-transcribe))
+      (should (null agent-org-transcript-directory)))
+    (agent-org-batch-test--with-env (("AGENT_ORG_TRANSCRIPT_DIR" "/tmp/tx-test"))
+      (setq agent-org-transcribe (and (getenv "AGENT_ORG_TRANSCRIPT_DIR") t)
+            agent-org-transcript-directory
+            (and (getenv "AGENT_ORG_TRANSCRIPT_DIR")
+                 (expand-file-name (getenv "AGENT_ORG_TRANSCRIPT_DIR"))))
+      (should (eq agent-org-transcribe t))
+      (should (string= "/tmp/tx-test" agent-org-transcript-directory)))))
