@@ -31,7 +31,7 @@
 (setq load-prefer-newer t)
 ;; The transcript writer is ON by default, and most fixtures below produce a
 ;; Ready session with an id — so without this guard every such test mirrors its
-;; chat into `agent-org-transcript-directory', which for a relative default is
+;; chat into `agent-org-transcri[REDACTED:pattern]', which for a relative default is
 ;; the directory the suite happens to be running in.  Measured: a full run
 ;; dropped 22 `sid-*.org' files in the package tree.  A test that cares about
 ;; the file says so with `ao--transcript-in', which turns the writer back on
@@ -1465,7 +1465,7 @@ what it must not do twice."
 
 ;;;; Prompt protection helpers
 
-(ert-deftest test-agent-org-buffer-insert-prompt-idempotent ()
+(ert-deftest test-agent-org-buffer-insert-prom[REDACTED:pattern] ()
   "insert-prompt adds one box; repeats -- streaming included -- are no-ops.
 The box is persistent (agent-shell's model): streaming cannot stack a
 second one, because the open box IS the type-ahead while the turn runs."
@@ -1670,7 +1670,7 @@ line, `read-only' and all."
          (session (list :name 'test :client nil :buffer buf :session-id "s"))
          (made nil)
          (sent 0))
-    (cl-letf (((symbol-function 'agent-org--prompt-permission)
+    (cl-letf (((symbol-function 'agent-org--prom[REDACTED:pattern])
                (lambda (_opts) (signal 'quit nil)))
               ((symbol-function 'acp-make-session-request-permission-response)
                (lambda (&rest kw) (push kw made) kw))
@@ -4521,7 +4521,7 @@ would hijack every visit (see the test after this one)."
   (let* ((dir (locate-user-emacs-file "agent-org-test-transcripts/"))
          ;; a transcript is judged by its directory, so binding the option to
          ;; this one makes everything inside it a mirror
-         (agent-org-transcript-directory (file-name-as-directory dir))
+         (agent-org-transcri[REDACTED:pattern] (file-name-as-directory dir))
          (file (concat dir "sid-kw.org"))
          (agent-org-transcribe nil)
          buffer)
@@ -6500,7 +6500,7 @@ before the id, because that is what a completion UI lines up."
                               (string-width (substring l 0 (string-match-p "\\[" l))))
                             labels)))))
 
-(ert-deftest test-agent-org-prompt-collection-pins-our-order ()
+(ert-deftest test-agent-org-prom[REDACTED:pattern]-pins-our-order ()
   "The candidate order IS information (newest first, `New session' on
 top), and a completion UI is free to re-sort a plain list collection.
 Handing over a function with `display-sort-function' set to `identity' is
@@ -7142,7 +7142,7 @@ The feature has exactly two knobs and every writer test wants both:
 `user-emacs-directory' where the user's own transcripts live."
   (declare (indent 1))
   `(let ((agent-org-transcribe t)
-         (agent-org-transcript-directory ,dir))
+         (agent-org-transcri[REDACTED:pattern] ,dir))
      ,@body))
 
 (defun ao--transcript-files (dir)
@@ -7242,7 +7242,7 @@ agent split its reply, the document is the reply."
                                    "^:tool:$" "^  - RUNNING grep -rn foo$")))
               (kill-buffer buf))))))))
 
-(ert-deftest test-agent-org-transcript-rewrites-a-tool-line-instead-of-logging-it ()
+(ert-deftest test-agent-org-transcri[REDACTED:pattern]-a-tool-line-instead-of-logging-it ()
   "A tool that finished appears as EXECUTED once — no RUNNING line above it.
 This is the test that says \"mirror, not append log\": a per-chunk append can
 only add, so an in-place state change would leave the superseded line in the
@@ -7409,7 +7409,7 @@ direction: someone whose transcripts are their own org files under version
 control must be able to turn the writer off without patching it out."
   (ert-with-temp-directory temp-dir
     (let ((agent-org-transcribe nil)
-          (agent-org-transcript-directory temp-dir))
+          (agent-org-transcri[REDACTED:pattern] temp-dir))
       (ao--capture-wire
         (let* ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-off"))
                (sent nil))
@@ -7573,7 +7573,7 @@ skips, never this.  A silent success would read as \"the transcript updated\"
 when no transcript exists to update."
   (ert-with-temp-directory temp-dir
     (let ((agent-org-transcribe nil)
-          (agent-org-transcript-directory temp-dir))
+          (agent-org-transcri[REDACTED:pattern] temp-dir))
       (let* ((pair (ao--make-test-session "off-sync"))
              (buf (car pair)))
         (agent-org-buffer-set-status buf :session-id "sid-nooff" :state 'ready)
@@ -7582,7 +7582,7 @@ when no transcript exists to update."
         (should (null (ao--transcript-files temp-dir)))
         (kill-buffer buf)))))
 
-(ert-deftest test-agent-org-transcript-sanitizes-an-id-that-looks-like-a-path ()
+(ert-deftest test-agent-org-transcri[REDACTED:pattern]-an-id-that-looks-like-a-path ()
   "A session id is agent text, and it never gets to choose where a file lands.
 Qoder issues UUIDs and Goose issues timestamps, but the id arrives over the
 wire and becomes a file name, so every separator becomes a dash:
@@ -7602,7 +7602,7 @@ server the user pointed Emacs at."
                                                         (directory-file-name temp-dir)))))
           (kill-buffer buf))))))
 
-(ert-deftest test-agent-org-transcript-directory-default-is-a-project-dot-directory ()
+(ert-deftest test-agent-org-transcri[REDACTED:pattern]-default-is-a-project-dot-directory ()
   "The default is the RELATIVE name `.agent-org', not a path under ~/.emacs.d.
 User order: \"Transcripts should live under a project's .agent-org/.\"  A
 chat's own directory is the one place its transcript is found without a
@@ -7611,8 +7611,8 @@ default is what makes it so, because `expand-file-name' resolves it against
 the buffer's `default-directory', which is the session cwd.  An absolute
 value is still honoured (see the test below), so one global pool is a
 setting away."
-  (should (equal agent-org-transcript-directory ".agent-org"))
-  (should-not (file-name-absolute-p agent-org-transcript-directory)))
+  (should (equal agent-org-transcri[REDACTED:pattern] ".agent-org"))
+  (should-not (file-name-absolute-p agent-org-transcri[REDACTED:pattern])))
 
 (ert-deftest test-agent-org-transcript-lands-in-the-chats-own-project ()
   "A chat of ~/proj writes ~/proj/.agent-org/<sid>.org.
@@ -7622,7 +7622,7 @@ under the project, after the handshake that names the session.  A project
 keeps its own transcript the way it keeps its own README."
   (ert-with-temp-directory project
     (let ((agent-org-transcribe t)
-          (agent-org-transcript-directory ".agent-org")
+          (agent-org-transcri[REDACTED:pattern] ".agent-org")
           (default-directory (file-name-as-directory project)))
       (ao--capture-wire
         (let ((buf (ao--chat-on-model "qmodel-large" "QModel Large"
@@ -7640,7 +7640,7 @@ are Ready with the same model, so only the cwd distinguishes them."
   (ert-with-temp-directory proj-a
     (ert-with-temp-directory proj-b
       (let ((agent-org-transcribe t)
-            (agent-org-transcript-directory ".agent-org"))
+            (agent-org-transcri[REDACTED:pattern] ".agent-org"))
         (ao--capture-wire
           (let* ((default-directory (file-name-as-directory proj-a))
                  (buf-a (ao--chat-on-model "qmodel-large" "QModel Large" "sid-a"))
@@ -7662,7 +7662,7 @@ relative setting work."
   (ert-with-temp-directory project
     (ert-with-temp-directory pool
       (let ((agent-org-transcribe t)
-            (agent-org-transcript-directory (file-name-as-directory pool))
+            (agent-org-transcri[REDACTED:pattern] (file-name-as-directory pool))
             (default-directory (file-name-as-directory project)))
         (ao--capture-wire
           (let ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-abs")))
@@ -7727,7 +7727,315 @@ releases the agent."
                                     (ao--transcript-text temp-dir "sid-kill")))
             (should-not (agent-org--session-for-buffer buf))))))))
 
-;;;; Wire traffic
+;;;; Cross-agent #183: the sync check and the Org -> messages parser
+;;
+;; The converter cannot read a chat buffer (the other agent has no buffer
+;; open), so it reads the TRANSCRIPT, and that only works if two things are
+;; true: the file is what the buffer renders (the sync check) and its Org
+;; text can be turned back into the messages that were sent (the parser).
+;; Both are pinned against the RENDERER here — a fixture driven through the
+;; real send path, never text typed into this file — because the whole point
+;; is that the shape on disk is the shape the package writes.
+
+(defun ao--cross-fixture (style dir)
+  "A Ready chat in DIR with three filed turns, rendered in STYLE.
+Returns (BUFFER . TRANSCRIPT-FILE) and leaves the buffer ALIVE with its
+draft box open — the tests below need the buffer to ask the sync question —
+so every caller kills it.
+
+Built through `agent-org-send' and the notification path for the same reason
+every transcript test is: the parser must be pinned against what
+`agent-org-buffer-transcribe' actually lays down.  The three turns are the
+three shapes that matter: an answer split by a completed tool call, a
+multi-line prompt, and a turn that got no answer text at all."
+  (let ((agent-org-activity-style style))
+    (ao--transcript-in dir
+      (ao--capture-wire
+        (let* ((buf (ao--chat-on-model "qmodel-large" "QModel Large" "sid-cross"))
+               (session (agent-org--session-for-buffer buf)))
+          (cl-letf (((symbol-function 'acp-send-request)
+                     (lambda (&rest kw) (push kw ao--sent)))
+                    ((symbol-function 'acp-make-session-prompt-request)
+                     (lambda (&rest a) (plist-get a :prompt))))
+            ;; ---- turn 1: thought, answer, a call, more answer
+            (with-current-buffer buf
+              (ao--type "first question")
+              (agent-org-send))
+            (agent-org--on-notification
+             session (ao--update-notif
+                      '((sessionUpdate . "agent_thought_chunk")
+                        (content . ((type . "text") (text . "weighing it"))))))
+            (agent-org--on-notification
+             session (ao--update-notif
+                      '((sessionUpdate . "agent_message_chunk")
+                        (content . ((type . "text")
+                                    (text . "the answer begins\n"))))))
+            (agent-org--on-notification
+             session (ao--update-notif
+                      '((sessionUpdate . "tool_call")
+                        (toolCallId . "tc1") (title . "grep auth")
+                        (status . "pending"))))
+            (agent-org--on-notification
+             session (ao--update-notif
+                      '((sessionUpdate . "tool_call_update")
+                        (toolCallId . "tc1") (status . "completed")
+                        (content . [((type . "content")
+                                     (content . ((type . "text")
+                                                 (text . "matched here"))))]))))
+            (agent-org--on-notification
+             session (ao--update-notif
+                      '((sessionUpdate . "agent_message_chunk")
+                        (content . ((type . "text")
+                                    (text . "and ends after the call\n"))))))
+            (funcall (plist-get (car ao--sent) :on-success)
+                     '((stopReason . "end_turn")))
+            ;; ---- turn 2: a prompt over two lines
+            (with-current-buffer buf
+              (goto-char (point-max))
+              (ao--type "line one\nline two")
+              (agent-org-send))
+            (agent-org--on-notification
+             session (ao--update-notif
+                      '((sessionUpdate . "agent_message_chunk")
+                        (content . ((type . "text") (text . "second answer"))))))
+            (funcall (plist-get (car ao--sent) :on-success)
+                     '((stopReason . "end_turn")))
+            ;; ---- turn 3: sent, answered by nothing
+            (with-current-buffer buf
+              (goto-char (point-max))
+              (ao--type "a question with no answer")
+              (agent-org-send))
+            (funcall (plist-get (car ao--sent) :on-success)
+                     '((stopReason . "end_turn")))
+            (cons buf (expand-file-name
+                       (agent-org-buffer--transcript-name "sid-cross") dir))))))))
+
+(defun ao--cross-roles (messages)
+  "The ROLE strings of MESSAGES, in order — the shape an assertion reads first.
+Comparing the whole list is the point of the parser, but a failure on the
+five-hundredth character of an answer is unreadable, so the ordering tests
+assert on this and one test asserts on the text."
+  (mapcar (lambda (m) (plist-get m :role)) messages))
+
+(ert-deftest test-agent-org-transcript-text-is-one-definition-for-file-and-buffer ()
+  "`--transcript-text' answers with EXACTLY what the writer lays down.
+The sync check is only worth anything if \"what the file should hold\" has ONE
+definition shared with `agent-org-buffer-transcribe' — two readings of the
+mirror is how a converter ends up trusting a file the chat no longer
+renders.  Asserted with a queue block present, because the block is the part
+the writer appends rather than copies."
+  (ert-with-temp-directory temp-dir
+    (let ((buf (car (ao--cross-fixture 'headings temp-dir))))
+      (with-current-buffer buf
+        (let ((file (agent-org-buffer--transcript-file "sid-cross")))
+          (should (equal (with-temp-buffer
+                           (insert-file-contents file)
+                           (buffer-string))
+                         (agent-org-buffer--transcript-text)))
+          ;; the queue block is appended, not copied from the region
+          (agent-org-buffer-set-status buf :queued '("queued one"))
+          (should (string-match-p "queued one"
+                                  (agent-org-buffer--transcript-text)))
+          (agent-org-buffer-transcribe buf t)
+          (should (equal (with-temp-buffer
+                           (insert-file-contents file)
+                           (buffer-string))
+                         (agent-org-buffer--transcript-text))))
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-transcript-synced-p-reads-the-file-not-its-own-memory ()
+  "The sync check compares the FILE's bytes, and says nil the moment they drift.
+`agent-org-buffer--transcript-cache' is our own memory of what we last wrote:
+it stays truthful while a person edits the file behind our back, and a
+converter that trusted it would carry a stale transcript to the other agent.
+So the answers here are the whole feature: t when the boundary kept the file
+current, nil after a hand edit even though the cache still agrees with the
+buffer, and t again once the mirror is forced."
+  (ert-with-temp-directory temp-dir
+    (let* ((pair (ao--cross-fixture 'headings temp-dir))
+           (buf (car pair))
+           (file (cdr pair)))
+      ;; the turns were filed by the real boundary: the file is current
+      (should (agent-org-buffer-transcript-synced-p buf))
+      ;; edit the file behind our back; our own memory still matches the buffer
+      (let ((inhibit-read-only t))
+        (append-to-file "  a hand edit\n" nil file))
+      (should (equal (buffer-local-value 'agent-org-buffer--transcript-cache buf)
+                     (with-current-buffer buf
+                       (agent-org-buffer--transcript-text))))
+      (should-not (agent-org-buffer-transcript-synced-p buf))
+      ;; and the forced mirror is what makes it true again
+      (with-current-buffer buf (agent-org-transcript-sync))
+      (should (agent-org-buffer-transcript-synced-p buf))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-transcript-synced-p-answers-nil-for-no-file-and-no-id ()
+  "No file, no id, a dead buffer: all three read as NOT synced.
+nil is the answer that makes the convert command run the forced re-mirror
+before it reads, so it must be the answer for every case where the file does
+not hold the conversation — including a chat whose agent never gave it a
+session id, which has no transcript to be synced with."
+  (ert-with-temp-directory temp-dir
+    (let ((buf (car (ao--cross-fixture 'headings temp-dir))))
+      (should (agent-org-buffer-transcript-synced-p buf))
+      (delete-file (expand-file-name
+                    (agent-org-buffer--transcript-name "sid-cross") temp-dir))
+      (should-not (agent-org-buffer-transcript-synced-p buf))
+      (kill-buffer buf)
+      ;; an id-less chat has no file name to compare against
+      (let ((other (agent-org-buffer-create "no-id")))
+        (should-not (agent-org-buffer-transcript-synced-p other))
+        (kill-buffer other)))))
+
+(ert-deftest test-agent-org-transcri[REDACTED:pattern]-are-prompts-then-answers-in-order ()
+  "The parser answers with the conversation, oldest first, user then agent.
+This is the list the converter turns into another agent's session file, so
+the ORDER is the feature: one exchange is a user message followed by the
+assistant's answer to it, and a turn with no answer text gets no invented
+assistant message (the third turn below was sent and never answered)."
+  (ert-with-temp-directory temp-dir
+    (let* ((pair (ao--cross-fixture 'headings temp-dir))
+           (buf (car pair))
+           (messages (agent-org-buffer-transcri[REDACTED:pattern] (cdr pair))))
+      (should (equal '("user" "assistant" "user" "assistant" "user")
+                     (ao--cross-roles messages)))
+      (should (equal (list (list :role "user" :text "first question")
+                           (list :role "assistant"
+                                 :text "the answer begins\n\nand ends after the call")
+                           (list :role "user" :text "line one\nline two")
+                           (list :role "assistant" :text "second answer")
+                           (list :role "user" :text "a question with no answer"))
+                     messages))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-transcri[REDACTED:pattern]-leave-out-thoughts-calls-and-furniture ()
+  "Thinking, tool calls and Org furniture are not messages.
+What the agent thought and what it ran are its OWN activity: replaying them
+as user or assistant text would put words in the model's mouth that it never
+sent, and the drawers (`:PROPERTIES:', `:LOGBOOK:', `:thinking:', `:tool:')
+plus the metadata block are the package's record-keeping, not the
+conversation.  The strings below are in the FILE — that is the point of
+asserting they are not in the messages."
+  (ert-with-temp-directory temp-dir
+    (let* ((pair (ao--cross-fixture 'headings temp-dir))
+           (buf (car pair))
+           (file (cdr pair))
+           (text (mapconcat (lambda (m) (plist-get m :text))
+                            (agent-org-buffer-transcri[REDACTED:pattern] file)
+                            "\n")))
+      (should (file-exists-p file))
+      (should (string-match-p "weighing it" (ao--transcript-text temp-dir "sid-cross")))
+      (should-not (string-match-p "weighing it" text))
+      (should-not (string-match-p "grep auth" text))
+      (should-not (string-match-p "matched here" text))
+      (should-not (string-match-p "PROPERTIES" text))
+      (should-not (string-match-p "CLOCK:" text))
+      (should-not (string-match-p "RESPONDED" text))
+      (should-not (string-match-p "WROTE" text))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-transcri[REDACTED:pattern]-restore-a-multi-line-prompt ()
+  "A prompt that was typed over two lines comes back as two lines.
+The heading carries the first line and the body carries the rest, so a parser
+that only read headlines would send half the question to the other agent —
+and the body's ONE leading space, which §3.2 adds to keep a structural line
+from re-shaping the exchange, is not part of what the user typed."
+  (ert-with-temp-directory temp-dir
+    (let* ((pair (ao--cross-fixture 'headings temp-dir))
+           (buf (car pair))
+           (messages (agent-org-buffer-transcri[REDACTED:pattern] (cdr pair)))
+           (second (plist-get (nth 2 messages) :text)))
+      (should (equal "line one\nline two" second))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-transcri[REDACTED:pattern]-invent-nothing-from-the-live-box ()
+  "A draft in the `* PROMPT' box is not a message, and does not stale the file.
+The box sits BELOW `--render-end', which is exactly why a half-typed prompt
+never reaches the mirror: the same boundary must keep it out of the parsed
+conversation, and must not make the synced check answer nil — the draft is
+not conversation yet in either reading.  Typing `* auth' at column 0 is the
+hazard this guards (a prompt may contain headings), so the draft is a bullet."
+  (ert-with-temp-directory temp-dir
+    (let* ((pair (ao--cross-fixture 'headings temp-dir))
+           (buf (car pair))
+           (before (agent-org-buffer-transcri[REDACTED:pattern] (cdr pair))))
+      (with-current-buffer buf
+        (goto-char (point-max))
+        (ao--type "* auth\nthe draft nobody sent"))
+      (should (equal before (agent-org-buffer-transcri[REDACTED:pattern] (cdr pair))))
+      (should (agent-org-buffer-transcript-synced-p buf))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-transcri[REDACTED:pattern]-leave-out-the-queue-block ()
+  "Waiting prompts are not conversation the other agent should re-send.
+`agent-org-buffer-transcribe' appends the queue block, so a transcript holds
+them; the converter's own enqueue path is what carries them across, not the
+message list, and reading them as prompts would send them twice.  NEXT and
+WAIT are words of the PROMPT set, so the block is found by its preamble, not
+by its keywords."
+  (ert-with-temp-directory temp-dir
+    (let* ((pair (ao--cross-fixture 'headings temp-dir))
+           (buf (car pair))
+           (file (cdr pair)))
+      (with-current-buffer buf
+        (agent-org-buffer-set-status buf :queued '("queued one" "queued two"))
+        (agent-org-buffer-transcribe buf t))
+      (should (string-match-p "queued one" (ao--transcript-text temp-dir "sid-cross")))
+      (let ((messages (agent-org-buffer-transcri[REDACTED:pattern] file)))
+        (should (equal '("user" "assistant" "user" "assistant" "user")
+                       (ao--cross-roles messages)))
+        (should-not (string-match-p "queued"
+                                    (mapconcat (lambda (m) (plist-get m :text))
+                                               messages "\n"))))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-transcri[REDACTED:pattern]-read-a-drawers-style-transcript ()
+  "A transcript rendered WITHOUT part headlines still parses into messages.
+`headings' is the default, but a file on disk is whatever the build that wrote
+it painted, and the other two styles keep the answer as prose under the
+model's own label line.  The answer of turn 1 is ONE block there, so the two
+chunks join with a newline rather than a blank line, and the thought and the
+call sit in drawers that must not leak in either style."
+  (ert-with-temp-directory temp-dir
+    (let* ((pair (ao--cross-fixture 'drawers temp-dir))
+           (buf (car pair))
+           (file (cdr pair))
+           (messages (agent-org-buffer-transcri[REDACTED:pattern] file)))
+      (should (equal '("user" "assistant" "user" "assistant" "user")
+                     (ao--cross-roles messages)))
+      (let ((answer (plist-get (nth 1 messages) :text)))
+        (should (string-match-p "the answer begins" answer))
+        (should (string-match-p "and ends after the call" answer))
+        (should-not (string-match-p "weighing it" answer))
+        (should-not (string-match-p "matched here" answer))
+        (should-not (string-match-p "QModel Large:" answer))
+        (should (equal "first question" (plist-get (nth 0 messages) :text))))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-transcri[REDACTED:pattern]-refuses-a-file-that-is-not-there ()
+  "Reading a transcript that does not exist is an error, not an empty chat.
+nil would read back as \"this session said nothing\", and the converter would
+mint an empty session file in the other agent's directory — which the user
+then resumes believing the history moved.  The sync check answers nil for the
+same case because it runs BEFORE the forced mirror; this one runs after it."
+  (ert-with-temp-directory temp-dir
+    (should-error (agent-org-buffer-transcri[REDACTED:pattern]
+                   (expand-file-name "sid-nowhere.org" temp-dir))
+                  :type 'user-error)))
+
+(ert-deftest test-agent-org-transcri[REDACTED:pattern]-of-an-empty-transcript-is-no-messages ()
+  "A transcript with no exchange in it parses to nil, not to one empty message.
+A chat that never sent a prompt still has its metadata block, and the parser
+starts at the first level-1 heading: nothing there means nothing to carry
+over.  A user message invented from `#+TITLE:' would be a lie the other agent
+answers."
+  (ert-with-temp-directory temp-dir
+    (let ((file (expand-file-name "sid-empty.org" temp-dir)))
+      (with-temp-buffer
+        (insert ":PROPERTIES:\n:Provider: qoder\n:ID: sid-empty\n:END:\n\n#+TITLE: nothing yet\n")
+        (write-region nil nil file nil))
+      (should (null (agent-org-buffer-transcri[REDACTED:pattern] file))))))
+
 
 (defun ao--client-for (session command)
   "Give SESSION a mock client spawned for COMMAND, as `agent-org--open-session' would.
@@ -8056,7 +8364,7 @@ Most resumes have nothing waiting, and one invented from a stale file
 would spend tokens the user never asked for.  Absent block, absent
 `session/prompt'."
   (ert-with-temp-directory temp-dir
-    (let ((agent-org-transcript-directory temp-dir)
+    (let ((agent-org-transcri[REDACTED:pattern] temp-dir)
           (agent-org-transcribe nil))
       (with-temp-file
           (expand-file-name (agent-org-buffer--transcript-name "sid-none")
@@ -8080,7 +8388,7 @@ A session resumed with `agent-org-transcribe' off, or one that predates
 the feature, has nothing to read — and a resume that failed on a missing
 file would be a regression for every user who never queued a prompt."
   (ert-with-temp-directory temp-dir
-    (let ((agent-org-transcript-directory
+    (let ((agent-org-transcri[REDACTED:pattern]
            (expand-file-name "nope/" temp-dir))
           (agent-org-transcribe nil))
       (ao--capture-wire
@@ -8842,9 +9150,9 @@ session streaming, so the caller decides how the turn ends."
   (agent-org-send))
 
 (ert-deftest test-agent-org-exchange-heading-wears-the-prompt ()
-  "ONE heading per prompt-response pair, and its text IS the prompt.
+  "ONE heading per prom[REDACTED:pattern] pair, and its text IS the prompt.
 User order: \"From now on, there will be ONE heading for each
-prompt-response pair.  The heading will contain the prompt.\"  So the sent
+prom[REDACTED:pattern] pair.  The heading will contain the prompt.\"  So the sent
 question is no longer echoed under a `* PROMPT' heading: it becomes the
 heading itself, and the exchange has exactly one.  The type-ahead box keeps
 its `* PROMPT' heading because it is an input control, not a pair."
@@ -10944,12 +11252,12 @@ confidence."
 ;; drawer shape was chosen to avoid.
 
 (defmacro ao--report-in (dir &rest body)
-  "Run BODY with `agent-org-transcript-directory' bound to DIR.
+  "Run BODY with `agent-org-transcri[REDACTED:pattern]' bound to DIR.
 The report has one input, a directory; binding it is the whole setup, and
 DIR is absolute because a test that read the user's real `.agent-org/'
 would be a test that reports the user's chats."
   (declare (indent 1))
-  `(let ((agent-org-transcript-directory (file-name-as-directory ,dir)))
+  `(let ((agent-org-transcri[REDACTED:pattern] (file-name-as-directory ,dir)))
      ,@body))
 
 (defun ao--report-transcript (dir name title provider model turns)
@@ -11008,7 +11316,7 @@ compare two chats and the table to see the day."
 
 (ert-deftest test-agent-org-clock-report-reads-one-projects-directory-only ()
   "Scope is the project's transcript directory, never the user's agenda.
-`agent-org-transcript-directory' is RELATIVE by default and resolves against
+`agent-org-transcri[REDACTED:pattern]' is RELATIVE by default and resolves against
 `default-directory' exactly as the writer resolves it, so one project's
 report cannot drag in another project's chats -- and it must not do so
 through `org-agenda-files' either, which is a global list of a person's own
@@ -11026,11 +11334,11 @@ planted as a transcript in a directory the report is NOT pointed at."
                    (expand-file-name ".agent-org/sid-in.org" project))
       ;; `let*', not `let': a plain `let' evaluates every init form in the
       ;; OUTER environment, so `(agent-org-clock-report)' would run BEFORE
-      ;; `default-directory' and `agent-org-transcript-directory' were bound
+      ;; `default-directory' and `agent-org-transcri[REDACTED:pattern]' were bound
       ;; and read the real repo's `.agent-org' instead of this project's.
       (let* ((org-agenda-files (list (expand-file-name "sid-out.org" elsewhere)))
              (default-directory (file-name-as-directory project))
-             (agent-org-transcript-directory ".agent-org")
+             (agent-org-transcri[REDACTED:pattern] ".agent-org")
              (buffer (agent-org-clock-report)))
         (unwind-protect
             (with-current-buffer buffer
