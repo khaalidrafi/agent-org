@@ -23,3 +23,6 @@
 ** TODO WO-13 clock seconds fix (designed, not written) — TODOs.org §Clock seconds
 ** TODO WO-14 "later" porting bucket — TODOs.org §Later
 ** TODO WO-15 tracker: everything else still open — TODOs.org §Everything else
+** ONGOING CI-kit adoption (teamify, Lead) — ci/ submodule @ b86e5eb: dual-law
+   harness baked, per-seat session reuse ON, .agent-org transcripts committed;
+   seats owe the INTEGRATION.md section 6 verification matrix in TEAM-CHAT.org

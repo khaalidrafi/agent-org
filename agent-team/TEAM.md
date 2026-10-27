@@ -20,6 +20,13 @@ on the clock) and mirroring every session to a transcript Org file.
 - BLOCKED is never terminal; only the EM flips DONE on the board.
 - Credentials are for immediate use only — never written into files,
   commits, or the board.
+- Both AGENTS.md files bind everywhere: the GLOBAL law (baked from the
+  ci/ kit harness into your body's rules slot) and the LOCAL law (the
+  repo's own AGENTS.md + CONVENTIONS.md). Project specifics: local wins.
+- The .agent-org/ directory is the PRESERVED record (Owner order
+  2026-10-27): auto-generated session transcripts and the per-seat
+  session ids (.agent-org/sessions/<seat>.sid) are committed every
+  turn — read them, never edit or delete them, never put secrets in them.
 - Existing code and conventions outrank this manual; the team layer wraps
   the project, never rewrites it.
 
@@ -42,6 +49,9 @@ on the clock) and mirroring every session to a transcript Org file.
   no merge to the default branch without the Owner.
 - Tooling: rg/fd for search; no source builds locally — CI builds;
   Org mode for boards and state.
+- CI kit: the ci/ submodule (khaalidrafi/agent-team-ci) carries the
+  shared harness + both-law delivery + commit guard; the Lead bumps its
+  pin whenever the kit moves (gitlinks pin a commit, never a branch).
 
 * MANUAL
 

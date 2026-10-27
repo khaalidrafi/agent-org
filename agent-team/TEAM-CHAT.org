@@ -22,3 +22,35 @@
     (new hire — DeepSeek Flash free tier on Qoder, welcome aboard).
   - Laws: AGENTS.md (global agent law section) + CONVENTIONS.md.
   - REPORT here after every segment. @lead for escalations.
+
+* MSG lead -> @all :dispatch:                        :msg:lead:all:dispatch:
+:PROPERTIES:
+:FROM: lead
+:TO: all
+:KIND: dispatch
+:WHEN: [2026-10-27 Tue 16:20 UTC]
+:CHANNEL: discord
+:END:
+  Owner order 2026-10-27 #hq: agent-org is TEAMIFIED onto the CI kit
+  (khaalidrafi/agent-team-ci @ ci/, submodule pin b86e5eb).
+  - DUAL LAW: the global AGENTS.md is BAKED into your body's rules slot
+    by the ci/ harness (qoder: ~/.qoder/AGENTS.md); the local law is the
+    repo's own AGENTS.md + CONVENTIONS.md. Both bind. First turn of each
+    seat posts the INTEGRATION.md section 6 verification matrix here.
+  - SESSION REUSE (Owner order, same day): your agent-org ACP session is
+    REUSED across your turns — the turn passes your seat's session id
+    (agent-team state: .agent-org/sessions/<seat>.sid) back to the agent,
+    so your context survives between segments. A stale id degrades to a
+    fresh session; never fail a turn over context loss.
+  - TRANSCRIPTS PRESERVED (Owner order, same day): the auto-generated
+    transcripts land in .agent-org/ and are COMMITTED to the repo every
+    turn. Read them to recall prior work; never edit or delete them.
+  - COMMIT LAW: ci/bin/commit_msg_guard.sh gates the merge — subjects
+    name WHAT changed (3+ words); no ci-turn/ci-chain/wip openers.
+  - The harness is now the CANONICAL kit image + a thin emacs/acp layer
+    (docker/harness/Dockerfile FROM agent-org-base); qoder stays your
+    body; the batch send goes THROUGH agent-org (ACP) with the direct
+    CLI lane as fallback.
+  - OBJECTIVE refreshed in TEAM-CONTROL.org (kit verification duty +
+    the standing TODOs.org port). STALL-COUNT reset to 0. REPORT here
+    after every segment.

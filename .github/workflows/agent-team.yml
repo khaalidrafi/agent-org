@@ -50,6 +50,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Emacs
         run: sudo apt-get update -qq && sudo apt-get install -y -qq emacs-nox
@@ -78,6 +80,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: recursive
 
       - name: Read control file (kill switch / objective / turn)
         id: control
@@ -123,14 +126,25 @@ jobs:
           esac
           echo "$MSG" >> "$SUMMARY"
 
-      - name: Build harness image (preinstalled agents — cached, no installs)
+      - name: Build harness image (canonical kit base + thin repo layer)
         if: steps.control.outputs.mode == 'work'
         run: |
+          # INTEGRATION.md section 2: the canonical kit image is built from
+          # THIS repo's root (context = repo root, so ci/AGENTS.md bakes
+          # into every body's law slot); the thin repo layer adds emacs +
+          # acp on top (docker/harness/Dockerfile FROMs the base tag).
           docker buildx build --load \
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
-            -t agent-harness:local \
-            docker/harness
+            -f ci/docker/harness/Dockerfile \
+            -t agent-org-base:local \
+            .
+          docker buildx build --load \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            -f docker/harness/Dockerfile \
+            -t agent-org-harness:local \
+            .
 
       - name: Prepare git identity
         if: steps.control.outputs.mode == 'work'
@@ -350,6 +364,47 @@ jobs:
             && emacs -Q --batch --eval "(add-to-list 'load-path \".\")" \
                  --eval "(batch-byte-compile)" agent-org-buffer.el \
                  agent-org-loader.el 2>/dev/null || true)
+          # AGENT-ORG BATCH LANE — the PRIMARY send (Owner R-2-77 endgame:
+          # CI sends go THROUGH agent-org; Owner 2026-10-27 #hq: REUSE the
+          # SAME agent-org session per member so context survives turns,
+          # and the auto-generated transcripts are preserved).
+          # Best-effort by contract: exit 42 (or a missing bake) falls
+          # through to the proven direct CLI lanes below — the batch path
+          # only ADDS a working send, it never removes one.
+          SID_DIR=/workspace/.agent-org/sessions
+          SID_FILE="$SID_DIR/${SEAT}.sid"
+          SID=""; [ -s "$SID_FILE" ] && SID="$(cat "$SID_FILE")"
+          mkdir -p "$SID_DIR"
+          printf '%s\n' "$BRIEF" > /tmp/segment-brief.txt
+          BATCH_MODEL=""
+          [ "$SEAT" = "implementer-deepseek" ] && BATCH_MODEL="deepseek-flash"
+          if command -v emacs >/dev/null 2>&1 \
+             && [ -f /workspace/agent-org-batch.el ] \
+             && [ -f /opt/acp-site/acp.el ]; then
+            if env AGENT_ORG_PROVIDER=qoder \
+                   AGENT_ORG_PROVIDER_COMMAND="env HOME=/usr/local/lib/qoder-home qoder --acp" \
+                   AGENT_ORG_MODEL="$BATCH_MODEL" \
+                   AGENT_ORG_PROMPT=/tmp/segment-brief.txt \
+                   AGENT_ORG_OUT=/tmp/.batch-out.txt \
+                   AGENT_ORG_SESSION_ID="$SID" \
+                   AGENT_ORG_SESSION_OUT="$SID_FILE" \
+                   AGENT_ORG_TRANSCRIPT_DIR=/workspace/.agent-org \
+                   AGENT_ORG_LOAD_PATH=/opt/acp-site:/workspace \
+                   AGENT_ORG_TIMEOUT=720 \
+                   emacs --batch -l /workspace/agent-org-batch.el \
+                     --eval '(agent-org-batch-send)' \
+                   > /tmp/.batch-log.txt 2>&1; then
+              echo "TURN_RESULT=agent-org batch OK (lane: qoder ACP through agent-org; session reuse ON, transcripts preserved)"
+              sed -n '1,40p' /tmp/.batch-out.txt
+              BATCH_DONE=1
+            else
+              echo "agent-org batch lane unavailable (exit 42) — falling back to the direct CLI lane"
+              tail -3 /tmp/.batch-log.txt 2>/dev/null || true
+            fi
+          else
+            echo "agent-org batch lane not baked in this image — direct CLI lane"
+          fi
+          if [ "${BATCH_DONE:-0}" != "1" ]; then
           case "$SEAT" in
             implementer | implementer-deepseek)
               QMODEL=""; [ "$SEAT" = "implementer-deepseek" ] && QMODEL="deepseek-flash"
@@ -382,6 +437,7 @@ jobs:
               echo "TURN_RESULT=BLOCKED (unknown seat ${SEAT} — rotation case gap)"
               ;;
           esac
+          fi
           SESS="/workspace/.turn-sessions.tgz"
           rm -f "$SESS"
           tar czf "$SESS" -C / \
@@ -397,7 +453,7 @@ jobs:
             -v "$PWD/.sessions-restore":/sessions-restore:ro \
             -e SEAT="${SEAT}" -e BRIEF="${BRIEF}" \
             -e QODER_PERSONAL_ACCESS_TOKEN -e ZAI_API_KEY \
-            agent-harness:local bash /workspace/.turn-inside.sh \
+            agent-org-harness:local bash /workspace/.turn-inside.sh \
             > /tmp/.turn-out.txt 2>&1; then
             echo "container verdict captured"
           else
@@ -470,6 +526,18 @@ jobs:
         if: always() && steps.control.outputs.mode == 'work'
         run: |
           bash .github/scripts/secret-guard.sh branch origin/ai/quickstart
+          # TRANSCRIPT PRESERVATION (Owner order 2026-10-27 #hq): the
+          # auto-generated agent-org transcripts + the per-seat session
+          # ids are part of the team's record — land them on the work
+          # branch (the secret guard above already scanned them).
+          if [ -n "${TURN_BRANCH:-}" ] \
+             && [ -n "$(git status --porcelain .agent-org 2>/dev/null)" ]; then
+            git add .agent-org
+            git commit -m "transcripts: preserve agent-org session transcripts and seat session ids" \
+              -m "Co-authored-by: z.ai-agent <z.ai-agent@z.ai>" \
+              -m "Co-authored-by: Khalid Rafi <khaalidrafi@gmail.com>" \
+              || echo "::notice::transcripts already committed by the seat"
+          fi
           git fetch origin ai/quickstart || true
           git rebase origin/ai/quickstart "${TURN_BRANCH:-ai/turn-orphan}" 2>/dev/null \
             || { git rebase --abort 2>/dev/null || true; echo "::warning::branch rebase skipped"; }
@@ -486,16 +554,20 @@ jobs:
           git reset --hard origin/ai/quickstart
           sed -i "s|^\#+TURN:.*|\#+TURN: ${NEXT}|" "$CTL"
           git add "$CTL"
-          git commit -m "ci-turn: ${TURN_SEAT:-unknown} done — next turn ${NEXT}" \
-            -m "result: ${TURN_RESULT:-unknown}" || echo "::notice::nothing to commit"
+          git commit -m "control: rotate #+TURN to ${NEXT%% *} after ${TURN_SEAT:-unknown} segment" \
+            -m "next seat: ${NEXT}" \
+            -m "segment result: ${TURN_RESULT:-unknown}" \
+            -m "Co-authored-by: z.ai-agent <z.ai-agent@z.ai>" \
+            -m "Co-authored-by: Khalid Rafi <khaalidrafi@gmail.com>" \
+            || echo "::notice::nothing to commit"
           CPUSH=no
           for i in 1 2 3; do
             if git push origin "ai/quickstart"; then CPUSH=yes; break; fi
             git fetch origin ai/quickstart && git reset --hard origin/ai/quickstart
             sed -i "s|^\#+TURN:.*|\#+TURN: ${NEXT}|" "$CTL"
             git add "$CTL"
-            git commit -m "ci-turn: ${TURN_SEAT:-unknown} done — next turn ${NEXT}" \
-              -m "result: ${TURN_RESULT:-unknown}" || true
+            git commit -m "control: rotate #+TURN to ${NEXT%% *} after ${TURN_SEAT:-unknown} segment" \
+              -m "segment result: ${TURN_RESULT:-unknown}" || true
           done
           [ "$CPUSH" = "yes" ] || echo "::warning::control push failed after 3 attempts"
 
@@ -509,6 +581,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ai/quickstart
+          submodules: recursive
 
       - name: Auto-merge the turn branch (peer mail propagation)
         id: merge
@@ -550,6 +623,11 @@ jobs:
               continue
             fi
             if bash .github/scripts/gate.sh; then
+              bash ci/bin/commit_msg_guard.sh "${{ needs.turn.outputs.base_sha }}..HEAD" \
+                || { git reset --hard origin/ai/quickstart
+                     RESULT=red-commit-msg
+                     echo "commit-msg guard red — merge undone, branch kept for the Lead"
+                     break; }
               bash .github/scripts/secret-guard.sh staged
               if git push origin "ai/quickstart"; then RESULT=green; break; fi
               RESULT=push-retry
@@ -587,7 +665,9 @@ jobs:
             git reset --hard origin/ai/quickstart
             sed -i "s|^\#+STALL-COUNT:.*|\#+STALL-COUNT: ${NEW}|" "$CTL"
             git add "$CTL"
-            git commit -m "ci-chain: stall=${NEW} (segment ${OUTCOME}, result ${RESULT:-none})" \
+            git commit -m "control: #+STALL-COUNT -> ${NEW} (segment ${OUTCOME}, result ${RESULT:-none})" \
+              -m "Co-authored-by: z.ai-agent <z.ai-agent@z.ai>" \
+              -m "Co-authored-by: Khalid Rafi <khaalidrafi@gmail.com>" \
               || echo "::notice::stall commit empty"
             git push origin "ai/quickstart" || echo "::warning::stall push failed"
           fi
