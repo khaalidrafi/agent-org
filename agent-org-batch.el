@@ -264,14 +264,21 @@ every other exit is 42 = fall back to the direct CLI lane."
         ;; the batch run is its own transcript owner UNLESS the caller
         ;; asks for the mirror: AGENT_ORG_TRANSCRIPT_DIR set = the
         ;; auto-generated transcripts land there (CI preserves them);
-        ;; unset = the old law, no stray sid-*.org in the workspace
+        ;; unset = the old law, no stray sid-*.org in the workspace —
+        ;; the DEFVARS then keep their defaults (transcribe off,
+        ;; directory ".agent-org"): forcing a nil DIRECTORY here broke
+        ;; resume — the replay's queue reader expands that directory to
+        ;; find the transcript file, and (expand-file-name nil) raised
+        ;; wrong-type-argument stringp nil inside the finish-replay
+        ;; timer, so the session never went ready -> exit 42 (e2e
+        ;; resume case; CI runs 80-84)
         (setq agent-org-transcribe (and (getenv "AGENT_ORG_TRANSCRIPT_DIR") t)
-              agent-org-transcript-directory
-              (and (getenv "AGENT_ORG_TRANSCRIPT_DIR")
-                   (expand-file-name (getenv "AGENT_ORG_TRANSCRIPT_DIR")))
               ;; CI output is grepped (verdict tokens) — the agent's own
               ;; bytes, not the chat buffer's markdown rendering
               agent-org-convert-markdown nil)
+        (when (getenv "AGENT_ORG_TRANSCRIPT_DIR")
+          (setq agent-org-transcript-directory
+                (expand-file-name (getenv "AGENT_ORG_TRANSCRIPT_DIR"))))
         (agent-org-batch--load-deps)
         (advice-add 'agent-org-buffer-append-chunk
                     :around #'agent-org-batch--collect)
