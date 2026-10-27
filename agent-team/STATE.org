@@ -1,0 +1,11 @@
+#+TITLE: STATE.org — cross-session state (Owner pastes back at session start)
+
+,* DONE
+,* IN-FLIGHT
+,* READY-FOR-HUMAN-REVIEW
+,* DEFERRED
+,* BLOCKED
+,* TEAM-STAFFING
+,* HIRING-LOG
+,* AUTONOMY
+  AUTO

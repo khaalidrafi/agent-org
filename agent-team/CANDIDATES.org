@@ -1,0 +1,715 @@
+#+TITLE: CANDIDATES.org — ALL available model@platform options
+#+ROLE: the complete candidate inventory; COMMON points here. This is
+        inventory, not endorsement — the values in COMMON filter at staffing
+        time. IDs: PROVIDER/MODEL@AGENT/PLATFORM. API roster authority:
+        live GET /v1/models (names rotate; this file is character, not catalog)
+#+EXPIRY-LAW: Owner order 2026-10-20 — EVERY candidate row carries its FREE-TIER
+        EXPIRY DATE when one exists. "No dated expiry" does not mean
+        "permanent": record an undated free tier as undated, together with its
+        cap and rotation risk — never silently treat it as unlimited. Dated
+        promos (e.g. minimax-m3.1-flash, free through 2026-10-25) are RE-HIRE
+        DATES: the seat using one must carry a fallback that does not depend
+        on the promo.
+
+#+BURN-LAW: Owner order 2026-10-24 17:01Z — "burn Minimax m3.1 to the ground,
+        according to its performance!" EVERY minimax-m3.1-flash lane in this
+        inventory is PERSONA NON GRATA: no hire, no probe, no fallback, no
+        staged-needs-key revival. This supersedes every earlier order that
+        named M3.1 (including the 2026-10-22 consume-ALL mandate and the
+        2026-10-20 free-through-10-25 promo). Evidence: a hallucination weak
+        spot (mandate note below), the openrouter delist at source
+        2026-10-22 18:16Z, and the promo already dying on 10-25. The mcode
+        body's only free brain WAS M3.1 Flash, so the mcode lane went DORMANT
+        and MCODE_AUTH_JSON sealing was CANCELLED. minimax-m2 and minimax-m3
+        are SEPARATE models: m2 stays hireable inventory; m3 remains
+        undelivered vapor.
+
+#+CARVE-OUT: Owner order 2026-10-24 17:11Z — the BURN narrows to the API and
+        gateway lanes ONLY. The mcode body's OAuth M-Plan-Free m3.1-flash leg
+        is LANE-ALIVE and MCODE_AUTH_JSON sealing is RE-INSTATED (the
+        token-keeper workflow refreshes it). Everything else in BURN-LAW
+        stands.
+
+* OWNER-KEYS — the REAL inventory (2026-10-24, Owner order: "Where are ALL my
+  real models?"). These are the lanes whose keys are ALREADY IN HAND — sealed
+  as GitHub Actions secrets (24 names) on docneural/admincraft/agent-team.el
+  and wired in llmfisher (config/config.yaml is the machine-readable
+  registry). EVERY hire draws from HERE FIRST. A lane outside this section
+  needs a signup the Owner has NOT done — recommending it means recommending
+  work he never asked for. STANDING ORDER (Owner 2026-10-25): list NOTHING he
+  has no account for. A row naming an unregistered platform is deleted on
+  sight (the aiHubMix/GitHub-Models/CommandCode incident).
+
+  API-key lanes (secret name → provider; model counts from llmfisher config,
+  2026-10-24):
+  - GEMINI_API_KEY → gemini — 25 ids (gemini-2.5/3-flash-preview, 3.1→3.8
+    flash tiers, antigravity previews)
+  - GROQ_API_KEY → groq — 7 (openai/gpt-oss-120b, gpt-oss-20b,
+    qwen3.8-27b, allam-2-7b, 2 prompt-guards, safeguard-20b)
+  - OPENROUTER_API_KEY → openrouter — 20 ids incl. :free rows (M3.1 flash
+    BURNED here per BURN-LAW)
+  - ZAI_API_KEY → zai — 3 (glm-4.7-flash, glm-4.5-flash, glm-4.6v-flash)
+  - CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_KEY → cloudflare — 35 Workers-AI ids
+  - OLLAMA_CLOUD_API_KEY → ollama-cloud — 7 (gpt-oss:120b/20b, nemotron-3
+    tiers, beam, gemma4:31b)
+  - OPENCODE_API_KEY → opencode — 8 Zen -free ids (client_only: answer only
+    inside OpenCode's own client)
+  - TOKENHARBOR_API_KEY → tokenharbor — free :free rows
+  - TYPESAFE_API_KEY → jev — 2 (jev-1.13.0, jev-latest; decision layer)
+  - XPLABS_API_KEY → xplabs — 3 (clef-flash, qwen3.8-27b, gpt-6-luna;
+    card_required block still stands)
+  - GMI_API_KEY → gmi — 2 (Nemotron-3.5-Super-VL, MiniMax-M3.1-Flash — M3.1
+    BURNED per BURN-LAW)
+  - BAI_API_KEY → bai — 1 (gpt-image-2, image gen)
+  - ANTLING_API_KEY → antling — 7 (Ling-3.0/3.1-flash, 3.0-flash-VL,
+    3.0-tiny, 2.6-flash/1T, Ring-2.6-1T; burn-verified live 2026-10-24)
+  - AA_API_KEY, NAVYAI_API_KEY → sealed but declared gomodel-side only (no
+    llmfisher provider entry yet)
+  OAuth/credential-file lanes (token-keeper workflow re-seals both):
+  - CLINE_AUTH_JSON → cline (api.cline.bot/api/v1) — credential live,
+    token-keeper re-seals. RE-ARMED 2026-10-26 (Owner fiat — see the CLINE
+    BUILT-IN FREE CATALOG section below): the public catalog names 18
+    FREE-tagged ids, all declared for this lane there. minimax-m3.1-flash
+    stays BURNED; no minimax id exists in the catalog at all.
+  - MCODE_AUTH_JSON → mcode — see BURN-LAW (17:01Z dormant) vs the 17:11Z
+    carve-out that re-armed the M-Plan-Free m3.1-flash leg; both orders
+    coexist exactly as written there
+  Non-model secrets (context only): GOMODEL_MASTER_KEY, GH_PAT,
+  CODEBUDDY_AUTH_TOKEN, QODER_PERSONAL_ACCESS_TOKEN.
+  Retired 2026-10-25 (Owner: no more Telegram communication — safe to
+  delete from repo settings): TELEGRAM_BOT_TOKEN, TELEGRAM_OWNER_ID.
+  Retired 2026-10-26 (Owner: "remv discord, too." — the Discord mirror is
+  removed from CI; safe to delete from repo settings): every
+  DISCORD_WEBHOOK_* (TEAM, TEAM_DOCNEURAL, TEAM_HQ, TEAM_ADMINCRAFT).
+
+  NO-ACCOUNT-DEAD LAW (Owner 2026-10-24/25): a platform the Owner has no
+  account on is NOT inventory. Never list it, never probe it, never
+  recommend it — including as an "intel row for context". No exceptions.
+  Every model row in THIS file traces to a secret above, an OAuth
+  credential, or a wired llmfisher provider WITH ITS KEY ON FILE.
+  Anything else is deleted on sight.
+
+  ADD-FREEZE (Owner 2026-10-25 04:23Z): NOTHING is ever added to this
+  file without the Owner's explicit permission — agents propose in #hq
+  or the dispatch, and only the Owner's fiat adds. Removals need no
+  permission.
+
+* Web (brains-only chat, one-shot couriers)
+  - kimi-k2.6 @ kimi.ai
+    [free-tier expiry: none published; agentic features membership-gated]
+  - qwen3.8-max · qwen3.7-max · qwen3.7-plus · qwen3.8-omni-flash @ chat.qwen.ai
+    [free-tier expiry: none published; the programmable free lane (Qwen Code
+    OAuth) was DISCONTINUED 2026-04-15 — that is a past-tense expiry; DashScope
+    new-user quota is 90-day dated if that path is ever opened]
+  - glm-5.3 · glm-5.3-flash · glm-5.2 @ chat.z.ai
+    [free-tier expiry: none published; caps undocumented; ToS bans account
+    sharing — see the Cloud row for the same note]
+  - grok-4.7 · gemini-3.8-flash @ WorkBuddy.ai (cloud agents, chat-shaped)
+    [free-tier expiry: none published; closed weights — values-excluded from
+    accountable seats]
+
+* Agent — Cloud (sandboxed shell)
+  - chat.z.ai: glm-5.3 · glm-5.3-flash · glm-5.2 (Z.ai Agent shell for all GLM)
+    [free-tier expiry: none published; caps undocumented; ToS bans account
+    sharing — dated expiry would actually be easier to plan around]
+  - WorkBuddy.ai: gemini-3.8-flash · gemini-3.5-flash · glm-5.3-flash/5.3/5.2 ·
+    kimi-k3 · kimi-k2.6 · kimi-k2.8-preview · gpt-6-sol/luna · gpt-5.6-terra/luna ·
+    gpt-5.5/5.4 [closed] · grok-4.7 · step-5-preview · deepseek-v4.1-flash
+    [free-tier expiry: none published]
+  - MiniMax Agent: minimax-m3.1-flash · minimax-m3
+    [BURNED 2026-10-24 per BURN-LAW — was: minimax-m3.1-flash FREE ONLY
+    THROUGH 2026-10-25 (Owner order 2026-10-20), a dated promo; the Owner
+    pulled the trigger a day early on performance. minimax-m3: n/a (no
+    delivered free tier, weights still "promised")]
+  - CodeBuddy: SAME model list as the WorkBuddy.ai cloud pool — one pool, two
+    harnesses (Owner confirmation 2026-10-20; both entries in this file kept
+    in sync from now on) [free-tier expiry: none published]
+
+* Agent — Local (Owner's machine; no heavy builds)
+  - qoder: qwen3.8-flash (built-in; other models per Qoder settings)
+    [free-tier expiry: none published — bundled with the Qoder harness]
+  - opencode: free roster — glm-5 · glm-5-flash · glm-5.1 · glm-5.1-flash ·
+    gpt-5.1/5.1-codex/5.1-codex-mini · gpt-5.2/5.2-codex [closed] ·
+    gpt-oss-120b/20b [closed] · minimax-m2 · nemotron-3-super ·
+    nemotron-3.5-lightning · nemotron-3.5-super-vl · step-3.5-flash ·
+    big-pickle · big-pickle-free · jev-1.13-free! (when listed) ·
+    longcat-2.5 · mimo-v2.6 (roster rotates)
+    [free-tier expiry: none dated — explicitly "limited time" per model and
+    "dynamic" by design; treat every id here as revocable without notice]
+
+    ZEN REFRESH 2026-10-26 (live probe opencode.ai/zen/v1/models — 85 ids,
+    8 suffix-tagged -free; endpoint ships no pricing fields, free = id
+    suffix; big-pickle is NOT free, corrected on the record):
+    glm-5.3-flash-free · beam-free · flint-40b-free · mimo-v2.6-flash-free ·
+    nemotron-3.5-super-vl-free · nemotron-3.5-lightning-free ·
+    jev-1.13-free · deepseek-v4.1-flash-free (ds-flash values filter:
+    intern/API-probe only). GAP-FILL 2026-10-26, Owner fiat:
+    glm-5.3-flash-free = the docneural FE seat brain (AA 57/42 · TB 84.3 ·
+    DeepSWE 63.4 — same numbers as glm-5.3-flash@chat.z.ai, MIT);
+    flint-40b-free = no data anywhere → interned (no-data rule).
+  - goose (provider-agnostic, BYO brain) · omp (PROVEN headless 2026-10-21:
+    `omp -p`, v18.12.5, MIT) · pi · cline · dsh — Owner order 2026-10-21:
+    full profiles in "Bodies — 2026 landscape (dsh · pi · cline)" below ·
+    mcode (MiniMax Code CLI — authed 2026-10-22, profile below)
+  - cursor: cursor-agent · cursor-tab · github-copilot (auto-model)
+  - codebuddy: same models as WorkBuddy.ai cloud (Owner, 2026-10-20)
+    [free-tier expiry: none published]
+
+* Bodies — 2026 landscape (dsh · pi · cline — Owner order 2026-10-21)
+
+  Owner order: "Add dsh, pi and cline"; research digested from primary
+  sources the same day. All three are BODIES (harnesses), not brains — pair
+  per BRAINS AND BODIES.
+  Until agent-org ships ACP support for them, run their CLIs directly
+  (Owner order 2026-10-21).
+
+  - dsh — DeepSeek Harness (github.com/deepseek-ai/deepseek-harness). MIT,
+    TypeScript, DEV PREVIEW (breaking changes expected), pushed 2026-10-17.
+    npm @deepseek-ai/dsh (bin dsh; `npx @deepseek-ai/dsh web` → 127.0.0.1:3080).
+    Bundles that matter to us: dsh-headless (one-shot Agent/Session runner,
+    no Host/HTTP/browser — CI-ready), dsh-acp-app (ACP-style JSON-RPC over
+    stdio), dsh-experimental-agent-team-profile (agent teams, experimental).
+    BYOK: DeepSeek key + built-in anthropic/openai/moonshotai/zai + custom
+    OpenAI/Anthropic-compatible gateways; creds $DSH_HOME/.credentials.yaml.
+    Free tier: NONE of its own (pure BYOK). WATCHLIST body: strongest
+    agent-team-native newcomer; no accountable seat until it exits preview.
+  - pi — earendil-works/pi (badlogic/pi-mono redirects there; Mario Zechner).
+    MIT, very active (pushed 2026-10-21). Install: pi.dev install script or
+    npm @earendil-works/pi-coding-agent (Node >= 22.19). Headless: `pi
+    --print`, `--mode json`, `--mode rpc`, + SDK. BYOK 35+ providers — GROQ,
+    CEREBRAS, NVIDIA, OPENROUTER, ZAI global+CN, MINIMAX global+CN,
+    MOONSHOT/KIMI, QWEN_TOKEN_PLAN, OPENCODE_API_KEY, HF, FIREWORKS,
+    TOGETHER; keys via env vars / auth.json / !command sourcing. ACP:
+    community adapter npx pi-acp v0.0.34 (svkozak/pi-acp, MIT,
+    registry-listed). No built-in permission system — docs recommend Docker
+    isolation (fits CI seats). BEST free-tier AGGREGATOR body: one harness
+    over Groq 1k/day + OpenRouter :free + Z.ai Flash + Gemini API 250/day
+    (see the census below).
+  - cline — github.com/cline/cline. Apache-2.0, npm cline@3.0.73
+    (2026-10-20). Standalone CLI `npm i -g cline`, "fully headless for
+    CI/CD": `cline "task" --json` (NDJSON run_result), hooks, `cline history
+    --json`. NATIVE ACP: `cline --acp` (docs.cline.bot/usage/acp;
+    registry-listed). Free tier: rotating FREE-tagged models on a cardless
+    Cline account — daily per-model allowance, IDE+CLI bodies (tracker
+    2026-10-21: muse-spark-1.3-contributor · mimo-v2.6-flash; LIVE CATALOG
+    2026-10-26 supersedes the tracker: api.cline.bot/api/v1/models is
+    PUBLIC — 472 ids, 18 FREE-tagged, stable across 2026-10-25/26 — full
+    list in the CLINE BUILT-IN FREE CATALOG section below). Paid:
+    ClinePass $9.99/mo. BYOK 30+ providers. RISK: --auto-approve defaults
+    TRUE — set it explicitly off for accountable seats. CI-capable body with
+    native ACP; free rotating models = intern-grade fuel until measured.
+    ADDENDUM 2026-10-22 (Owner 18:16Z "add cline" — executed, docs read):
+    the auth-link back-and-forth is NOT needed — the Cline provider takes a
+    PLAIN API KEY non-interactively, proven in the sandbox with a DUMMY key
+    (proves the non-interactive path, not key validity):
+    `cline auth -p cline -k $KEY -m minimax/minimax-m3.1-flash` exits 0
+    with no browser and lands creds in ~/.cline/data/settings/providers.json
+    (headless shapes: one-shot / --json NDJSON / --yolo; --data-dir
+    isolates state for CI). The same key is ALSO the raw API lane:
+    api.cline.bot/api/v1 is OpenAI-compatible and its /api/v1/models is
+    PUBLIC (unauth probe: 468 models) with minimax/minimax-m3.1-flash in
+    it. Gateway leg declared (llmfisher: cline provider, ${CLINE_API_KEY},
+    0/0 pricing, self-activates on key). Key mint: app.cline.bot ->
+    Settings -> API Keys (one console action).
+
+  - mcode — MiniMax Code CLI (npm @minimax-ai/code 0.6.12; Node 22.19+/24–26).
+    [LANE ALIVE 2026-10-24 17:11Z — Owner carve-out "bruh, yiu can use m3.1
+    on Mcode for free!!!": the BURN-LAW covers the API/GATEWAY M3.1 lanes
+    ONLY (openrouter/gomodel/gmi/tokenharbor/navyai/bai/aa/ollama-cloud —
+    those stay burned); the mcode OAuth FREE lane is EXEMPTED and RE-ARMED
+    on its M-Plan-Free brain minimax-m3.1-flash. Auth LIVE, PKCE proxy
+    scripts archived, MCODE_AUTH_JSON CI seeding RE-INSTATED. The
+    hallucination caveat still binds — pair mcode output with verification.]
+    AUTH LIVE 2026-10-22: device OAuth (account.minimax.io, client
+    mcode-public, scope agent.default, audience agent-backend) completed via
+    the Lead's stateless PKCE-terminating proxy — the sandbox kills background
+    processes between calls, and the device grant binds redemption to the
+    living process, so a plain `mcode login` can never survive; the proxy
+    holds the verifier file-side and redeems on any later short-lived call
+    (scripts/mcode_oauth_proxy.py + mcode_login_driver.py). Credential shape
+    (reverse-engineered): ~/.minimax/auth/prod/en/mcode-public/auth.json is a
+    RECORDS MAP {schemaVersion:1, records:{"com.minimax.mcode.oauth.prod.en\0<sha256(authHome)\0mcode-public b64url>":
+    record}} + auth-state.json (schemaVersion 2, status authenticated);
+    record = accessToken/refreshToken/tokenType "Bearer"/clientId/scopes/
+    audience/expiresAtMs/generation/loginEpoch. Refresh-token grant needs NO
+    PKCE → CI-SEEDABLE: seal auth.json as secret MCODE_AUTH_JSON, CI writes
+    both files and runs mcode normally (refreshes hit the real endpoint).
+    Server device-code TTL is 300s (the CLI prints 600 — it misreads the
+    non-standard "expired_in" field; do not trust its printed window).
+    Headless: `mcode exec` (PROVEN 2026-10-22: minimax/minimax-m3.1-flash
+    answered end-to-end); TUI `mcode`; `mcode acp`; `mcode init .` writes
+    AGENTS.md. Free tier: M Plan Free — LIMITED M3.1 Flash, NO API key on
+    Free (OAuth credential only; paid M Plan is the upgrade path).
+    [free-tier expiry: none published — "limited" quota, undated; treat as
+    revocable without notice]
+
+  Benchmarks note: no published dsh numbers; Cline/pi/OpenCode/Goose are
+  harnesses — their score IS the model choice (rank the PAIR).
+
+* CLINE BUILT-IN FREE CATALOG — live probe 2026-10-26 (added by Owner fiat)
+
+  ADD AUTHORITY: Owner order 2026-10-26 #hq — "Resolve docneural team's
+  issue on your CANDIDATES.org not containing CLINE CLI's built-in free
+  models" (following his 2026-10-26 #docneural-site order: "CANDIDATES.org
+  should contain them. If not, complain to DE."). This fiat adds the rows
+  below; ADD-FREEZE otherwise stands untouched. The complaint: docneural
+  :de-complaint: 2026-10-26 = agent-team.el GitHub issue #2.
+
+  Probe (re-run by the DoE 2026-10-26, matching the team's 2026-10-25/26
+  snapshots): GET api.cline.bot/api/v1/models — PUBLIC, no auth — 472 ids,
+  18 FREE-tagged. Lane: CLINE_AUTH_JSON OAuth (sealed, token-keeper
+  re-seals) on the cline OWN-CLI body; the same catalog also serves the
+  raw API lane on CLINE_API_KEY (not yet sealed — rows self-activate when
+  it is). Seat form drops the vendor/ prefix (ID FORM law: no "/" after
+  "@"); vendor/ below is verbatim catalog text. BURN-LAW note: NO minimax
+  id exists in this catalog — the burn holds at the source.
+
+  Free-tier expiry: UNDATED — rotating daily per-model allowance on a
+  cardless Cline account; treat every id as revocable without notice
+  (EXPIRY-LAW: undated is not unlimited).
+
+  - nvidia/nemotron-3-ultra-550b-a55b:free — strongest FREE id on the list
+    (550B-A55B); batch-4 row: AA 23 · TB2.1 53.9 · TB-Hard 36.4; intern
+    (batch-4 found "no free tier" THEN — cline supplies one now).
+  - thinkingmachines/inkling-small:free — 276B-A12B; vendor SWE-V 80.2 ·
+    TB2.1 64.7 (batch-4); intern until measured.
+  - thinkingmachines/inkling:free — 975B-A41B; vendor SWE-V 77.6 · TB2.1
+    63.8. STALE-VERDICT FIX: batch-4 "NO free API tier" superseded (see
+    the batch-4 row).
+  - poolside/laguna-s-2.1:free — batch-4 verdict STANDS: "BEST
+    accountable-seat candidate in this batch" (TB2.1 70.2 · SWE-Pro 59.4 ·
+    DeepSWE 40.4; OpenMDW-1.1, 118B-A8B); rides docneural's workflow
+    relief lane (3d3e7d9).
+  - poolside/laguna-xs-2.1:free — family XS twin; S covers the purpose.
+  - xingchen-agi/xing4.0-29b-a4b:free — vendor SWE-V 75.0 · TB2.1 57.5.
+    STALE-VERDICT FIX: batch-4 "no permanent-free found" superseded.
+  - dots-studio/dots-3-note-preview:free — vendor SWE-V 78.4 · TB2.1 75.1
+    (280B-A16B). STALE-VERDICT FIX: batch-4 "NO hosted API at all"
+    superseded — api.cline.bot IS the host (preview caveat stands).
+  - nvidia/nemotron-3.5-lightning:free — SWE-V 51.6–52.8 · TB2.1 24.6;
+    real quoted quota "$0/$0, 65,536 max-token cap" → QA-grade.
+  - nvidia/nemotron-3.5-super-vl:free — the free vision (VL) lane.
+  - nvidia/nemotron-3-super-120b-a12b:free — SWE-V 60.5; AA 13 + AA
+    DEPRECATED mark → intern-adjacent.
+  - cohere/north-mini-code:free — AA coding 33.4; exact cap wording not
+    retrievable (recorded, not invented) → QA only.
+  - recursive/flint-v1.0:free — NO data anywhere (no benchmark, no
+    review) → interned under the no-data rule; the flint family's first
+    cline-lane row.
+  - liquid/lfm-2.5-2.6b:free — no agentic-coding benchmarks (BFCL/Tau2
+    only); r/LocalLLaMA "not for real agentic work" → local-toy class.
+  - nvidia/nemotron-3.5-content-safety:free — a safety CLASSIFIER, not a
+    coding brain; listed for completeness, not hireable as a seat brain.
+  - nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free — omni/audio
+    class; no coding row → intern-class at most.
+  - openrouter/free — opaque relay-of-relay; backing brain not rankable
+    (COMMON: an unrankable row does not exist for staffing).
+  - google/gemma-4-26b-a4b-it:free · google/gemma-4-31b-it:free — values
+    filter: gemma stays OUT of accountable seats; intern-class only.
+
+  Disposition: 18 rows = 16 eligible after the values filter (gemma x2
+  out), most intern/QA-grade until measured (no-data rule). docneural
+  hire round 3 already seated 7 of these ids on the Owner's direct hire
+  order (docneural MEMBERS.org, commit 5f29ec0) — this section is now
+  their CANDIDATES.org trace, per "staff from CANDIDATES.org rows only".
+
+* API (via the Owner's gateway)
+  #+GATEWAY: LOCAL authority = http://127.0.0.1:8080/v1/models on the Owner's box. The
+  public path is the SAME gateway fronted by a Cloudflare Tunnel:
+  https://ai.khalidrafi.tech/v1/models — verified answering 401 (live, auth-gated) on
+  2026-10-20, and verified answering HTTP 530 / Cloudflare error 1033 (tunnel DOWN,
+  box off) the same day from a fresh network. Consequences: (a) CI CAN reach every
+  model behind it ONLY while the tunnel is up, so (b) NO CI seat may depend on the
+  gateway — CI seats go DIRECT to providers with repo-secret keys, and the gateway
+  probe in ci.yml is informational only. It dies with the box, and its master key is
+  currently recoverable from git history (commit dc3fb0a) — rotate before publishing.
+  A tunnel is not a cloud runtime; it is this laptop wearing a public hat.
+  - cloudflare/@cf/ — full Workers AI catalog (llama/qwen/gemma/mistral/
+    deepseek-r1-distill/flux/sdxl; 10k Neurons/day shared)
+    [free-tier expiry: none — but a DAILY CAP, and it is frequently exhausted]
+  - gemini/ — flash family, image, live variants [free-tier expiry: none
+    published; closed weights — values-excluded from accountable seats anyway]
+  - groq/ — fast free pool: qwen3.8-27b/8b/4b · gpt-oss-120b/20b [closed] ·
+    small+safety models (roster rotates)
+    [free-tier expiry: none published; caps ARE published per model — the
+    good kind of limit, sized for CI jobs]
+  - kilo/ — free pool: kimi-k2-instruct · kimi-k2-thinking · qwen3-32b ·
+    mistral-small-3.1-24b · llama family · auto (roster rotates)
+    [free-tier expiry: NONE DATED, PROMO — can vanish any day; emergency-only]
+  - opencode/ — see Local opencode roster (served via gateway)
+    [free-tier expiry: undated by design — "free usage is dynamic"]
+  - openrouter/ — :free roster: nvidia/nemotron-3-ultra-550b-a55b:free ·
+    nemotron-3-super-120b-a12b:free · nemotron-3.5-lightning:free ·
+    nemotron-3.5-super-vl:free · nemotron-3-nano-omni:free ·
+    poolside/laguna-s/xs-2.1:free · cohere/north-mini-code:free ·
+    qwen/qwen3.8-27b:free · google/gemma-4-31b/26b [avoid] ·
+    thinkingmachines/inkling:free · dots-3-note-preview:free ·
+    liquid/lfm-2.5-2.6b:free · inclusionai/ling-3.0-flash-sante:free ·
+    apodex/apodex-1.1-mini:free · openrouter/auto:free (20 RPM; 50/day)
+    [free-tier expiry: none dated per model; the LANE is capacity-based and
+    models rotate on and off it — capped (20 RPM / 50/day class) but not dated]
+  - ollama-cloud/ — gpt-oss:120b [closed] · nemotron-3-ultra · beam ·
+    kimi-k2 (unstable historically) [free-tier expiry: none published]
+  - tokenharbor/ — deepseek-v4.1-flash:free
+    [free-tier expiry: NONE DATED, PROMO — can vanish; emergency-only]
+  - GMI Cloud direct (Owner-asked 2026-10-22): MiniMaxAI/MiniMax-M3.1-Flash
+    @ https://api.gmi-serving.com/v1 — $0.15/$0.60, cached $0.015, FP8,
+    1,048,576 ctx — PAID ONLY (verified 2026-10-22: no free credits for
+    M3.1 Flash; their MiniMax Week free campaign for M3 ended 2026-09-06)
+    [free-tier expiry: n/a — paid]
+  - OpenRouter direct additions (owner key, PAID): deepseek/
+    deepseek-v4.1-flash-1017 $0.15/$0.60 FLAT — beats official peak 2x ·
+    deepseek/deepseek-v4.1-flash:batch $0.05/$0.15 — cheapest V4.1 Flash
+    found anywhere (async/batch lanes) · minimax/minimax-m3.1-flash
+    $0.15/$0.60 — the :free variant ENDED 2026-10-22 (verified live probe
+    of /api/v1/models; do NOT re-add without a fresh probe)
+  - zai/ — glm-4.5 · glm-4.6v · glm-4.7-flash
+    [free-tier expiry: none published on the GLM-4.7-Flash free API tier;
+    MIT open weights make it low-risk even so]
+  - Cloudflare Workers AI direct: llama-3.3-70b-fp8-fast ·
+    llama-4-scout-17b-16e · mistral-small-3.1-24b · llama-3.1-8b-fp8 ·
+    llama-3.2-3b · llama-3.2-11b-vision · glm-4.7-flash ·
+    deepseek-v4.1-flash · clef · clef-flash · clef-omni
+    [free-tier expiry: none — 10k Neurons/day shared cap; emergency-only]
+  - OpenRouter direct (owner key): the :free list above
+  - antling/ — Ling-3.0-flash · Ling-3.1-flash · Ling-3.0-flash-VL ·
+    Ling-3.0-tiny · Ling-2.6-flash · Ling-2.6-1T · Ring-2.6-1T @
+    https://api.ant-ling.com/v1
+    [free-tier expiry: undated daily free grant; burn-verified live
+    2026-10-24; reasoning ids burn max_tokens — caps carry headroom]
+
+* Decision layer (not an LLM, not chat-compatible)
+  - jev-1.13.0 @ api.typesafe.ai (or /v1/systemone via the gateway)
+
+* Character notes (measured this project)
+  - rotating/unstable: opencode roster · ollama-cloud · openrouter :free tail
+  - limited: cloudflare/@cf (daily Neurons) · web free tiers (daily caps)
+  - promo-tier (emergency only for accountable seats): kilo/*:free ·
+    tokenharbor/*:free
+  - closed (values-excluded for accountable seats): gpt-* · gemini · grok ·
+    gemma
+
+* Protocol — how a candidate earns a seat (hiring/01, DISPATCH #3)
+
+  1. NAMED here or on the live gateway roster. A snapshot generates candidates,
+     it never confirms one (that conflation produced the false dispatch #2:
+     kilo/qwen3-32b is listed, the gateway rejects it).
+  2. RESEARCHED — benchmark + real-user review, source + date per claim.
+     "No evidence in my context" is a REFUSAL, not a neutral state.
+  3. REACHABLE from the seat's runtime (resident harness · CI runner · web chat).
+  4. PERMITTED by the Owner's values filters (next section).
+  5. RANKED against the survivors; every seat carries a rank-3 fallback chain.
+
+  ID FORM for seats: MODEL@PLATFORM, no "/" after "@" (Owner rule, and
+  agent-team.el's parser only accepts an unspaced id after "ROLE — ").
+  Catalog rows above keep provider-qualified gateway names because those are
+  endpoint identifiers, not seat identifiers.
+
+* Owner values filters (binding)
+
+  - Open-weights + permanently-free ONLY in accountable seats.
+  - Excluded from accountable seats: gpt · gemini · gemma · grok · llama ·
+    ds-flash as a resident body.
+  - cloudflare/@cf = emergency-only (10k Neurons/day shared; wedged 2026-10-20).
+  - kilo/*:free · tokenharbor/*:free = PROMO, can vanish → emergency-only.
+  - No web models in resident seats. Web brains are one-shot couriers: no
+    filesystem, no git, no daemon; every claim needs pasted evidence.
+  - "No-data" models are INTERNED, never rejected.
+
+* Three reachability worlds (they are NOT one pool)
+
+  - RESIDENT — harness on the 2014 Celeron, 4 GB RAM: qoder · opencode · goose ·
+    omp · pi · cursor · copilot · codebuddy. Dies with the box. Zero heavy
+    builds; no candidate's weights run usefully here.
+  - CI — GitHub Actions + repo secrets (Owner P0). Survives the box; must be
+    API-reachable by key. Seats are REAL agent harnesses (OpenCode, Goose)
+    installed in the runner — never a bare @actions body (Owner order
+    2026-10-20: "no @actions, choose a real agent ... model + agent pair").
+  - WEB — chat UI the Owner pastes into: chat.qwen.ai · kimi.com · chat.z.ai ·
+    WorkBuddy.ai · MiniMax Agent.
+
+* Live gateway roster — proven vs refused (2026-10-20, from this box)
+
+  Full 163-id dump: agent-team/ROSTER.org. The split that decides
+  staffing:
+
+  - PROVEN ALIVE (one real completion each): qwen3.8-27b · groq/qwen3.8-27b ·
+    glm-4.7-flash · zai/glm-4.7-flash.
+  - PROVEN REFUSED: every opencode/*-free id ("free tier usable only inside
+    OpenCode") · every cloudflare/@cf/* (daily allowance exhausted) ·
+    kilo/qwen3-32b (listed, model_not_found).
+  - PRESENT-UNTESTED: kilo/*:free and tokenharbor/*:free promo pool ·
+    openrouter/*:free · nemotron pool · minimax pool.
+  - ABSENT from the gateway: glm-5.x · all kimi · qwen3.8-max · qwen3.7-plus ·
+    step-5 · beam(non-free). CI seats and gateway seats are different pools.
+
+* Evidence — GLM family (batch 1, complete)
+
+  - glm-5.3@chat.z.ai — AA intelligence 60 (announcement page) vs model-page
+    variance; GDPval-AA 1769; WebDev Elo 1621. CUSTOM licence, not MIT.
+    $1.40/$4.40. Review signal: repeated "regressed vs GLM-5.2" complaints.
+  - glm-5.3-flash@chat.z.ai — AA 57 (announcement) / 42 (model page) — the two
+    AA pages DISAGREE; both quoted. DeepSWE 63.4 · Terminal-Bench 84.3. **MIT**,
+    320B-A18B, weights + GGUF on HF. $0.15/$0.50. Sentiment: "a step change in
+    agentic use" + an "is annoying" complaint thread.
+  - glm-5.2@chat.z.ai — AA 51; SWE-bench Verified 77.8; TB 81.0. MIT. Free tier.
+  - glm-4.7-flash@z.ai — NO AA / no LMArena figure. Vendor-only SWE-bench 59.2,
+    TB 14.4 (weak). MIT 30B-A3B. The only GLM the gateway serves, and it is
+    PROVEN ALIVE here.
+  - Sources: artificialanalysis.ai model pages + Z.ai announcement posts,
+    z.ai pricing, huggingface.co/zai-org, r/LocalLLaMA release threads — all
+    fetched 2026-10-20.
+
+* Evidence — Kimi family (batch 2, complete)
+
+  - kimi-k3@workbuddy — LMArena 1486; WebDev Elo #1 1679; SWE-bench Verified
+    76.8; TB 88.3; DeepSWE 67.5; GDPval-AA 1668; BrowseComp 91.2. CUSTOM Kimi K3
+    licence; 2.8T/104B active — not runnable here. $3/$15. "Strong, slow and
+    very verbose."
+  - kimi-k2.6@kimi — AA 54 (article) vs 27 (model page) — DISAGREE, both quoted.
+    Vendor SWE-bench Verified 80.2 · TB 66.7 · LCB 89.6. Modified MIT; 1T/32B.
+    $0.95/$4.
+  - kimi-k2.8-preview@workbuddy — proprietary, no weights, no published
+    benchmarks → EXCLUDED (no evidence = no seat).
+  - Sources: lmarena.ai, artificialanalysis.ai, moonshot.ai pricing + tech
+    report, huggingface.co/moonshotai, r/LocalLLaMA — 2026-10-20.
+
+* Evidence — Qwen family (batch 3, PARTIAL FILL 2026-10-20, re-hire round)
+
+  - qwen3.8-max (0902) — Artificial Analysis Intelligence Index v4.3.2
+    (artificialanalysis.ai, fetched 2026-10-20 from a fresh network):
+    GDPval-AA sub-scores Engineering 46 (rank 9) · Economics 52 (rank 11) ·
+    Strategy & Ops 47 (rank 12) · Legal 46 · Healthcare 41. No overall
+    intelligence-index number or Terminal-Bench figure retrievable this round.
+    PROPRIETARY — still UNEXEMPTED by the Owner, so it stays in fallback
+    slots (see the Lead seat's selection note in MEMBERS.org).
+  - qwen3.8-flash — NO independent benchmark found. Two batched web-search
+    rounds run this re-hire (queries: "qwen3.8-max benchmark Artificial
+    Analysis Terminal-Bench agentic coding" · "qwen3.8-flash model benchmark
+    review coding agent" · "Qwen3.8-Max model release benchmarks" — plus 7
+    more across free-tier-expiry topics; all returned empty results). Per the
+    law, empty rounds are recorded, not hidden: qwen3.8-flash remains
+    INTERN-grade on external evidence, held up only by measured platform work
+    on the record (lark binding, 163-id roster split, 15 secrets staged,
+    parser fix 7/7 green — see MEMBERS.org Platform seat).
+  - CONFLICT-OF-INTEREST RULE UNCHANGED: no Qwen body is promoted on the
+    strength of "it is the family I am sitting in". The acting Lead is a GLM
+    now; the PE seat's evidence is its own track record, cited above.
+  - groq/qwen3.8-27b — carried by batch 5's primary-source caps (30 RPM ·
+    1,000 RPD · 8K TPM · 200K tokens/day, console.groq.com/docs/rate-limits,
+    acc. 2026-10-20) and PROVEN ALIVE via the gateway the same day.
+
+* Evidence — remaining open weights (batch 4, complete 2026-10-20)
+
+  Reddit threads were login-walled: sentiment lines are title-based
+  paraphrases, so treat sentiment as weaker than the numeric rows.
+
+  - deepseek-v4.1-flash — AA intelligence 45.1 (artificialanalysis.ai, acc
+    2026-10-20), the highest in this batch. Open weights on HF; 552B MoE,
+    8/16B active (deepseek.com news 2026-09-09). Off-peak $0.15/$0.60,
+    peak $0.30/$1.20 (mindstudio.ai 2026-09-12). No vendor SWE-bench/TB
+    retrieved. r/DeepSeek (~2026-09): "cheap per token — but is it actually
+    cheap?" (token-burn skepticism). OWNER FILTER: ds-flash is banned as a
+    RESIDENT body — eligible as an intern/API probe only.
+  - beam@reflection — vendor SWE-bench Verified 80.9 · TB2.1 80.1
+    (reflection.ai/blog/introducing-beam 2026-10-05); AA intelligence 30,
+    coding-agent 28, "#2 US open weights" (AA article ~2026-10-16).
+    Apache-2.0 promised, 501B-A23B. Days old → thin independent evidence.
+  - inkling · inkling-small@thinkingmachines — Apache-2.0 on HF; 975B-A41B /
+    276B-A12B; vendor SWE-bench Verified 77.6 / 80.2 · TB2.1 63.8 / 64.7
+    (thinkingmachines.ai/news/inkling-small 2026-07-30). $4.05 out (Inkling),
+    $1.20 (Small). NO free API tier (time-limited discount only) → not
+    accountable-seat eligible under "permanent-free".
+    CLINE-LANE FIX 2026-10-26 (Owner fiat): cline's :free catalog serves
+    BOTH inkling and inkling-small — "no free API tier" is superseded on
+    that lane (the paid-API verdict stands).
+  - laguna-s-2.1 · laguna-xs-2.1@poolside — 118B-A8B, OpenMDW-1.1, day-one
+    weights; vendor TB2.1 70.2 (thinking) · SWE-bench Pro 59.4 · DeepSWE 40.4
+    (poolside.ai/blog/introducing-laguna-s-2-1 2026-07-21). OpenRouter free
+    endpoint with 256K context; paid $0.10/$0.20. r/LocalLLaMA "Honest take on
+    Laguna S2.1 (from actual use)" ~2026-07-27, positive within class.
+    → BEST accountable-seat candidate in this batch: open weights + free + data.
+  - xing4.0-29b-a4b@xingchen — Apache-2.0; vendor SWE-bench Verified 75.0 ·
+    TB2.1 57.5 (HF card, acc 2026-10-20). China Telecom; 4-bit ≈15 GB → no.
+    No permanent-free found; low community engagement.
+    CLINE-LANE FIX 2026-10-26 (Owner fiat): xingchen-agi/xing4.0-29b-a4b:free
+    IS served free on cline — "no permanent-free found" superseded there.
+  - dots-3-note@dots-studio — CORRECTION: this is Xiaohongshu/RedNote's dots
+    studio, NOT Red Hat as previously assumed. Apache-2.0, HF 2026-08-14,
+    280B-A16B multimodal; vendor SWE-bench Verified 78.4 · TB2.1 75.1.
+    NO hosted API at all → self-host-only → unreachable for our seats.
+    CLINE-LANE FIX 2026-10-26 (Owner fiat): api.cline.bot hosts
+    dots-studio/dots-3-note-preview:free — "NO hosted API" superseded
+    (preview-tag caveat stands).
+  - nemotron-3.5-lightning@nvidia — 30B-A3B, OpenMDW-1.1, weights+data+recipes
+    (datacamp.com/blog/nemotron-3-5-lightning 2026-08-12); vendor SWE-bench
+    Verified 51.6–52.8 · TB2.1 24.6. OpenRouter FREE tier, "$0 input/$0 output,
+    65,536 max-token cap on the output generation" (same, 2026-08-12) — a real
+    quota, quoted. → QA-grade, not CI-critical.
+  - north-mini-code@cohere — 30B-A3B, Apache-2.0 (cohere.com/blog/north-mini-code
+    2026-06-09); AA coding index 33.4 (AA article, same date); independent note
+    sebastianraschka.com 2026-06-12. openrouter/cohere/north-mini-code:free
+    exists; exact cap wording NOT retrievable → say so, don't invent it. QA only.
+  - nemotron-3-ultra-550b-a55b@nvidia — AA intelligence 23, TB2.1 53.9,
+    TB-Hard 36.4 (AA, acc 2026-10-20); OpenMDW, weights on HF; $0.60/$2.70;
+    no free tier found. NVIDIA dev blog 2026-07-26 claims agentic-RTL lead
+    (vendor). r/LocalLLaMA skeptical ("King of the Deep?"). Marginal — and it
+    is the id currently holding the PE seat on a PROMO pool. Fix that.
+  - nemotron-3-super-120b@a12b — vendor SWE-bench Verified 60.5 · TB-Hard 25.8
+    (llm-stats 2026-03-10); AA intelligence 13, TB2.1 38.6, and AA marks it
+    DEPRECATED (acc 2026-10-20). Superseded → intern-adjacent.
+  - minimax-m3.1-flash — BURNED 2026-10-24 (Owner 17:01Z, performance verdict;
+    was **FREE THROUGH 2026-10-25** per Owner order 2026-10-20). A
+    dated promo, not a permanent free tier: five days of runway, then billed or gone,
+    so it fails "permanent-free" for accountable seats while the price is still live.
+    No "preview" variant exists — the name is minimax-m3.1-flash. PROPRIETARY, weights
+    not published, size undisclosed; AA intelligence 43 · TB4.0 25.8; $0.15/$0.60 (AA page).
+  - minimax-m3 — open weights PROMISED, not delivered; vendor TB2.1 66.0 with
+    SWE-bench measured on "internal infra, Claude Code scaffolding"
+    (minimax.io/blog/minimax-m3 2026-06-01) — vendor-only, scaffolding caveat.
+    Verify before trusting (r/opencode "Space Bunny benchmarks" ~2026-10 notes
+    a benchmark-vs-reality gap).
+  - step-5-preview@stepfun — 600B-A27B, StepFun Model License 1.0; HF ~2026-10;
+    vendor DeepSWE 67.7 · TB4 33.3; $1.00/$2.70 (opencode.ai/data acc
+    2026-10-20). Its own name says preview and there is no independent data →
+    INTERNED per the rule. (Distinct from minimax-m3.1-flash, which is NOT a preview.)
+  - lfm-2.5@liquid — family 1.2B–24B; 8B-A1B unrestricted open weight
+    (liquid.ai/blog 2026-05-28); NO agentic-coding benchmarks exist (BFCL/Tau2
+    only). The only family plausibly runnable on this 4 GB Celeron
+    (1.2B-Thinking "under 1 GB", liquid.ai 2026-01-20), but r/LocalLLaMA
+    (~2026-08): "not for real agentic work". → local toy / intern fallback.
+
+  Batch conclusion (this is the finding, not a footnote):
+  - NOTHING in this batch runs agentic coding on the Owner's 4 GB Celeron.
+    Every candidate is 27B-active-or-larger. Gateway/API access is therefore
+    MANDATORY, not a convenience — which is also why a cloud Lead without a
+    resident body loses all hands, not just speed.
+  - open-weights + permanent-free + real agentic data, together, leaves exactly
+    three: laguna-s-2.1@poolside · nemotron-3.5-lightning@nvidia ·
+    north-mini-code@cohere — all on OpenRouter's :free lane, which is capped
+    and rotating. "Permanent free" is doing a lot of work in that filter.
+
+* Free tiers vs the "Lead must be uncapped" gate — GATE FAILED (batch 5)
+
+  HEADLINE, stated plainly because the alternative is a fiction: **no free tier
+  on any checked platform is uncapped.** Nine primary sources, all acc.
+  2026-10-20. "Lead = free tier with no caps" cannot be filled from this roster.
+
+  - chat.z.ai web — free GLM-5.3-Flash chat exists, but NO primary doc states
+    daily caps; agentic features are tied to the paid GLM Coding Plan
+    (docs.z.ai/devpack/usage-policy). Verdict: UNKNOWN, limits almost certainly
+    exist. Also: "account sharing prohibited" and plan use restricted to
+    "officially supported tools" → running a shared Team-Lead bot on it risks a
+    MID-SHIFT BAN. This kills glm-5.3-flash@chat.z.ai as an unattended Lead.
+  - Z.ai GLM Coding Plan (paid, $18/mo Lite) — CAPPED with published numbers:
+    Lite 2,000 credits/5h + 10,000/week; Pro 12,000/60,000; Max 28,000/140,000
+    (docs.z.ai/devpack/overview, /faq). The only offering actually designed for
+    continuous agentic coding.
+  - chat.qwen.ai — free interactive chat, caps undocumented (JS-rendered pages,
+    no primary doc). PROGRAMMATIC PATH IS DEAD: Qwen Code's free OAuth tier was
+    discontinued 2026-04-15, already cut 1,000 → 100 requests/day, then closed
+    entirely (github.com/QwenLM/qwen-code/issues/3203). DashScope/Model Studio
+    new-user quota: ~1,000,000 tokens per model, VALID 90 DAYS, then blocked or
+    billed (alibabacloud.com/help/en/model-studio/new-free-quota).
+  - kimi.com — chat free, cap undocumented; agentic features (Kimi Code, Claw,
+    Agent Swarm, Deep Research) are MEMBERSHIP-GATED and metered from a monthly
+    credit pool (kimi.com/en/help/membership/membership-pricing); API rate limits
+    page publishes no numbers.
+  - opencode free roster — explicitly ephemeral: "GLM-5.3-Flash Free is free on
+    OpenCode for a limited time"; staff say "free usage is dynamic, we are always
+    shifting based off what capacity we have vs demand"; hard stop message
+    "Free usage exceeded, add credits" (opencode.ai/v2/docs/console/models,
+    github.com/anomalyco/opencode/issues/28055). Not client-locked after all —
+    usable via API — but undisclosed numeric caps.
+  - groq free — CAPPED, and the caps are published per model: qwen/qwen3.8-27b
+    = 30 RPM · 1,000 RPD · 8K TPM · 200K tokens/day (console.groq.com/docs/
+    rate-limits). Small for an unattended agent, but it is a REAL number, permits
+    scripts, and is far above what a per-push CI probe job burns.
+  - cloudflare Workers AI — CAPPED: 10,000 Neurons/day free, then requests fail
+    unless billing is on; some LLMs require a paid billing method just to try
+    (developers.cloudflare.com/workers-ai/platform/pricing). Observed exhausted
+    from this box today, consistent with the cap.
+  - huggingface Inference Providers — free tier effectively GONE: "Free Users —
+    Monthly Credits: None"; PRO = $2.00/mo
+    (huggingface.co/docs/inference-providers/pricing).
+
+  Automated/unattended use, separately from caps:
+  - APIs that explicitly permit scripts: groq · cloudflare · DashScope · HF.
+  - Web chat tiers (chat.z.ai, chat.qwen.ai, kimi.com): none document bot use;
+    interactive-oriented ToS. A web Lead is therefore Owner-paced courier work,
+    which is exactly what COMMON says web brains are.
+
+  CONSEQUENCE FOR STAFFING (the resolution, not a shrug):
+  - The uncapped part has to come from the RUNTIME, not the model: a PUBLIC repo
+    gives unlimited Linux Actions minutes. That is the only genuinely uncapped
+    free resource in this whole picture.
+  - So: Lead = one-shot web brain (Owner pastes in, decisions pasted out) whose
+    caps are irrelevant because dispatch is human-paced; its hands are Actions,
+    and the API brain that touches CI runs on published caps we can size for.
+  - If the Owner wants an UNATTENDED Lead, the honest options are exactly two:
+    (a) relax "no caps" → Z.ai GLM Coding Plan Lite $18/mo (published 2,000
+    credits/5h), or (b) accept groq's 200K tokens/day as a capped primary with
+    CI as the executor. Do not staff an unattended seat on a web free tier.
+
+* Free-lane census — 2026-10-21 (Owner-ordered review)
+
+  Owner order: "review all free tiers online, look for new free tiers or
+  offers; verify the 2000/day claim". VERDICT FIRST: the "2000
+  requests/day" claim was the Qwen Code free OAuth
+  tier and it is DEAD — discontinued 2026-04-15 (qwenlm.github.io/qwen-code-
+  docs auth page; QwenLM/qwen-code#3203). Re-verified 2026-10-21.
+  Never staff on it.
+
+  VERIFIED (primary doc, acc. 2026-10-21):
+  - Gemini CLI — 1,000 req/day free with Google login (Pro 1,500 / Ultra
+    2,000); API-key unpaid lane 250 req/day, Flash only
+    (geminicli.com/docs/resources/quota-and-pricing).
+  - OpenRouter :free — 20 RPM; 50 req/day under $10 lifetime topup, 1,000
+    req/day at >= $10 all-time (openrouter.ai/docs/api-reference/limits).
+    Live catalog ~17 :free models, rotates.
+    [2026-10-22: the minimax-m3.1-flash:free variant is DEAD —
+    probe-verified; BURN-LAW bars it regardless]
+  - Groq free — 30 RPM · 1,000 req/day · 200K tokens/day (matches batch 5).
+
+  PROBE (tracker/consensus, not primary doc — date-stamped, re-probe before
+  relying):
+  - Z.ai — GLM-4.7/4.5/4.6V-Flash free, no published cap. · DeepSeek —
+    5M free tokens on signup (~30 days), then paid-cheap.
+  - Copilot Free — 2,000 completions/mo + unpublished agent-mode credits
+    (used via the cursor body). · Kilo Code — ~200 free req/hr rotation. ·
+    Token Harbor :free — 60 RPM / 1,800 RPH promo (emergency-only).
+  - Qoder 300+100/day claimable · OpenCode in-client free rotation
+    (undated, "dynamic").
+
+  Where this points staffing: highest hard-number free APIs today =
+  Gemini CLI (1k/day) ~= Groq (1k/day) > OpenRouter :free (50→1,000/day).
+  Expiry law binds every row: undated ≠ unlimited.
+
+* Benchmark snapshot — 2026-10-21 (for pair-level ranking; values filters
+  still bind — closed models stay out of accountable seats)
+
+  - SWE-bench Verified (swebench.com, parsed 180 entries): Gemini 3 Flash
+    75.8 · MiniMax M2.5 75.8 · GLM-5 72.8 · GPT-5.2 72.8 · Kimi K2.5 70.8 ·
+    DeepSeek V3.2 70.0 · Qwen3-Coder-480B 55.4.
+  - Terminal-Bench 4.0 (benchlm mirror + AA): Claude Opus 5.5 @ Claude Code
+    64.85 (top) · GPT-6 Astra @ Codex 58.18 · GLM-5.3 41.8 (best open) ·
+    GLM-5.3-Flash 32.8 · MiniMax M3.1 Flash 25.8 (matches our own probe).
+
+* Intern pool (no-data / unevidenced bodies are interned, not rejected)
+
+  A candidate with no benchmark evidence, or excluded from accountable seats by
+  licence or pool, gets an INTERN role: one scoped task, one REPORT, then
+  promotion or release. Five per round. Live list:
+  agent-team/MEMBERS.org §INTERN POOL.
+
+
+* Sandbox chat-lane artifact — 2026-10-24 (measured, NEVER a model source)
+
+  The z.ai-agent sandbox chat lane (z-ai-web-dev-sdk chat completions) ACCEPTS
+  ANY model id and silently serves ONE fixed backend: probed 2026-10-24 with
+  glm-5.3-flash, glm-4.5, glm-5.2, span-01 AND a fabricated id — all 5 returned
+  HTTP 200 with resp.model constant and identical self-report. The `model`
+  param is IGNORED. An all-200 probe here proves NOTHING about model access.
+  Verdict: NOT a candidate, NOT a catalog, NOT "all GLM models" — one harness
+  brain behind a lenient router. Team model access comes from wired lanes only
+  (gateway config rows + context-pack keys).
