@@ -15,13 +15,33 @@
    finalize undoes — that is the stall streak.  Escalated with measurements + a
    verified one-line fix: TEAM-CHAT.org 2026-10-28 00:00 UTC.  Unit #183 is already
    written on ai/turn-20261027-2321 (35d0e59) and still applies cleanly to HEAD.
+   STILL BLOCKED at segment 2026-10-28 00:16Z: the pattern is unchanged at the
+   remote tip (origin/ai/quickstart 88be3b9, secret-guard.sh:20), so NO seat can
+   land .el work at all.  Repro is two commands, cited in TEAM-CHAT.org
+   2026-10-28 00:20Z; the stall streak is 4 branches now, not design debt.
 ** DONE WO-2 model selection menu — labels + cleaned-id fallback; ERT 432/432 (agent-org.el:1679)
-** TODO WO-3 steer — inject into the live turn — TODOs.org §Steer
+** BLOCKED WO-3 steer — inject into the live turn — TODOs.org §Steer
+   BLOCKED by the PROTOCOL, not by CI: acp.el 0.14.3 (pinned, /opt/acp-site/acp.el)
+   builds requests at :564-752 and there is no steering one — no `steering`
+   capability name anywhere in the file.  A mid-turn message has exactly two
+   shapes left, and BOTH already ship: `agent-org-interrupt-and-send' (C-c a i,
+   the cancel notification at acp.el:827) and the queue (TODOs.org §Prompt queue).
+   Needs the Lead's terminal call (CANCELLED / DEFERRED-until-upstream); a seat
+   never marks terminal.  Evidence: TEAM-CHAT.org 2026-10-28 00:20Z.
 ** TODO WO-4 hooks on the response boundary + automation — TODOs.org §Hooks
 ** TODO WO-5 permission prompts without blocking — TODOs.org §Permission prompts
 ** DONE WO-6 tool-call grouping — consecutive same-title/status fold w/ count; ERT 432/432 (agent-org-buffer.el:4932)
 ** TODO WO-7 input history ring — TODOs.org §Input history ring
 ** TODO WO-8 fork session — TODOs.org §Fork session
+   UNBLOCKED BY MEASUREMENT (unlike WO-3): the pinned client DOES build the
+   request — `acp-make-session-fork-request' at acp.el:679 (method string at
+   :698), gated on the agent's `session.fork' capability (named at acp.el:689) —
+   and our own capability
+   readers are the exact shape to copy: `agent-org--supports-load-p'
+   (agent-org.el:868) and `agent-org--lists-sessions-p' (:872, an `assq' test
+   over `agentCapabilities sessionCapabilities').  So a fork port needs one
+   capability reader, one request and a second chat buffer over the existing
+   start path.  It still cannot LAND until the guard is anchored (WO-1 note).
 ** DONE WO-9 copy session id command — pre-existing impl verified w/ tests (agent-org.el:1115)
 ** TODO WO-10 clock display survives stale org-element cache — TODOs.org §clock display
 ** TODO WO-11 separate interactive response-clocking commands — TODOs.org §Separate interactive
