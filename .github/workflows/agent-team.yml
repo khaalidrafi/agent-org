@@ -326,7 +326,13 @@ jobs:
           6. Append a :LOGBOOK: note to the TODOs.org item you touched:
              what changed + evidence. When DELIVERED, flip to REVIEW with
              a note (branch, sha, evidence) — NEVER mark DONE (Lead gate).
-          7. Commit everything on this branch with message 'turn(${SEAT}): ...'.
+          7. Commit everything on this branch. Write a SUBSTANTIVE
+             subject that says WHAT changed (3+ words), for example
+             'cross-agent sessions: transcript sync check + parser tests
+             (${SEAT})'. NEVER start the subject with 'turn(' or
+             'ci-turn' or 'wip' — ci/bin/commit_msg_guard.sh bans
+             mechanical subjects and finalize UNDOES a merge that
+             carries one (red-commit-msg).
           8. REPORT: append to agent-team/CHAT.org as
              '${SEAT} -> @lead :report:' (RESULT: DONE | PARTIAL | BLOCKED,
              evidence included).
@@ -480,7 +486,7 @@ jobs:
           # commits the workspace diff so work ALWAYS reaches the branch.
           if ! git diff --quiet || ! git diff --cached --quiet; then
             git add -A
-            git commit -m "turn(${SEAT}): segment work — host-committed" \
+            git commit -m "host commits seat ${SEAT} workspace diff" \
               -m "result: ${TURN_RESULT}" || echo "::notice::workspace commit failed"
           else
             echo "workspace clean — no host commit needed"
