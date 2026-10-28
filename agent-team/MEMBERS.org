@@ -64,7 +64,7 @@
   - :last-dispatch: 0
   - duties: second qoder seat — implements TODOs.org port items in file
     order (agent-org*.el + ERT tests); pairs with the qwen3.8-flash seat
-    through TEAM-CHAT.org; takes priority-pin items when free
+    through CHAT.org; takes priority-pin items when free
   - rank: coding lane #2 (HIRED per Owner order 2026-10-21 03:53Z #hq:
     "Qoder also has DeepSeek Flash free. Hire that, too.") — free tier,
     zero spend; INTERN until one green segment lands on this team's CI

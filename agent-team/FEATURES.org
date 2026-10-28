@@ -31,7 +31,7 @@
   `cline --acp` (native) / `cline "task" --json` (NDJSON).
 
 * 5. BOARD SYNC
-  Bidirectional agent-team/TODOS.org + TEAM-CHAT.org ↔ ACP bus: commit
+  Bidirectional agent-team/TODOS.org + CHAT.org ↔ ACP bus: commit
   checkpoints on every flip, diff-only writes, lease/claim API so two seats
   never edit one board item concurrently.
 

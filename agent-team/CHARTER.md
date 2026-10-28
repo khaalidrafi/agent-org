@@ -1,4 +1,4 @@
-#+TITLE: TEAM.md — agent-org team constitution
+#+TITLE: CHARTER.md — agent-org team constitution
 #+REPO: khaalidrafi/agent-org
 * PURPOSE
 

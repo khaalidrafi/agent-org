@@ -428,7 +428,7 @@ emacs -Q --batch \
 ## Canonical source: khaalidrafi/agent-team.el AGENTS.md. This copy is
 ## verbatim where repo-agnostic; agent-team.el stays the master.
 
-1. FORMAT LAW: every chat message (agent-team/TEAM-CHAT.org) is an Org
+1. FORMAT LAW: every chat message (agent-team/CHAT.org) is an Org
    headline carrying FROM (`* MSG <from> -> @<to> :<kind:`), routing in
    Org tags, fields in a `:PROPERTIES:` drawer (`:FROM:`/`:TO:`/`:KIND:`/
    `:WHEN:`/`:CHANNEL:`), body indented, WHEN an Org inactive timestamp.
@@ -452,7 +452,7 @@ emacs -Q --batch \
    (docker/harness/); CI never installs bodies at turn time. Keys are
    env-injected, never baked.
 7. SEAT BOUNDARIES: seats never edit Lead-owned files
-   (.github/workflows/*, agent-team/TEAM-CONTROL.org, .gitattributes) —
+   (.github/workflows/*, agent-team/CONTROL.org, .gitattributes) —
    read and cite them with file:line evidence instead. Seats never push
    to ai/quickstart (the chain's finalize auto-merges their branch
    behind the gate).

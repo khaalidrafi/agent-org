@@ -89,7 +89,7 @@ jobs:
       - name: Read control file (kill switch / objective / turn)
         id: control
         run: |
-          CTL=agent-team/TEAM-CONTROL.org
+          CTL=agent-team/CONTROL.org
           KILL=$(grep -oP '^\#\+KILL-SWITCH:\s*\K\w+' "$CTL" | head -1)
           OBJSTATE=$(grep -oP '^\#\+OBJECTIVE-STATE:\s*\K\w+' "$CTL" | head -1)
           OBJECTIVE=$(grep -oP '^\#\+OBJECTIVE:\s*\K.*' "$CTL" | head -1)
@@ -126,7 +126,7 @@ jobs:
           case "$MODE" in
             killed)       MSG="TEAM STOPPED BY KILL SWITCH — no turns run until #+KILL-SWITCH: OFF" ;;
             complete)     MSG="OBJECTIVE COMPLETE — team standing down (set #+OBJECTIVE-STATE: OPEN with a new objective to restart)" ;;
-            no-objective) MSG="NO OBJECTIVE SET — write one line into #+OBJECTIVE in agent-team/TEAM-CONTROL.org" ;;
+            no-objective) MSG="NO OBJECTIVE SET — write one line into #+OBJECTIVE in agent-team/CONTROL.org" ;;
           esac
           echo "$MSG" >> "$SUMMARY"
 
@@ -159,7 +159,7 @@ jobs:
             "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
 
       # OWNER LOCK (Owner order 17:47Z): only the Owner's chat is ingested
-      # VERBATIM into TEAM-CHAT.org before the segment; others dropped.
+      # VERBATIM into CHAT.org before the segment; others dropped.
       - name: Telegram bridge — ingest Owner replies into the team chat (owner-locked)
         id: ingest
         env:
@@ -172,7 +172,7 @@ jobs:
           git config user.email "agent-team-ci@users.noreply.github.com"
           git remote set-url --push origin \
             "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
-          CHAT=agent-team/TEAM-CHAT.org
+          CHAT=agent-team/CHAT.org
           UPD=$(curl -sS --max-time 20 \
             "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?allowed_updates=%5B%22message%22%5D&limit=20") || UPD=""
           echo "$UPD" | jq -e '.ok == true' >/dev/null 2>&1 || { echo "telegram: API error or empty — skip"; exit 0; }
@@ -255,7 +255,7 @@ jobs:
         timeout-minutes: 22
         run: |
           SEAT="${{ steps.control.outputs.seat }}"
-          OBJECTIVE=$(grep -oP '^\#\+OBJECTIVE:\s*\K.*' agent-team/TEAM-CONTROL.org | head -1)
+          OBJECTIVE=$(grep -oP '^\#\+OBJECTIVE:\s*\K.*' agent-team/CONTROL.org | head -1)
           BOARD=agent-team/TODOS.org
           SUMMARY="$GITHUB_STEP_SUMMARY"
           TOP=$(grep -E '^\*+ (TODO|ONGOING|PENDING|WAIT)' "$BOARD" | head -8 | sed 's/^\*\** //' || true)
@@ -264,7 +264,7 @@ jobs:
           echo "TURN_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           BRIEF="You are the on-turn member of the agent-org Agent Team, seat ${SEAT}.
-          TEAM OBJECTIVE (from agent-team/TEAM-CONTROL.org): ${OBJECTIVE}
+          TEAM OBJECTIVE (from agent-team/CONTROL.org): ${OBJECTIVE}
           Board: agent-team/TODOS.org (rotation pointer).
           THE SPEC: TODOs.org at repo root — every '** TODO' item is a full
           port spec (agent-shell mechanism -> agent-org design), with the
@@ -273,7 +273,7 @@ jobs:
           Roster: agent-team/MEMBERS.org. Manual: AGENTS.md +
           CONVENTIONS.md (rendering rules + measurements — they outrank
           taste). Code: agent-org*.el at repo root; tests in tests/.
-          PEER MESH — ONE CHAT BUFFER: agent-team/TEAM-CHAT.org. Append ONE
+          PEER MESH — ONE CHAT BUFFER: agent-team/CHAT.org. Append ONE
           message AT EOF in this EXACT format (FORMAT LAW):
           * MSG ${SEAT} -> @<to|all> :<kind>:      :msg:${SEAT}:<to-sans-at>:<kind>:
           :PROPERTIES:
@@ -287,7 +287,7 @@ jobs:
           Telegram-bound message MUST open with FROM:/TO: lines.
           Handles: @implementer @implementer-deepseek @lead @owner @all.
           LAW #10 (Lead-owned files): NEVER edit .github/workflows/*,
-          agent-team/TEAM-CONTROL.org, or .gitattributes — cite them in
+          agent-team/CONTROL.org, or .gitattributes — cite them in
           chat instead.
           WORK ORDER (Owner 2026-10-21 03:53Z: ALL pending TODOs DONE by
           his morning, Asia/Dhaka). Take the FIRST TODOs.org '** TODO'
@@ -297,7 +297,7 @@ jobs:
           (design DONE, code NOT started); (2) Model selection menu;
           (3) Steer — inject into the live turn.
           WORK ONE SEGMENT (time-boxed, max 3 self-attempts):
-          1. READ THE TEAM CHAT FIRST (agent-team/TEAM-CHAT.org): scan the
+          1. READ THE TEAM CHAT FIRST (agent-team/CHAT.org): scan the
              tail for @${SEAT} pings you have not answered — do the work,
              answer it, or reply BLOCKED with evidence.
           2. Flip your item on TODOs.org to PROGRESS at segment start and
@@ -327,7 +327,7 @@ jobs:
              what changed + evidence. When DELIVERED, flip to REVIEW with
              a note (branch, sha, evidence) — NEVER mark DONE (Lead gate).
           7. Commit everything on this branch with message 'turn(${SEAT}): ...'.
-          8. REPORT: append to agent-team/TEAM-CHAT.org as
+          8. REPORT: append to agent-team/CHAT.org as
              '${SEAT} -> @lead :report:' (RESULT: DONE | PARTIAL | BLOCKED,
              evidence included).
           9. Never claim the OBJECTIVE complete yourself: a completion
@@ -335,7 +335,7 @@ jobs:
              sets OBJECTIVE-STATE: COMPLETE.
           10. Do NOT push; the chain's finalize auto-merges your branch.
           11. LEAD-OWNED FILES — never edit, only read and cite:
-              .github/workflows/*, agent-team/TEAM-CONTROL.org,
+              .github/workflows/*, agent-team/CONTROL.org,
               .gitattributes, .github/scripts/*.
           Boundaries: no spend; no destructive actions; stay in scope of
           the item you picked.
@@ -548,7 +548,7 @@ jobs:
             || { git rebase --abort 2>/dev/null || true; echo "::warning::branch rebase skipped"; }
           git push origin "${TURN_BRANCH:-ai/turn-orphan}" || echo "::notice::no work branch to push"
           echo "branch=${TURN_BRANCH:-}" >> "$GITHUB_OUTPUT"
-          CTL=agent-team/TEAM-CONTROL.org
+          CTL=agent-team/CONTROL.org
           case "${{ steps.control.outputs.seat }}" in
             implementer-deepseek) NEXT="deepseek-flash@qoder (Implementer)" ;;
             implementer)          NEXT="deepseek-flash@qoder (Implementer)" ;;
@@ -656,7 +656,7 @@ jobs:
 
       - name: Stall accounting + dispatch the next run (self-chain)
         run: |
-          CTL=agent-team/TEAM-CONTROL.org
+          CTL=agent-team/CONTROL.org
           RESULT="${{ needs.turn.outputs.seg_result }}"
           OUTCOME="${{ steps.merge.outputs.outcome }}"
           GATE="${{ steps.gate.outputs.gate }}"
@@ -729,7 +729,7 @@ jobs:
           CHAT="${TELEGRAM_OWNER_ID:-${TG_LEARNED_CHAT}}"
           [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$CHAT" ] || { echo "telegram mirror: silent (no token or chat id yet)"; exit 0; }
           VH=$(printf '%s' "$SEG" | sha256sum | cut -c1-12)
-          CTL=agent-team/TEAM-CONTROL.org
+          CTL=agent-team/CONTROL.org
           LAST=$(grep -oP '^\#\+LAST-VERDICT:\s*\K.*' "$CTL" | head -1)
           if [ "$LAST" = "$VH" ]; then
             echo "telegram mirror: identical verdict ${VH} already mirrored — silent (dedupe law)"
@@ -761,7 +761,7 @@ jobs:
       # Owner order 2026-10-21 03:53Z: per-project channels. This repo's
       # channel = the agent-org Discord channel (secret
       # DISCORD_WEBHOOK_TEAM_AGENTORG, a channel webhook the Owner creates
-      # in one click). Mirrors the chain verdict + every TEAM-CHAT.org
+      # in one click). Mirrors the chain verdict + every CHAT.org
       # message this segment appended. SILENT until the webhook exists.
       - name: Mirror verdict + new GLM chats to Discord (silent without secret)
         env:
@@ -786,7 +786,7 @@ jobs:
           post "$(printf '%s\nTO: @team (discord, agent-org channel)\n\n[agent-org] segment done\nbranch: %s\nresult: %s\ndecision: %s\nstall: %s' \
             "$FROM" "${TURN_BRANCH:-?}" "${SEG_RESULT:-?}" "${CHAIN_DECISION:-unknown}" "${CHAIN_STALL:-?}")"
           if [ -n "$BASE_SHA" ] && git cat-file -e "$BASE_SHA" 2>/dev/null; then
-            ADDED=$(git diff "$BASE_SHA" HEAD -- agent-team/TEAM-CHAT.org 2>/dev/null \
+            ADDED=$(git diff "$BASE_SHA" HEAD -- agent-team/CHAT.org 2>/dev/null \
               | grep '^+' | grep -v '^+++' | sed 's/^+//')
             if [ -n "$ADDED" ]; then
               post "$(printf '%s\nTO: @team (discord, agent-org channel)\n--- GLM chat, this segment ---\n%s' "$FROM" "$ADDED")"

@@ -13,7 +13,7 @@
    rewrites every seat's source before the push (`.github/scripts/secret-guard.sh:20`,
    applied at `.github/workflows/agent-team.yml:531`), so the landing gate reds and
    finalize undoes — that is the stall streak.  Escalated with measurements + a
-   verified one-line fix: TEAM-CHAT.org 2026-10-28 00:00 UTC.  Unit #183 is already
+   verified one-line fix: CHAT.org 2026-10-28 00:00 UTC.  Unit #183 is already
    written on ai/turn-20261027-2321 (35d0e59) and still applies cleanly to HEAD.
 ** DONE WO-2 model selection menu — labels + cleaned-id fallback; ERT 432/432 (agent-org.el:1679)
 ** TODO WO-3 steer — inject into the live turn — TODOs.org §Steer
@@ -31,4 +31,4 @@
 ** TODO WO-15 tracker: everything else still open — TODOs.org §Everything else
 ** ONGOING CI-kit adoption (teamify, Lead) — ci/ submodule @ b86e5eb: dual-law
    harness baked, per-seat session reuse ON, .agent-org transcripts committed;
-   seats owe the INTEGRATION.md section 6 verification matrix in TEAM-CHAT.org
+   seats owe the INTEGRATION.md section 6 verification matrix in CHAT.org
