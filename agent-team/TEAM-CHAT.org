@@ -54,3 +54,117 @@
   - OBJECTIVE refreshed in TEAM-CONTROL.org (kit verification duty +
     the standing TODOs.org port). STALL-COUNT reset to 0. REPORT here
     after every segment.
+
+* MSG implementer-deepseek -> @lead :escalation:    :msg:implementer-deepseek:lead:escalation:
+:PROPERTIES:
+:FROM: implementer-deepseek
+:TO: lead
+:KIND: escalation
+:WHEN: [2026-10-28 Wed 00:00 UTC]
+:CHANNEL: discord
+:END:
+  RESULT: BLOCKED — the root cause of the stall streak is the CI SECRET GUARD,
+  and it sits in a Lead-owned file (.github/scripts/* — law #11 keeps me from
+  fixing it), so this is an escalation with measurements and a verified patch.
+
+  WHY NOTHING LANDS
+  - .github/scripts/secret-guard.sh:20 puts this alternative in GENERIC:
+      pt-[A-Za-z0-9]{8,}
+    It is unanchored, so it matches the "pt" + hyphen + 8 alphanumerics sitting
+    INSIDE ordinary source words — the defcustom name transcri…directory, the
+    command name agent-org--prom…permission, and the prose prom…response pair.
+    (Ellipses are deliberate: spelling any of them out here would redact this
+    message as well.)
+  - branch mode rewrites the WHOLE file and then `git add` + `git commit
+    --amend` (secret-guard.sh:70-78), and it runs in the PUSH step
+    (.github/workflows/agent-team.yml:531) — AFTER the seat verified green.  The
+    pushed tree is therefore not the tree the seat tested.
+  - finalize re-runs the landing gate and undoes a red merge
+    (.github/workflows/agent-team.yml:612-650: "gate red on attempt $i — merge
+    undone", `git reset --hard origin/ai/quickstart`).  That is the whole loop:
+    seat green → guard corrupts → gate red → merge undone → STALL-COUNT +1.
+
+  REPRODUCED, not inferred (clean HEAD copies, guard run in file mode):
+    agent-org-buffer.el → 8 lines rewritten, then byte-compile fails:
+      agent-org-buffer.el:3409:2: Error: docstring wider than 80 characters
+    agent-org.el → 4 lines rewritten, then byte-compile fails:
+      agent-org.el:68:11: Error: Junk in args (:type directory :group agent-org-buffer)
+  Those are exactly the two errors branch ai/turn-20261027-2321 showed when I
+  cherry-picked it, though its author reported the suite green — the seat's own
+  gate really was green.  And it is not one bad branch: every turn branch on the
+  remote carries the markers in its source (ai/turn-20261027-1901 89c4268,
+  -2133 e188423, -2200 294c0a0, -2321 35d0e59 → 9–19 redacted lines in
+  agent-org-buffer.el, 35–53 in tests/test-agent-org.el).  Four consecutive
+  seats did the work and lost it in transit, which is the stall streak.
+
+  BLAST RADIUS — tracked files whose HEAD content matches, each rewritten in
+  full the moment a seat touches it: tests/test-agent-org.el 25 ·
+  agent-org-buffer.el 8 · TODOs.org 7 · AI-REVIEW.org 5 ·
+  tests/test-agent-org-batch.el 5 · agent-org.el 4 · README.org 3 ·
+  CONVENTIONS.md 3 · agent-org-batch.el 2 · agent-org-review-teach.el 2 ·
+  agent-team/TEAM.md 1 — 85 lines.  Only agent-org-loader.el,
+  agent-org-providers.el, AGENTS.md, the board and this chat are clean, so no
+  seat can land code, tests OR docs until the pattern is anchored.
+
+  THE PATCH — one anchored alternative:
+      GENERIC='pt-[A-Za-z0-9]{8,}|…'   →   GENERIC='\bpt-[A-Za-z0-9]{8,}\b|…'
+  Measured here with grep -E and sed -E (GNU sed honors \b): repo false
+  positives 85 lines → 0, while every real PAT shape still redacts — a bare
+  "pt-" plus 24 alphanumerics, one after HOME=, one inside Org =…= markup.
+  Anchoring costs no detection, because a leaked value never arrives glued to
+  the middle of a word.  Optional defense in depth: exclude *.el from branch
+  mode (values leak through chat/org/session artifacts, not source), and raise
+  a ::error:: when redactions > 0 touch a source file so the seat learns in the
+  same turn instead of two jobs later.
+
+  READY THE MOMENT IT LANDS — Unit #183 of WO-1 (the transcript sync check and
+  the Org→messages parser) is already written and its diff still applies to HEAD
+  with zero conflicts (`git cherry-pick -n 35d0e59`); only its redacted
+  identifiers need a clean re-author, then its 6 tests and the full suite.
+  #184 (mapping store) and #185 (the two format writers) follow.
+
+  SECOND TRAP, same family — the turn brief (agent-team.yml:327, and the host's
+  own commit at agent-team.yml:481) orders the subject to read
+  'turn(<seat>): …' while ci/bin/commit_msg_guard.sh:26 bans any subject
+  starting `turn\(' (applied at :49), and finalize undoes the merge on that too
+  (.github/workflows/agent-team.yml:628-632, RESULT=red-commit-msg).  One of the
+  two needs the Lead's word; this commit uses a substantive subject so at least
+  one branch merges clean and the streak breaks.
+
+  INTEGRATION.md §6 duty, first migration turn (the 16:20 dispatch asked every
+  seat for this matrix) — measured in THIS container, not copied from the docs:
+  - tool x rules x mechanism.  My body is qoder and the harness runs it with
+    HOME=/usr/local/lib/qoder-home, so its global slot is
+    /usr/local/lib/qoder-home/.qoder/AGENTS.md — which is ABSENT (that .qoder
+    holds .auth, .bin, state.json, projects… and no rules file), while the baked
+    copy lives at /home/agent/.qoder/AGENTS.md, 8701 bytes.  VIOLATION, high
+    severity: the DUAL LAW never reached me through the slot the dispatch names;
+    it reached me only via the repo's own AGENTS.md (its "Global agent law —
+    DISTRIBUTED" section) plus the seat brief.  Fix belongs to the Lead-owned
+    workflow: bake into the HOME the harness actually uses, or run qoder with
+    HOME=/home/agent.  Project rules: /workspace/AGENTS.md (32331 B) and
+    CONVENTIONS.md (108657 B) — delivered, and these are what bound the segment.
+    ci pin: `git submodule status` answers ci @ ece8476 while the 16:20 dispatch
+    says b86e5eb — pin and dispatch disagree (cited, not touched).
+  - per-category violation counts (path x clause x severity), for the clauses I
+    could actually measure in one segment: secret-guard false positives 85 lines
+    over 11 tracked files — HIGH, blocks every landing (detail above); qoder
+    global slot 1 path absent — HIGH; ci pin 1 mismatch — LOW; `lexical-binding`
+    header missing in 1 of 8 root .el files (agent-org-pkg.el, generated) —
+    informational; tests/acp-mock.el placement correct in tests/, absent from the
+    root — 0; every provider id paired with its start-agent command — 0, pinned
+    by the drift test inside the suite.  A complete whole-repo per-clause audit
+    is NOT done and I am not claiming it is.
+  - commit_msg_guard DOES gate my merge: it runs after gate.sh at
+    .github/workflows/agent-team.yml:628-632 and resets the merge on a red
+    subject — and measured above, its BANNED_RE rejects the subject the turn
+    brief mandates.
+  - landing gate green at this commit: byte-compile clean with
+    byte-compile-error-on-warn t, ERT 432/432, batch lane 15/15.
+
+  BOOKKEEPING — board: WO-1 → BLOCKED with this evidence.  I deliberately did
+  NOT edit TODOs.org this segment: the PROGRESS flip plus :LOGBOOK: note puts it
+  in the branch diff, where the guard would rewrite 7 of its spec lines — damage
+  to the shared spec for no gate benefit.  The flip lands in the first segment
+  after the patch.  SECRET LAW honored: no values here, only file paths, line
+  numbers and ENV VAR names.
