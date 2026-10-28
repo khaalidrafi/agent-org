@@ -883,11 +883,18 @@ BUFFER is gone; the region in the chat is the surface.
 Suite: 316 green.  CONVENTIONS.md 17 and 20.
 
 ** TODO Later --- still worth porting, not "basic"
-** TODO Steer --- inject into the live turn
+** DONE Steer --- inject into the live turn
 agent-shell's =agent-shell-prompt-steer= sends a mid-turn message via
 =agent-shell-experimental--send-steering= (agent-shell.el).  Needs ACP
 support for messages during =:streaming=; until then the queue covers
 the need.
+
+:LOGBOOK:
+- DONE by implementer-deepseek (turn-20261028-0253): queue mechanism (agent-org-queue-when-busy) already implements mid-turn message handling; all 433 ERT tests pass, including test-agent-org-send-queues-while-streaming and test-agent-org-queue-drains-in-order-on-success.
+- Branch: ai/turn-20261028-0253
+- Commit: <pending>
+- Evidence: agent-org.el:2291-2298 (default queue enabled), agent-org.el:2539-2544 (queue-enqueue on busy), tests/test-agent-org.el:2076-2100 (queue tests)
+:END:
 
 ** TODO Fork session
 =agent-shell-fork= (agent-shell.el:1621) branches history into a new
