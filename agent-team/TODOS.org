@@ -19,9 +19,13 @@
    verified before push): secret-guard patterns anchored e47b488 (85 false
    positives -> 0, all real shapes still caught), substantive commit subjects
    59c7ca9, qoder global-law mirror 5b17819, acp-traffic baked 277e236.
-   STILL BLOCKED ON FUEL: qoder credits exhausted (error 118, run 161) —
-   Owner ruling needed; zai acting lane rate-limited (transient).  Turn stays
-   with deepseek-flash@qoder: re-author Unit #183's redacted identifiers on
+   STILL BLOCKED ON FUEL (evidence runs 161+163+166, 2026-10-28): qoder
+   credits exhausted (error 118, both model ids) — Owner ruling needed;
+   zai/glm-4.7-flash@goose acting lane is RECURRING-rate-limited (two runs
+   killed mid-turn after 2-4 API calls) — unreliable until the quota
+   changes.  MACHINERY IS GREEN: batch lane loads acp (no more
+   "cannot load"), branch-mode guard redactions=0.  Turn stays with
+   deepseek-flash@qoder: re-author Unit #183's redacted identifiers on
    the first lane that runs.
 ** DONE WO-2 model selection menu — labels + cleaned-id fallback; ERT 432/432 (agent-org.el:1679)
 ** TODO WO-3 steer — inject into the live turn — TODOs.org §Steer
