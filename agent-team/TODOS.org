@@ -8,7 +8,13 @@
   - BLOCKED + reason; :OWN: = owner ruling
   - REVIEW + completion note (invalid without)
   - BLOCKED never terminal; only the EM flips DONE
-** TODO WO-1 cross-agent sessions — Qoder <-> Codebuddy (design DONE, code NOT started) — TODOs.org §Cross-agent
+** BLOCKED WO-1 cross-agent sessions — Qoder <-> Codebuddy (design DONE, code NOT started) — TODOs.org §Cross-agent
+   BLOCKED by CI, not by design: the secret guard's unanchored `pt-` pattern
+   rewrites every seat's source before the push (`.github/scripts/secret-guard.sh:20`,
+   applied at `.github/workflows/agent-team.yml:531`), so the landing gate reds and
+   finalize undoes — that is the stall streak.  Escalated with measurements + a
+   verified one-line fix: TEAM-CHAT.org 2026-10-28 00:00 UTC.  Unit #183 is already
+   written on ai/turn-20261027-2321 (35d0e59) and still applies cleanly to HEAD.
 ** DONE WO-2 model selection menu — labels + cleaned-id fallback; ERT 432/432 (agent-org.el:1679)
 ** TODO WO-3 steer — inject into the live turn — TODOs.org §Steer
 ** TODO WO-4 hooks on the response boundary + automation — TODOs.org §Hooks
