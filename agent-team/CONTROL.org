@@ -3,5 +3,5 @@
 #+OBJECTIVE: Port EVERY remaining ** TODO item in TODOs.org to DONE with green ERT tests, in file order; priority pins: Cross-agent sessions (Qoder <-> Codebuddy), Model selection menu, Steer. Owner deadline: 2026-10-21 morning Asia/Dhaka.
 #+OBJECTIVE-STATE: OPEN
 #+TURN: deepseek-flash@qoder (Implementer)
-#+STALL-COUNT: 35
+#+STALL-COUNT: 36
 #+LAST-VERDICT: cf38a3b86b33
