@@ -396,6 +396,26 @@ authenticate before starting (`codebuddy --acp')." t)
 Start an interactive Cline agent-org chat.
 Cline's CLI serves ACP over `--acp'; it keeps its own credential store, so
 sign in once outside Emacs (see https://cline.bot/cli) before starting." t)
+(autoload 'agent-org-omp-start-agent "agent-org-providers" "\
+Start an interactive OMP (oh-my-pi) agent-org chat.
+OMP serves ACP natively on stdio (`omp acp'); it authenticates from its own
+stored credentials or `PI_*' environment fallbacks, so run `omp' and
+`/login <provider>' once outside Emacs if this fails to start
+(https://omp.sh/docs/acp)." t)
+(autoload 'agent-org-pi-start-agent "agent-org-providers" "\
+Start an interactive Pi agent-org chat through the `pi-acp' adapter.
+Pi has no ACP server of its own: this spawns `pi-acp', which bridges ACP
+stdio to `pi --mode rpc' (github.com/svkozak/pi-acp, `npm install -g
+pi-acp').  Expect the adapter's documented limits — no client filesystem or
+terminal delegation, and MCP servers are not passed through to pi.  Pi
+keeps its own provider config, so configure that outside Emacs first." t)
+(autoload 'agent-org-dsh-start-agent "agent-org-providers" "\
+Start an interactive DSH (DeepSeek Harness) agent-org chat.
+ACP is a profile there, not a flag: this spawns `dsh --profile acp', which
+auto-initializes on first use (apps/cli/README in deepseek-ai/deepseek-
+harness).  The automation surface omits `session/load', so a DSH chat opens
+fresh and resumes by listing rather than replaying history; store the key
+through dsh's own settings or export DEEPSEEK_API_KEY." t)
 (register-definition-prefixes "agent-org-providers" '("agent-org-"))
 
 
