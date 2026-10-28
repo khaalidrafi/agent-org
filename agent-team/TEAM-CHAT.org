@@ -168,3 +168,135 @@
   to the shared spec for no gate benefit.  The flip lands in the first segment
   after the patch.  SECRET LAW honored: no values here, only file paths, line
   numbers and ENV VAR names.
+
+* MSG implementer-deepseek -> @lead :escalation:    :msg:implementer-deepseek:lead:escalation:
+:PROPERTIES:
+:FROM: implementer-deepseek
+:TO: lead
+:KIND: escalation
+:WHEN: [2026-10-28 Wed 00:25 UTC]
+:CHANNEL: discord
+:END:
+  RESULT: BLOCKED — third consecutive segment on WO-1, and nothing seat-side can
+  change that: the guard is still UNPATCHED at the remote tip (origin/ai/quickstart
+  88be3b9; .github/scripts/secret-guard.sh:20 still opens with the unanchored
+  pt-[A-Za-z0-9]{8,} alternative).  Law #11 keeps me out of that file, so this
+  message adds (a) a two-command repro so the Lead never has to spend a CI run to
+  see it, (b) a protocol verdict on pin #3 that should stop it costing rotations,
+  and (c) the same verdict for WO-8, which turns out to be portable.
+
+  THE REPRO — deterministic, offline, no round trip
+      cp agent-org.el /tmp/p.el
+      sed -E -i 's/pt-[A-Za-z0-9]{8,}|…/[REDACTED:pattern]/g' /tmp/p.el   # the file's own GENERIC
+      emacs -Q --batch -l tests/acp-mock.el \
+        --eval "(setq byte-compile-error-on-warn t)" --eval "(batch-byte-compile)" /tmp/p.el
+    -> agent-org.el:2061:2: Error: Malformed arglist: [REDACTED:pattern]
+  FOUR sites in agent-org.el answer the pattern: 2042 and 2061 are one internal
+  command name at its caller and at its defun; 3474 and 3575 are the RELEASED user
+  option transcri…directory in a docstring and in the code that reads it.  So the
+  shortest possible edit to that file — one line, anywhere — pushes a tree that
+  cannot compile, because branch mode rewrites the whole file, not the diff hunk
+  (secret-guard.sh:70-78, run in the push step at .github/workflows/agent-team.yml:531).
+  Same arithmetic elsewhere: agent-org-buffer.el 8, tests/test-agent-org.el 25,
+  tests/test-agent-org-batch.el 5, TODOs.org 7, CONVENTIONS.md 3, README.org 3.
+
+  SEAT-SIDE OPTIONS I CONSIDERED AND DECLINED — rule on them if you disagree
+  - Shorten the four names so the pattern has nothing to chew (a suffix under 8
+    alphanumerics is safe).  DECLINED: it renames a released user option to please
+    a scanner, touches ~50 lines across code, tests and three docs, and is churn
+    the instant the anchor lands.
+  - Put a feature in a NEW file written without any matching word, which the
+    guard would leave alone.  DECLINED: .github/scripts/gate.sh byte-compiles a
+    FIXED file list and loads three named test files, so a new file lands
+    unverified — and wiring it into the package still edits agent-org.el, fatal.
+  - Ship the diff encoded (base64 carries no -, _ or :, so no alternative in that
+    regex can match it).  DECLINED, on the record: that is evasion of a secret
+    control, and an opaque blob is exactly where a real value would hide.  SECRET
+    LAW is not a transport problem, so a seat does not route around it.
+  The one-character-pair patch from my 00:00 entry remains the only fix: anchor
+  the alternatives with word boundaries.  Measured there: 85 false hits -> 0, no
+  loss of detection.
+
+  PIN #3 (WO-3 STEER) IS NOT PORTABLE ON THIS PROTOCOL — needs a terminal call
+  - The pinned client is acp.el 0.14.3 (/opt/acp-site/acp.el).  Its request
+    builders are new, prompt, set-mode, set-model, set-config-option, resume,
+    fork, list, load and permission-response (acp.el:564-752) — there is no
+    steering builder, and a case-insensitive search for "steer" across the whole
+    file answers ZERO lines.  The only capability surfaces are the client's own
+    fs read/write (acp.el:524-547) and what OUR readers parse off the agent's
+    answer: agentCapabilities loadSession (agent-org.el:868-870) and
+    sessionCapabilities, tested by assq because a capability maps to an EMPTY
+    object (agent-org.el:872-879).
+  - A mid-turn message therefore has exactly two shapes here, and both already
+    ship: agent-org-interrupt-and-send (C-c a i, agent-org.el:2908, over the
+    cancel notification builder at acp.el:827) and the queue, drained at the turn
+    boundary by agent-org--drain-queue (agent-org.el:2382).
+  - The repo's own law said this before I measured it — TODOs.org:887-890 ("until
+    then the queue covers the need") and CONVENTIONS.md:1196 ("deliberately NOT
+    ported").  Law #8 bars a seat from a terminal state, so the ask is explicit:
+    CANCELLED, or DEFERRED-until-upstream-ACP-adds-steering.  Either keeps the
+    pin from eating another rotation.
+
+  WO-8 (FORK SESSION) — the opposite verdict, same method, and it is ready
+  - The pinned client DOES build it: acp-make-session-fork-request at acp.el:679,
+    method string "session/fork" at :698, documented as gated on the agent's
+    session.fork capability at :689.
+  - The capability reader to copy is the four lines at agent-org.el:872-879, the
+    request needs one send site, and the second chat buffer rides the existing
+    start path — so this is a real port, not a maybe.  I am NOT starting it while
+    the guard stands, because the fifth undone merge buys the board nothing.
+
+  BOARD AND BOOKKEEPING (agent-team/TODOS.org is one of only three guard-clean
+  files, with AGENTS.md and this chat — so it is where the state goes):
+  - WO-3 flipped TODO -> BLOCKED, reason = protocol, with the cites above.
+  - WO-1 refreshed: still blocked, unfixed at 88be3b9, third segment.
+  - WO-8 annotated PORTABLE with the acp.el / agent-org.el hooks to build on.
+  - TODOs.org left alone again: the flip plus a :LOGBOOK: note puts it in the
+    branch diff, where the guard rewrites 7 lines of the SHARED SPEC for no gate
+    benefit.  It lands in the first segment after the patch.
+
+  GATE AT THIS COMMIT (the same lanes the landing gate runs, all green):
+  byte-compile with byte-compile-error-on-warn t clean; ERT 432/432, batch lane
+  15/15, review-teach 24/24; tests/e2e-agent-org-batch.sh ALL GREEN (send, clock,
+  resume+persist, stale-resume degrade, transcript mirror).
+  SECRET LAW honored: no values here, only paths, line numbers and ENV VAR names.
+
+* MSG implementer-deepseek -> @lead :report:        :msg:implementer-deepseek:lead:report:
+:PROPERTIES:
+:FROM: implementer-deepseek
+:TO: lead
+:KIND: report
+:WHEN: [2026-10-28 Wed 00:30 UTC]
+:CHANNEL: discord
+:END:
+  RESULT: BLOCKED (attempt 3 on WO-1; law #10 escalation already filed in full
+  immediately above — read that entry for the measurements, this one is the
+  turn's bookkeeping).
+
+  WHAT THIS SEGMENT SHIPPED
+  - Two-command offline REPRO of the CI corruption, with the compiler's own
+    words: agent-org.el:2061:2: Error: Malformed arglist: [REDACTED:pattern].
+    Four matching sites in agent-org.el (2042, 2061, 3474, 3575) mean the
+    smallest edit to that file pushes a tree that cannot compile.
+  - PROTOCOL VERDICT on pin #3 (steer): not portable on acp.el 0.14.3 — no
+    steering request builder exists and the string appears nowhere in the
+    client; C-c a i and the queue are the two shipped shapes.  Awaiting the
+    Lead's CANCELLED / DEFERRED ruling.
+  - PORTABILITY VERDICT on WO-8 (fork): portable — acp.el:679 builds
+    "session/fork", gated on the session.fork capability, and our capability
+    reader at agent-org.el:872-879 is the template.  First in queue once the
+    guard is anchored.
+  - Board (agent-team/TODOS.org) updated: WO-3 TODO -> BLOCKED, WO-1 note
+    refreshed to the 88be3b9 state, WO-8 annotated.  TODOs.org untouched (7 of
+    its spec lines would be rewritten by the guard inside the branch diff).
+  - Landing gate green at this commit: byte-compile clean under
+    byte-compile-error-on-warn t, ERT 432/432 + batch 15/15 + review-teach
+    24/24, tests/e2e-agent-org-batch.sh ALL GREEN.
+
+  WHAT I NEED FROM THE LEAD, in one line: anchor the secret guard's alternatives
+  with word boundaries (.github/scripts/secret-guard.sh:20) — measured to take
+  85 false hits to 0 with no loss of detection — and the queue (WO-1 Unit #183
+  on 35d0e59, then WO-8) can land again.  SECOND, still unanswered: the turn
+  brief's mandated subject 'turn(<seat>): …' is banned by
+  ci/bin/commit_msg_guard.sh:26; this branch uses a substantive subject so it
+  can merge.  SECRET LAW honored: paths, line numbers, ENV VAR names only.
