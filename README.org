@@ -11,7 +11,7 @@ renders the conversation natively as an Org document.
 All status, progress and error feedback appears in the chat buffer's
 own *header line* (the top bar, as used by ~gptel~ and ~agent-shell~) — never
 as system messages in the document body.  The body is a conversation in
-/exchanges/: ONE heading per prompt-response pair, and the heading's text /is/
+/exchanges/: ONE heading per prompt/response pair, and the heading's text /is/
 the prompt (~* Refactor the auth module~).  The answer sits under it inside an
 Org quote block, attributed to the model that wrote it by a
 ~#+ATTR_TEXINFO: :author~ line, so the pair reads as /you asked this — that
@@ -647,7 +647,7 @@ duplicates and never disturbs the conversation below it.
 
 By default every session also has an Org file of its own, in
 ~.agent-org/~ *inside the project the chat is of*
-(~agent-org-transcript-directory~; set an absolute path there for one
+(~agent-org-transcript-dir~; set an absolute path there for one
 global pool), named for its ACP session id: ~7c1f….org~.  The file is a mirror of the
 chat buffer — the same headings, the same tool-call keywords, the same
 ~:PROPERTIES:~ drawer, whose ~:ID:~ is the id in the file name, so a
@@ -778,7 +778,7 @@ what this package did before the option existed.
   ~session/list~, goose does not).
 - ~agent-org-transcribe~ — when non-nil (the default) each session is mirrored
   to its own Org file, see [[*Transcript file]].
-- ~agent-org-transcript-directory~ — where those files live.  The default
+- ~agent-org-transcript-dir~ — where those files live.  The default
   is the relative ~.agent-org~, resolved against the chat's own directory,
   so every project keeps its own transcripts; an absolute value is a global
   pool.  Created on the first write.
