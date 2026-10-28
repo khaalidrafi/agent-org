@@ -245,6 +245,175 @@ there is no live process, so the kill hook stays silent."
                     (plist-get (agent-org--session-for-buffer buf) :name)))
         (kill-buffer buf)))))
 
+;;;; Harness-body parity (WO-16: omp, pi, dsh)
+
+(ert-deftest test-agent-org-omp-provider-present ()
+  "OMP (oh-my-pi) is its own ACP agent: `omp acp', nothing pinned.
+Command shape is the one omp.sh/docs/acp recommends for client config
+(\"`omp --mode acp' is equivalent, but `omp acp' is the recommended
+spelling\"), transport stdio.  It fronts many providers but resolves its
+own default from ~/.omp/agent/config.yml, so a pin would fight the
+agent's config; `PI_*' credentials are environment fallbacks to omp's
+stored login, which is why the env function exports nothing unless asked.
+Confirmed against the LIVE server in this image (2026-10-28, an
+`initialize' over stdin): agentInfo omp 18.13.3, loadSession t and
+sessionCapabilities (list, fork, resume, close)."
+  (let ((omp (agent-org--provider-spec 'omp)))
+    (should (equal (plist-get omp :name) "OMP"))
+    (should (equal (plist-get omp :command) '("omp" "acp")))
+    (should-not (plist-get omp :model))
+    (should (equal (plist-get omp :environment)
+                   #'agent-org-omp-environment))))
+
+(ert-deftest test-agent-org-pi-provider-present ()
+  "Pi has NO native ACP server: the `pi-acp' adapter is the command.
+github.com/svkozak/pi-acp speaks ACP JSON-RPC over stdio and spawns
+`pi --mode rpc' itself, so agent-org talks to the adapter binary and
+never to `pi' directly (install: npm install -g pi-acp).  Model choice
+belongs to pi's own config, and the adapter documents limits an ACP
+client must respect: no fs/* or terminal/* delegation, and MCP servers
+are accepted but not wired through to pi."
+  (let ((pi (agent-org--provider-spec 'pi)))
+    (should (equal (plist-get pi :name) "Pi"))
+    (should (equal (plist-get pi :command) '("pi-acp")))
+    (should-not (plist-get pi :model))
+    (should (equal (plist-get pi :environment)
+                   #'agent-org-pi-environment))))
+
+(ert-deftest test-agent-org-dsh-provider-present ()
+  "DSH (DeepSeek Harness) serves ACP as a PROFILE, not a flag or bin.
+apps/cli/README (deepseek-ai/deepseek-harness) lists
+\"`dsh --profile acp' — Serve automation clients over ACP stdio until
+disconnect\", and states \"SDK and ACP are profiles, not separate public
+bins\" — so `dsh acp' would be an invented shape.  It advertises the
+`model' config option (session/set_config_option), so a pin is possible
+but the harness default route is the honest start.
+Confirmed against the LIVE server in this image (2026-10-28, an
+`initialize' over stdin): agentInfo \"deepseek-harness-acp\",
+sessionCapabilities (close, list, resume) and NO loadSession key at all —
+which is exactly what `agent-org--supports-load-p' reads via
+`map-nested-elt', so the absent key and a nil value take the same branch."
+  (let ((dsh (agent-org--provider-spec 'dsh)))
+    (should (equal (plist-get dsh :name) "DSH"))
+    (should (equal (plist-get dsh :command) '("dsh" "--profile" "acp")))
+    (should-not (plist-get dsh :model))
+    (should (equal (plist-get dsh :environment)
+                   #'agent-org-dsh-environment))))
+
+(ert-deftest test-agent-org-every-harness-body-is-a-provider ()
+  "The agent-team-ci harness image is the roster this package must cover.
+ci/docker/harness/Dockerfile installs each body and FATAL-checks it with
+`--version`; a body with no provider entry is an agent the team cannot
+open from Emacs.  The roster below is transcribed from that Dockerfile
+(Owner order 2026-10-28: 10 bodies baked, 7 supported) rather than read
+from ci/ at run time, because the submodule is optional in a checkout
+and the landing gate must not turn red over a missing `ci/' directory.
+slave-agent is excluded: it is this package's own agent, never baked."
+  (let ((harness-body-to-provider
+         '(("opencode" . opencode) ("goose" . goose) ("qoder" . qoder)
+           ("codebuddy" . codebuddy) ("pi" . pi) ("dsh" . dsh)
+           ("mcode" . minimax) ("agent" . cursor) ("copilot" . copilot)
+           ("omp" . omp)))
+        (registered (mapcar (lambda (p) (plist-get p :id))
+                            agent-org-providers)))
+    (dolist (pair harness-body-to-provider)
+      (should (plist-get (agent-org--provider-spec (cdr pair)) :id)))
+    ;; ONE direction of parity only: an entry the harness does not bake is
+    ;; fine (slave-agent is our own agent, Cline is a real ACP CLI that just
+    ;; is not in the image), so never assert the total count — a future body
+    ;; would break the suite for no reason.  What must never happen is a
+    ;; baked body with no entry, and `set-difference' names it in the failure.
+    (should (= 10 (length harness-body-to-provider)))
+    (should (null (seq-difference (mapcar #'cdr harness-body-to-provider)
+                                  registered)))))
+
+(ert-deftest test-agent-org-harness-bodies-pass-only-what-they-need ()
+  "Three credential stories, all pass-through-or-nothing (Secret Law).
+Pi resolves its own provider keys and is configured outside Emacs, so
+its function returns nil EVEN with keys in the environment: forwarding
+them would make Emacs a second source of truth.  DSH keeps
+$DSH_HOME/.credentials.yaml, so only DSH_HOME (the state dir this
+session binds) and the documented DEEPSEEK_API_KEY fallback
+(llm-deepseek-api-key: \"apiKeyEnv defaults to DEEPSEEK_API_KEY\") cross.
+OMP resolves PI_* env names against its stored login; only the profile
+selectors OMP_PROFILE / PI_CONFIG_DIR are forwarded, because an Emacs
+chat legitimately chooses WHICH omp profile owns the session."
+  ;; a blank is ABSENT, not a value: forwarding "VAR=" would override the
+  ;; agent's own credential resolution with nothing
+  (let ((process-environment '("DEEPSEEK_API_KEY=" "DSH_HOME="
+                                "OMP_PROFILE=" "PI_CONFIG_DIR=")))
+    (should-not (agent-org-pi-environment))
+    (should-not (agent-org-dsh-environment))
+    (should-not (agent-org-omp-environment)))
+  (let ((process-environment '("PI_ANTHROPIC_API_KEY=whatever"
+                                "MINIMAX_API_KEY=whatever"
+                                "PI_SLOW_MODEL=anthropic/x")))
+    (should-not (agent-org-pi-environment)))
+  (let ((process-environment '("DSH_HOME=/tmp/dsh-profile"
+                                "DEEPSEEK_API_KEY=sk-deep")))
+    (should (equal (agent-org-dsh-environment)
+                   '("DSH_HOME=/tmp/dsh-profile"
+                     "DEEPSEEK_API_KEY=sk-deep"))))
+  (let ((process-environment '("OMP_PROFILE=ci" "PI_CONFIG_DIR=/tmp/omp")))
+    (should (equal (agent-org-omp-environment)
+                   '("OMP_PROFILE=ci" "PI_CONFIG_DIR=/tmp/omp")))))
+
+(ert-deftest test-agent-org-omp-pi-dsh-start-open-themselves ()
+  "Each new entry point opens ITS OWN session, not a copy-pasted id.
+The drift test proves an `agent-org-<id>-start-agent' exists per
+registered id; this proves the id baked into the call is the right one."
+  (ao--capture-wire
+    (dolist (pair '((omp . agent-org-omp-start-agent)
+                    (pi . agent-org-pi-start-agent)
+                    (dsh . agent-org-dsh-start-agent)))
+      (let ((buf (funcall (cdr pair))))
+        (should (buffer-live-p buf))
+        (should (eq (car pair)
+                    (plist-get (agent-org--session-for-buffer buf) :name)))
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-unloadable-provider-starts-fresh-not-broken ()
+  "A body that answers no session/load must not block starting a chat.
+packages/acp/acp/README: DSH omits `session/load' from its automation
+surface (list, resume and close only), and the pi-acp adapter keeps its
+own mapping file rather than the harness history.  So `agent-org-start'
+degrades to `session/new' at the capability gate (agent-org.el:1362) and
+`agent-org-resume-session' reports the missing support instead of
+hanging on a request that will never answer."
+  (should-not (agent-org--supports-load-p
+               `((agentCapabilities . ((loadSession . nil))))))
+  (should (agent-org--supports-load-p
+           `((agentCapabilities . ((loadSession . t))))))
+  ;; `loadSession' is a boolean, so truthiness is right THERE, but the
+  ;; session-capability map names each support with an EMPTY object, so
+  ;; `agent-org--lists-sessions-p' must test presence with `assq' — an
+  ;; advertised `list' would read false under a truthiness rule.
+  (should (agent-org--lists-sessions-p
+           '((agentCapabilities . ((sessionCapabilities . ((list . ()))))))))
+  (should-not (agent-org--lists-sessions-p
+               '((agentCapabilities . ((sessionCapabilities . ())))))))
+
+(ert-deftest test-agent-org-resume-on-no-load-body-reports-by-name ()
+  "DSH is the first wired body that really walks the no-`session/load' path.
+Measured IN the harness image (dsh 0.2.1-rc.2, `@deepseek-ai/dsh-acp'
+README): the automation surface answers `session/list', `session/resume'
+and `session/close', and `session/load', modes, commands, plans,
+terminals and client filesystem operations are `omitted or rejected'.
+Before WO-16 that branch of `agent-org-resume-session' was theory, so pin
+its user-facing half (agent-org.el:1600): the header line names the
+provider, and NO list/load request goes out to an agent that cannot
+answer it — a hanging request is how a resume used to eat the buffer."
+  (ao--capture-wire
+    (let ((buf (agent-org-resume-session 'dsh "s-1")))
+      (ao--drive "initialize" '((agentCapabilities . ((loadSession . nil)))))
+      (let ((status (buffer-local-value 'agent-org-buffer--status buf)))
+        (should (eq 'error (plist-get status :state)))
+        (should (equal "DSH does not support session/load"
+                       (plist-get status :message))))
+      (should-not (ao--sent-get "session/list"))
+      (should-not (ao--sent-get "session/load"))
+      (kill-buffer buf))))
+
 ;;;; Buffer creation
 
 (defconst ao--name-dir "/tmp/ao-proj/"
