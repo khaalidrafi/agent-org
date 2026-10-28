@@ -2089,3 +2089,54 @@ records this rule; CONVENTIONS.md §22 wording needs the same edit as the code.
   #181/#134 split windows per chat, #182/#151 Opencode V2 provider.
 - #127 is CLOSED by this handoff commit: the Arc 4 / Arc 5 pile is in, as ordered.
 
+** TODO Clock seconds --- the fix is /designed/, measured, and NOT written
+User report: "Seconds no longer showing up in clock timestamps."  The on-screen
+=agent-org-clock-display= overlay /does/ print seconds (=0:00:09=); the =CLOCK:= text
+does not, because three sites still format stamps minute-granular:
+=agent-org-buffer--clock-open-lines= (buffer.el:3660, =ts-fmt
+"[%Y-%m-%d %a %H:%M]"=), =--clock-complete= (:3684) and =--clock-lines= (:3755).
+Measurements already taken on Org 9.7.11 /AND/ 9.8.10, so they need not be repeated:
+- a =CLOCK:= whose /duration/ carries seconds (==> 0:00:45=) parses to ZERO =clock=
+  nodes --- invisible to =org-clock-sum=, a clocktable and =org-clock-load=;
+- a second-precise /stamp/ (=… 00:30:12]=) still parses as ONE node and still sums (a
+  135 s range answers 2 minutes);
+so the fix is: stamps carry =%H:%M:%S=, the ==> duration stays =h:mm=, exact whole
+seconds stay in =:RESPONSE:=/=:SECONDS:=, and =agent-org-clock--stamp-time= already
+parses the seconds itself (Org's =org-parse-time-string= drops them).
+=C-c C-c= is the package's own =agent-org-ctrl-c-ctrl-c= for exactly this reason ---
+Org's handler would re-truncate the stamps.  Remaining step before writing it: re-run
+the (interrupted) probe of seconds-in-stamps through =org-clock-sum=, =org-clock-load=
+and a clocktable on BOTH Org versions, then pin it with tests.  AGENTS.md §22 already
+records this rule; CONVENTIONS.md §22 wording needs the same edit as the code.
+
+:LOGBOOK:
+- 2026-10-28 Wed 04:36 UTC: implementer-deepseek → @lead :escalation: (same root cause as previous turn - secret-guard false positives block landing)
+- 2026-10-28 Wed 04:36 UTC: implementer-deepseek → @all :report: RESULT: BLOCKED — cannot land code due to secret-guard corruption; working around by documenting design without implementation
+:END:
+
+** TODO Everything else still open (tracker ids, with what is known)
+- #163 (was in_progress) =#+TODO:=/=#+SEQ_TODO:= lines in the transcript metadata,
+  files-only.  All measurements are done: ONE =#+TODO:= for the first set and ONE
+  =#+SEQ_TODO:= per extra set (several sequences on one line merge into one broken
+  set); =org-set-regexps-and-options= re-reads them, so =--install-todo-keywords=
+  (buffer.el:718) collapses to the emit-and-refresh path and =--render-metadata=
+  (:1913) gains four lines.  The pins to INVERT are tests at :2316 and :4334 (they
+  assert the lines are /absent/), the zero-reparse pins at :5177-5207 and
+  :10271-10326 (a metadata rebuild now costs one whole-buffer keyword re-read ---
+  say so in the commit message), and the comments at buffer.el 55-66, 125-132,
+  592-608, 631, 741, 1976-1981, 5248-5272.
+- #178 / #130 =AGENTS-TODOs.org= sync for the agent's plan/todowrite --- the user
+  called this URGENT too, and it is still untouched.  It is smaller than the
+  cross-agent feature: render =plan= updates as a headed list and mirror the tree
+  into =AGENTS-TODOs.org= at boundaries, reusing the transcribe/queue machinery.
+- #164 orphan =* Agent= on resume (live evidence: this session's transcript has 2
+  level-1 headings over 93 parts), #165 transcripts must hold the whole session,
+  #166/#168 rebuild-from-the-agent-record, #167 configurable load depth, #169 open
+  chats from transcript files.  #164/#165 gate the cross-agent parser above.
+- #170 sticky-heading header-line decision, #171 clone-buffer naming, #172/#82/#86
+  stall indicator + response clocking, #173/#117 tool drawer on/off, #174/#119/#129
+  prompt headings carry TODO states, #175/#120 bold model prefix + =:MODEL:=
+  property, #176/#150 CANCELLED on a killed prompt, #177/#126 steering port,
+  #179/#132 transcript tamper validation + index dir, #180 dev-refresh live buffers,
+  #181/#134 split windows per chat, #182/#151 Opencode V2 provider.
+- #127 is CLOSED by this handoff commit: the Arc 4 / Arc 5 pile is in, as ordered.
