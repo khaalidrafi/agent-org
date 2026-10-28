@@ -90,3 +90,19 @@
     headless-defective, mesh/01 evidence in agent-team.el); OpenRouter
     normalizes Goose's developer role server-side (demo/01 evidence).
     Consumes the repo's existing OPENROUTER_API_KEY — no new secrets.
+
+,* HR REVIEW (at every pause window — KEEP/WATCH/PROBE/RELEASE)
+  | date | member | segments | gate-first-try | stalls | findings | verdict |
+  |------+--------+----------+----------------+--------+----------+---------|
+  | 2026-10-28 | implementer-deepseek | 1 | n/a (no landing was possible) | machinery, not seats | found + measured + patched the secret-guard corruption behind the 56-stall streak; also caught the qoder law-slot gap and the subject-guard conflict | KEEP |
+  | 2026-10-28 | qoder seats (qwen3.8-flash, deepseek-flash) | 4 | yes (their own gate ran green) | work lost in transit, not seat error | turn branches 20261027-1901/-2321 carry the [REDACTED] markers from the guard | KEEP |
+
+,* STRENGTH NOTES (one line per member per segment — ROLE ATTACHMENT)
+  | date | member | segment | did better / worse than roster average |
+  |------+--------+---------+----------------------------------------|
+  | 2026-10-28 | implementer-deepseek | machinery escalation | BETTER: root-caused a Lead-owned CI defect with reproducible measurements (85 redacted lines, exact file:line evidence) and a verified patch, while honoring the lead-owned not-touch law; delivered the INTEGRATION matrix the 16:20 dispatch asked for |
+
+,* BURN LEDGER (visiting members / expiring credits)
+  | date | member | segment | credits burned | note |
+  |------+--------+---------+----------------+------|
+  | 2026-10-28 | qoder seats | runs ~140-162 | 0 (credits EXHAUSTED, error 118) | qoder personal credits exhausted — no spend possible until the Owner tops up; zai acting lane ran on the Owner's zai key, ended on provider rate limit |
