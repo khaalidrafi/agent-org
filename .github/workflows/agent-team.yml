@@ -368,6 +368,17 @@ jobs:
               cp -a /sessions-restore/. "$HOME/" 2>/dev/null || true
             fi
           fi
+          # DUAL-LAW DELIVERY (INTEGRATION matrix finding, seat report
+          # 2026-10-28): qoder reads its user-level rules from
+          # $HOME/.qoder/AGENTS.md, and the qoder CLI must run with
+          # HOME=/usr/local/lib/qoder-home (kit evidence run 39467719908:
+          # HOME=/home/agent breaks the launcher). Mirror the baked
+          # global law into the HOME qoder actually uses, every turn.
+          if [ -f /home/agent/.qoder/AGENTS.md ]; then
+            mkdir -p /usr/local/lib/qoder-home/.qoder
+            cp /home/agent/.qoder/AGENTS.md /usr/local/lib/qoder-home/.qoder/AGENTS.md \
+              || echo "::warning::qoder global law mirror failed — dual law via repo AGENTS.md only"
+          fi
           # Byte-compile inside the container so the gate is fast + the
           # seat sees the same warnings the landing gate will.
           (cd /workspace && rm -f *.elc tests/*.elc \
