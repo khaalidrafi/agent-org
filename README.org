@@ -50,23 +50,38 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   fork's own agent --- a standalone stdio server, not a CLI subcommand),
   ~qoder --acp~ (1.1.58 tested),
   ~goose acp~ (1.50+ tested), ~opencode acp~ (1.18.29 tested) or
-  ~mcode acp~ (MiniMax Code 0.4.5); plus four wired from ~agent-shell~
-  but not yet run against a live agent here — ~copilot --acp~ (GitHub
+  ~mcode acp~ (MiniMax Code 0.4.5); plus seven wired from ~agent-shell~
+  or the harness roster but not yet run against a live agent here —
+  ~copilot --acp~ (GitHub
   Copilot CLI, whose ACP server is in public preview), ~agent acp~ (Cursor;
   the CLI binary is ~agent~, not ~cursor~), ~codebuddy --acp~ (CodeBuddy)
-  and ~cline --acp~ (Cline).
+  and ~cline --acp~ (Cline); then the three the agent-team-ci harness
+  image bakes and this package now covers: ~omp acp~ (OMP / oh-my-pi,
+  native ACP per omp.sh/docs/acp), ~pi-acp~ (Pi --- pi itself has no ACP
+  server, so this is the community adapter ~npm install -g pi-acp~, which
+  spawns ~pi --mode rpc~; it implements no client filesystem or terminal
+  delegation and does not forward MCP servers to pi), and
+  ~dsh --profile acp~ (DeepSeek Harness, where ACP is a profile rather
+  than a flag; its automation surface omits ~session/load~, so a DSH chat
+  opens fresh instead of replaying history).
   slave-agent keeps its keys in a ~.env~ inside its state dir and its model in
   ~config.yaml~, both read by the adapter itself, so Emacs exports nothing for
   it; set ~SLAVE_HOME~ in the environment Emacs was started with to bind a
   specific profile's state dir.
   Qoder reads its credential from ~QODER_PERSONAL_ACCESS_TOKEN~ in the
   environment Emacs was started with, so export it before launching Emacs or
-  the daemon.  OpenCode, MiniMax Code, Copilot, CodeBuddy and Cline keep their
-  own credential stores, so ~opencode auth login~ / ~mcode login~ / a signed-in
-  ~copilot~, ~codebuddy~ or ~cline~ once is enough; no environment variable is
+  the daemon.  OpenCode, MiniMax Code, Copilot, CodeBuddy, Cline, OMP and Pi
+  keep their own credential stores, so ~opencode auth login~ / ~mcode login~ /
+  a signed-in
+  ~copilot~, ~codebuddy~ or ~cline~ once is enough, ~omp~ takes
+  ~/login <provider>~ and pi reads its own config; no environment variable is
   required.  Cursor authenticates via ~agent login~ (or export
   ~CURSOR_API_KEY~ / ~CURSOR_AUTH_TOKEN~), and Copilot also honours
-  ~COPILOT_GITHUB_TOKEN~ for headless use.
+  ~COPILOT_GITHUB_TOKEN~ for headless use.  DSH keeps credentials in
+  ~$DSH_HOME/.credentials.yaml~ (its official DeepSeek route falls back to
+  ~DEEPSEEK_API_KEY~), and ~DSH_HOME~ plus OMP's ~OMP_PROFILE~ /
+  ~PI_CONFIG_DIR~ pass through when set, which is how an Emacs chat binds
+  one profile's state rather than the launch default.
 
 * Install
 
@@ -92,7 +107,9 @@ The checkout ships ~agent-org-autoloads.el~, so lazy loading via
              agent-org-opencode-start-agent agent-org-minimax-start-agent
              agent-org-copilot-start-agent agent-org-cursor-start-agent
              agent-org-codebuddy-start-agent
-             agent-org-cline-start-agent))
+             agent-org-cline-start-agent
+             agent-org-omp-start-agent agent-org-pi-start-agent
+             agent-org-dsh-start-agent))
 #+end_src
 
 ** As a ~package.el~ package (tarball)
