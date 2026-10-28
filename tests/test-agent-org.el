@@ -7896,6 +7896,409 @@ releases the agent."
                                     (ao--transcript-text temp-dir "sid-kill")))
             (should-not (agent-org--session-for-buffer buf))))))))
 
+;;;; Transcript to messages: the cross-agent parser (tracker #183)
+
+;; The port of a conversation into ANOTHER agent's session file starts here:
+;; the transcript must be confirmed synced, then read as plain messages.  Both
+;; halves are pinned below against the real renderer, so no test hand-writes a
+;; transcript shape the package does not actually produce.
+
+(defun ao--transcript-path (dir session-id)
+  "Where SESSION-ID's transcript lives in DIR.  Plumbing for the parser tests."
+  (expand-file-name (agent-org-buffer--transcript-name session-id) dir))
+
+(defmacro ao--transcript-in-headings (dir &rest body)
+  "Run BODY transcribing into DIR in the activity style the USER ships with.
+The suite pins `agent-org-activity-style' to `drawers' globally (see this
+file's header) because most render fixtures were written against it, while
+`headings' is the shipped default — and the only shape a transcript can be
+parsed back out of, because it is the only one that gives an answer a `**
+WROTE' part of its own.  A parser test that ran in `drawers' would be testing
+the fallback documented in `agent-org-buffer--transcript-messages-parse'."
+  (declare (indent 1))
+  `(let ((agent-org-activity-style 'headings))
+     (ao--transcript-in ,dir ,@body)))
+
+(ert-deftest test-agent-org-transcript-synced-p-reads-the-file-not-the-cache ()
+  "\"Is the transcript current?\" is a question about the FILE.
+`agent-org-buffer--transcript-cache' is our memory of what we wrote, and it
+stays truthful while a person edits the file behind our back — which is
+exactly the state a cross-agent conversion must not silently build on.  So:
+a forced mirror is synced, a hand-edited file is not, a missing file is not,
+and a turn that is still streaming is not."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in-headings temp-dir
+      (ao--capture-wire
+        (let* ((sid "sid-sync")
+               (buf (ao--chat-on-model "qmodel-large" "QModel Large" sid))
+               (session (agent-org--session-for-buffer buf))
+               (file (ao--transcript-path temp-dir sid)))
+          ;; the mirror and the sync test must agree on ONE definition
+          (with-current-buffer buf (agent-org-buffer-transcribe buf t))
+          (should (agent-org-buffer-transcript-synced-p buf))
+          ;; a person rewrote the file: our cache still says the old text
+          (with-temp-file file (insert "someone else's transcript\n"))
+          (should-not (agent-org-buffer-transcript-synced-p buf))
+          ;; the forced re-mirror is what the convert command calls
+          (with-current-buffer buf (agent-org-buffer-transcribe buf t))
+          (should (agent-org-buffer-transcript-synced-p buf))
+          ;; a turn mid-flight is on the page and not yet in the file
+          (agent-org-buffer-append-chunk buf "still arriving" session)
+          (should-not (agent-org-buffer-transcript-synced-p buf))
+          (with-current-buffer buf (agent-org-buffer-transcribe buf t))
+          (should (agent-org-buffer-transcript-synced-p buf))
+          ;; and no file at all is \"not synced\", never an error
+          (delete-file file)
+          (should-not (agent-org-buffer-transcript-synced-p buf))
+          (kill-buffer buf))))))
+
+(ert-deftest test-agent-org-transcript-messages-are-prompts-then-answers ()
+  "The parser answers the conversation, oldest first, one pair per exchange.
+This is the contract the two session writers build on: alternating :role
+\"user\"/:role \"assistant\" plists with :text, and nothing else — no tool
+noise, no drawer furniture, no invented reply for a turn that said nothing."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in-headings temp-dir
+      (ao--capture-wire
+        (let* ((sid "sid-order")
+               (buf (ao--chat-on-model "qmodel-large" "QModel Large" sid))
+               (sent nil))
+          (cl-letf (((symbol-function 'acp-send-request)
+                     (lambda (&rest kw) (push kw sent)))
+                    ((symbol-function 'acp-make-session-prompt-request)
+                     (lambda (&rest a) (plist-get a :prompt))))
+            (dolist (prompt '("first" "second" "third"))
+              (with-current-buffer buf
+                (ao--type prompt)
+                (agent-org-send)
+                (agent-org-buffer-append-chunk
+                 buf (format "answer to %s" prompt)
+                 (agent-org--session-for-buffer buf))
+                (funcall (plist-get (car sent) :on-success) nil)))
+            (should
+             (equal '((:role "user" :text "first")
+                      (:role "assistant" :text "answer to first")
+                      (:role "user" :text "second")
+                      (:role "assistant" :text "answer to second")
+                      (:role "user" :text "third")
+                      (:role "assistant" :text "answer to third"))
+                    (agent-org-buffer-transcript-messages
+                     (ao--transcript-path temp-dir sid))))
+            (kill-buffer buf)))))))
+
+(ert-deftest test-agent-org-transcript-messages-leave-out-thoughts-tools-and-furniture ()
+  "Only what the agent SAID is a message.  A thinking run, a tool call and its
+output are the agent's working, not its answer, and the transcript's own
+furniture — property and logbook drawers, the metadata block, the queue
+block — is not conversation at all.  A queued prompt most of all: it was
+never sent, so it belongs to no message until it is."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in-headings temp-dir
+      (ao--capture-wire
+        (let* ((sid "sid-clean")
+               (buf (ao--chat-on-model "qmodel-large" "QModel Large" sid))
+               (session (agent-org--session-for-buffer buf))
+               (sent nil))
+          (cl-letf (((symbol-function 'acp-send-request)
+                     (lambda (&rest kw) (push kw sent)))
+                    ((symbol-function 'acp-make-session-prompt-request)
+                     (lambda (&rest a) (plist-get a :prompt))))
+            (with-current-buffer buf
+              (ao--type "explain the plan")
+              (agent-org-send))
+            (agent-org--on-notification
+             session (ao--update-notif
+                      '((sessionUpdate . "agent_thought_chunk")
+                        (content . ((type . "text") (text . "private reasoning"))))))
+            (agent-org--on-notification
+             session (ao--update-notif
+                      '((sessionUpdate . "agent_message_chunk")
+                        (content . ((type . "text") (text . "the plan is short"))))))
+            (agent-org--on-notification
+             session (ao--update-notif
+                      `((sessionUpdate . "tool_call_update")
+                        (toolCallId . "t1") (title . "ls -R") (status . "completed")
+                        ,@(ao--tool-text-block "secrets.org"))))
+            (funcall (plist-get (car sent) :on-success) nil)
+            (agent-org--queue-enqueue session buf "a prompt still waiting")
+            (let ((messages (agent-org-buffer-transcript-messages
+                             (ao--transcript-path temp-dir sid))))
+              (should (equal '((:role "user" :text "explain the plan")
+                               (:role "assistant" :text "the plan is short"))
+                             messages))
+              ;; and the excluded text is really in the file it skipped
+              (let ((text (ao--transcript-text temp-dir sid)))
+                (dolist (needle '("private reasoning" "ls -R" "secrets.org"
+                                  "a prompt still waiting" ":LOGBOOK:" "RESPONSE:"))
+                  (should (string-match-p (regexp-quote needle) text))))
+              (kill-buffer buf))))))))
+
+(ert-deftest test-agent-org-transcript-messages-restore-a-multi-line-prompt ()
+  "A question that spanned lines comes back spanning lines.
+The first line became the heading and the rest sit under it, so the parser
+must put them back in order — and a blank line the USER typed (a paragraph
+break) must survive the one blank line the renderer always leaves above the
+continuation."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in-headings temp-dir
+      (ao--capture-wire
+        (let* ((sid "sid-lines")
+               (buf (ao--chat-on-model "qmodel-large" "QModel Large" sid))
+               (sent nil))
+          (cl-letf (((symbol-function 'acp-send-request)
+                     (lambda (&rest kw) (push kw sent)))
+                    ((symbol-function 'acp-make-session-prompt-request)
+                     (lambda (&rest a) (plist-get a :prompt))))
+            (with-current-buffer buf
+              (ao--type "the summary\nfirst paragraph\n\nsecond paragraph")
+              (agent-org-send)
+              (agent-org-buffer-append-chunk
+               buf "one\ntwo" (agent-org--session-for-buffer buf))
+              (funcall (plist-get (car sent) :on-success) nil))
+            (should
+             (equal '((:role "user"
+                      :text "the summary\nfirst paragraph\n\nsecond paragraph")
+                      (:role "assistant" :text "one\ntwo"))
+                    (agent-org-buffer-transcript-messages
+                     (ao--transcript-path temp-dir sid))))
+            (kill-buffer buf)))))))
+
+(ert-deftest test-agent-org-transcript-messages-invent-nothing-from-the-prompt-box ()
+  "The type-ahead box is an input control and never a message.
+Its heading is `* PROMPT' with no text of its own, and a draft under it is
+the user's work in progress — not sent, not answered.  A conversion that
+invented a message from it would resend a half-typed thought to the next
+agent as if it had already been asked."
+  (ert-with-temp-directory temp-dir
+    (ao--transcript-in-headings temp-dir
+      (ao--capture-wire
+        (let* ((sid "sid-box")
+               (buf (ao--chat-on-model "qmodel-large" "QModel Large" sid))
+               (sent nil))
+          (cl-letf (((symbol-function 'acp-send-request)
+                     (lambda (&rest kw) (push kw sent)))
+                    ((symbol-function 'acp-make-session-prompt-request)
+                     (lambda (&rest a) (plist-get a :prompt))))
+            (with-current-buffer buf
+              (ao--type "asked and answered")
+              (agent-org-send)
+              (agent-org-buffer-append-chunk
+               buf "the reply" (agent-org--session-for-buffer buf))
+              (funcall (plist-get (car sent) :on-success) nil)
+              (ao--type "half a thought, still typing"))
+            (with-current-buffer buf (agent-org-buffer-transcribe buf t))
+            (should (equal '((:role "user" :text "asked and answered")
+                             (:role "assistant" :text "the reply"))
+                           (agent-org-buffer-transcript-messages
+                            (ao--transcript-path temp-dir sid))))
+            (kill-buffer buf)))))))
+
+(ert-deftest test-agent-org-transcript-headline-reads-only-our-keywords ()
+  "A keyword is stripped only when this package could have written it.
+`* RESPONDED do it' is an exchange; `* auth' and `* IMPORTANT note' are the
+user's own headings whose first word is part of the question, and a bare
+`* PROMPT' is the box with no text.  The lists are read positionally, never
+through `org-element', so a transcript parsed under built-in Org 9.7 and ELPA
+Org 9.8 answers the same (AGENTS.md: the version-skew trap)."
+  (should (equal '(1 "RESPONDED" "do it")
+                 (agent-org-buffer--transcript-headline "* RESPONDED do it")))
+  (should (equal '(1 nil "auth")
+                 (agent-org-buffer--transcript-headline "* auth")))
+  (should (equal '(1 nil "IMPORTANT note")
+                 (agent-org-buffer--transcript-headline "* IMPORTANT note")))
+  (should (equal '(2 "WROTE" "QModel Large")
+                 (agent-org-buffer--transcript-headline "** WROTE QModel Large")))
+  (should (equal '(1 "PROMPT" "")
+                 (agent-org-buffer--transcript-headline "* PROMPT")))
+  (should (equal '(1 "PROMPT" "do it later")
+                 (agent-org-buffer--transcript-headline "* PROMPT do it later")))
+  (should-not (agent-org-buffer--transcript-headline " first line of an answer"))
+  (should-not (agent-org-buffer--transcript-headline "not a headline"))
+  ;; classification: exchange, queue, or nothing
+  (should (eq 'exchange
+              (agent-org-buffer--transcript-entry-state "RESPONDED")))
+  (should (eq 'queue (agent-org-buffer--transcript-entry-state "NEXT")))
+  (should (eq 'queue (agent-org-buffer--transcript-entry-state "WAIT")))
+  (should-not (agent-org-buffer--transcript-entry-state "PROMPT"))
+  (should-not (agent-org-buffer--transcript-entry-state nil))
+  (should (eq 'answer (agent-org-buffer--transcript-part-kind "WRITING")))
+  (should (eq 'answer (agent-org-buffer--transcript-part-kind "WROTE")))
+  (should (eq 'skip (agent-org-buffer--transcript-part-kind "THOUGHT")))
+  (should (eq 'skip (agent-org-buffer--transcript-part-kind "EXECUTED"))))
+
+;;;; The cross-agent mapping index (tracker #184)
+
+;; One file per project remembering which session id belongs to which leg of a
+;; cross-agent session.  The pair (xagent, agent) is the identity of a leg, and
+;; the store's whole contract is that it answers ONE value for a pair: the
+;; convert and the hop back both find their file through it, so a second heading
+;; for one pair would make the answer depend on scan order.
+
+(defun ao--cross-buffer (dir)
+  "A live buffer standing in for a chat of project DIR.
+The store needs only one thing of a buffer: the `default-directory' that
+locates its project.  A chat fixture would add an acp session and a rendered
+transcript to test a file path, which is the mistake of testing the stub.
+`agent-org-transcript-dir' is NOT set here: it is a global option, so a plain
+`setq' in the buffer would write the GLOBAL value and leak past the test."
+  (let ((buf (generate-new-buffer " *agent-org-cross-test*")))
+    (with-current-buffer buf
+      (setq default-directory (file-name-as-directory dir)))
+    buf))
+
+(ert-deftest test-agent-org-cross-parse-round-trips-a-render ()
+  "What `agent-org-cross--render' writes is what `--parse-text' reads back.
+The two functions are the whole format, so this pair is the contract every
+later unit (the writers, the verbs) is built on: a leg keeps its group id, its
+agent, its session id, its file, where it came from and when it was synced.
+`:title:' is the heading text the render wrote, which is what lets a leg a
+person renamed survive a re-render."
+  (let ((legs (list (list :xagent "xag-1" :agent "qoder" :session "q-111"
+                          :file "/home/u/.qoder/projects/p/q-111.jsonl"
+                          :from nil :synced "[2026-10-28 Wed 17:00:00]"
+                          :title "qoder:q-111")
+                    (list :xagent "xag-1" :agent "codebuddy" :session "c-222"
+                          :file "/home/u/.codebuddy/projects/p/c-222.jsonl"
+                          :from "qoder" :synced "[2026-10-28 Wed 17:05:00]"
+                          :title "codebuddy:c-222"))))
+    (should (equal legs (agent-org-cross--parse-text
+                         (agent-org-cross--render legs))))))
+
+(ert-deftest test-agent-org-cross-parse-ignores-a-heading-that-is-not-a-leg ()
+  "The preamble, a `#+TITLE:' line and a note without a drawer are not legs.
+A heading carrying neither `:XAGENT:' nor `:AGENT:' cannot be looked up by the
+pair that identifies a leg, so recording it would put a row in the table that
+no query can ever answer."
+  (let ((text (concat "#+TITLE: agent-org cross-agent sessions\n\n"
+                      ";; written by agent-org\n\n"
+                      "* qoder:q-1\n"
+                      ":PROPERTIES:\n"
+                      ":XAGENT: xag-1\n"
+                      ":AGENT: qoder\n"
+                      ":SESSION: q-1\n"
+                      ":END:\n\n"
+                      "* a note about this project\n"
+                      ":PROPERTIES:\n"
+                      ":WHEN: [2026-10-28 Wed]\n"
+                      ":END:\n")))
+    (should (equal 1 (length (agent-org-cross--parse-text text))))
+    (should (equal '("qoder")
+                   (mapcar (lambda (leg) (plist-get leg :agent))
+                           (agent-org-cross--parse-text text))))))
+
+(ert-deftest test-agent-org-cross-record-writes-one-heading-per-leg ()
+  "The first record CREATES the project index; a second agent ADDS a leg.
+Both legs share the group id and differ in agent and session id, which is
+exactly the shape the Owner asked for: start in Qoder, continue in Codebuddy,
+and the project knows both ids belong to one conversation."
+  (ert-with-temp-directory project
+    (let ((buf (ao--cross-buffer project)))
+      (unwind-protect
+          (progn
+            (agent-org-cross-record buf (list :xagent "xag-1" :agent "qoder"
+                                              :session "q-111" :from nil
+                                              :synced "[2026-10-28 Wed 17:00:00]"))
+            (agent-org-cross-record buf (list :xagent "xag-1" :agent "codebuddy"
+                                              :session "c-222" :from "qoder"
+                                              :synced "[2026-10-28 Wed 17:05:00]"))
+            (should (file-readable-p (expand-file-name ".agent-org/cross-agent.org"
+                                                       project)))
+            (let ((legs (agent-org-cross--read buf)))
+              (should (equal '("qoder" "codebuddy")
+                             (mapcar (lambda (l) (plist-get l :agent)) legs)))
+              (should (equal "q-111"
+                             (plist-get (agent-org-cross-lookup buf "xag-1" "qoder")
+                                        :session)))
+              (should (equal "c-222"
+                             (plist-get (agent-org-cross-lookup buf "xag-1" "codebuddy")
+                                        :session)))
+              (should (equal 2 (length (agent-org-cross-legs buf "xag-1"))))))
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-cross-record-updates-a-leg-never-appends-it ()
+  "Re-recording an (xagent, agent) pair MOVES the session id; no second heading.
+The hop back to Qoder re-records Qoder's leg with a new id, and a table with
+two rows for one pair makes the answer depend on which row the scan reaches
+first — the one thing a mapping must never do.  A field the new record omits
+survives from the old: a re-hop that knows the session id but not the source
+must not erase where the leg came from."
+  (ert-with-temp-directory project
+    (let ((buf (ao--cross-buffer project)))
+      (unwind-protect
+          (progn
+            (agent-org-cross-record
+             buf (list :xagent "xag-1" :agent "qoder" :session "q-111"
+                       :file "/pool/q-111.jsonl" :from "codebuddy"
+                       :synced "[2026-10-28 Wed 17:00:00]"))
+            (agent-org-cross-record buf (list :xagent "xag-1" :agent "qoder"
+                                              :session "q-999"))
+            (let ((legs (agent-org-cross-legs buf "xag-1")))
+              (should (equal 1 (length legs)))
+              (let ((leg (car legs)))
+                (should (equal "q-999" (plist-get leg :session)))
+                ;; kept from the first record, never invented by the second
+                (should (equal "/pool/q-111.jsonl" (plist-get leg :file)))
+                (should (equal "codebuddy" (plist-get leg :from)))
+                ;; and the heading text follows the NEW id, not the old one
+                (let ((rendered (agent-org-cross--render (list leg))))
+                  (should (string-match-p "^\\* qoder:q-999$" rendered))
+                  (should-not (string-match-p "^\\* qoder:q-111$" rendered)))))
+            ;; a second GROUP for the same agent is a second leg, not an update
+            (agent-org-cross-record buf (list :xagent "xag-2" :agent "qoder"
+                                              :session "q-777"))
+            (should (equal 2 (length (agent-org-cross--read buf))))
+            (should (equal 1 (length (agent-org-cross-legs buf "xag-2")))))
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-cross-lookup-answers-nil-for-nothing-recorded ()
+  "No file, no group, no agent: nil, never an error and never a fabricated leg.
+A project that has never ported a session has no index at all, and the convert
+command asks this question BEFORE it writes anything — an error there would
+turn the ordinary first use into a failure."
+  (ert-with-temp-directory project
+    (let ((buf (ao--cross-buffer project)))
+      (unwind-protect
+          (progn
+            (should-not (agent-org-cross--read buf))
+            (should-not (agent-org-cross-lookup buf "xag-1" "qoder"))
+            (should-not (agent-org-cross-legs buf "xag-1"))
+            (agent-org-cross-record buf (list :xagent "xag-1" :agent "qoder"
+                                              :session "q-1"))
+            (should-not (agent-org-cross-lookup buf "xag-1" "codebuddy"))
+            (should-not (agent-org-cross-legs buf "xag-9"))
+            ;; and a leg needs its identity: no group id or no agent is a
+            ;; caller bug, reported as a user-error rather than a silent row
+            (should-error (agent-org-cross-record buf (list :agent "qoder"
+                                                            :session "q-2"))
+                          :type 'user-error)
+            (should-error (agent-org-cross-record buf (list :xagent "xag-1"
+                                                            :session "q-2"))
+                          :type 'user-error))
+        (kill-buffer buf)))))
+
+(ert-deftest test-agent-org-cross-index-is-not-a-transcript ()
+  "The index lives IN the transcript pool and is not a conversation.
+`agent-org-buffer--transcript-file-p' judges by DIRECTORY, so without the one
+name check the index would open read-only under \"transcript is a mirror\" and
+the transcripts report would list it as a chat with no turns."
+  (ert-with-temp-directory project
+    (let ((default-directory (file-name-as-directory project))
+          (agent-org-transcript-dir ".agent-org"))
+      (let ((index (with-temp-buffer
+                     (agent-org-buffer--cross-index-file))))
+        (should (agent-org-buffer--cross-index-p index))
+        (should-not (agent-org-buffer--transcript-file-p index))
+        (should (agent-org-buffer--transcript-file-p
+                 (expand-file-name "sid-1.org"
+                                   (expand-file-name ".agent-org/" project))))
+        (should-not (agent-org-buffer--cross-index-p
+                     (expand-file-name "sid-1.org"
+                                       (expand-file-name ".agent-org/" project))))
+        ;; the pool is resolved against the CALLING buffer, not the ambient dir
+        (should (equal index
+                       (with-current-buffer (ao--cross-buffer project)
+                         (agent-org-buffer--cross-index-file))))))))
+
 ;;;; Wire traffic
 
 (defun ao--client-for (session command)

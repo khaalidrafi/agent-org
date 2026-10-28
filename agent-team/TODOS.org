@@ -28,9 +28,12 @@
    proceeds on it; deepseek-v4.1-flash@codebuddy hired and wired as the
    next fallback (free pool, CODEBUDDY_AUTH_TOKEN on file).
    MACHINERY IS GREEN: batch lane loads acp (no more
-   "cannot load"), branch-mode guard redactions=0.  Turn stays with
-   deepseek-flash@qoder: re-author Unit #183's redacted identifiers on
-   the first lane that runs.
+   "cannot load"), branch-mode guard redactions=0.  UNIT #183 RE-AUTHORED AND
+   LANDED 2026-10-28 by implementer-deepseek (the stranded tree 35d0e59 rewritten
+   with clean identifiers now the guard is anchored):
+   `agent-org-buffer--transcript-text`, `agent-org-buffer-transcript-synced-p`,
+   `agent-org-buffer-transcript-messages` + 6 ERT tests.  #184 (index), #185
+   (writers) and #186 (verbs + docs) still open.
 ** DONE WO-2 model selection menu — labels + cleaned-id fallback; ERT 432/432 (agent-org.el:1679)
 ** TODO WO-3 steer — inject into the live turn — TODOs.org §Steer
 ** TODO WO-4 hooks on the response boundary + automation — TODOs.org §Hooks
