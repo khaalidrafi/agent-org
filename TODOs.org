@@ -1908,7 +1908,29 @@ written by the block builder, so a change alerts for exactly ONE turn.
 - Docs still to fold in (NOT done): the §18 bullet in AGENTS.md and CONVENTIONS.md,
   README.org, AI-REVIEW.org.
 
-** TODO Cross-agent sessions --- Qoder ⇄ Codebuddy (the urgent one; design DONE, code NOT started)
+** PROGRESS Cross-agent sessions --- Qoder ⇄ Codebuddy (the urgent one; design DONE, code NOT started)
+:LOGBOOK:
+- State "PROGRESS" from "TODO" [2026-10-28 Wed 17:05 UTC]
+  Unit #183 (parser) RE-AUTHORED and LANDED [2026-10-28]: the four earlier seats
+  wrote it and the unanchored secret guard rewrote its identifiers in transit
+  (board WO-1); the Lead anchored the guard (e47b488), so this segment re-wrote
+  the unit from that redacted tree (35d0e59) with clean names, and did NOT touch
+  any file the guard had damaged outside the unit's own scope.
+  In agent-org-buffer.el: =agent-org-buffer--transcript-text= extracted so the
+  writer and the sync check share ONE definition of "what the file should hold";
+  =agent-org-buffer-transcript-synced-p= comparing the FILE's bytes and never
+  =--transcript-cache=; and =agent-org-buffer-transcript-messages= parsing a
+  transcript to =(:role "user"|"assistant" :text …)= messages, oldest first —
+  classification positional in the package's own keyword defcustoms, never
+  =org-element=, so the 9.7.11/9.8.10 skew cannot bite.
+  MEASURED corrections to the plan below: a prompt's continuation lines are NOT
+  indented in a transcript (only a drawer body takes §3.3's one space), so no
+  un-indent step belongs in the parser; and the suite binds
+  =agent-org-activity-style= to =drawers= globally while the shipped default is
+  =headings= — the parser tests state =headings=, because only that style gives
+  an answer a =** WROTE= part to live in (the limit is documented in the parser).
+  #184 (mapping store), #185 (writers) and #186 (verbs + docs) still open.
+:END:
 User order, verbatim: "Urgently add a feature for cross-agent session handling by
 mapping the session IDs for EACH agent, for a cross-agent session… You'll take the
 Org transcript, confirm it's synced, then convert it to another agent's session
