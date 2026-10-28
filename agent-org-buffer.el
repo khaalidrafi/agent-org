@@ -1168,7 +1168,7 @@ box stays typeable.  nil when no box is open.")
 (defvar-local agent-org-buffer--turn-anchor nil
   "Marker at the start of the current exchange's heading, if any.
 The heading's text is the user's prompt, and one heading covers the whole
-prompt-response pair.  The pair's drawers are located relative to this
+prompt/response pair.  The pair's drawers are located relative to this
 anchor, not to the buffer end, because the body trails it: the answer's
 quote block, the `:thinking:' drawer, the `:tool:' drawer and the
 type-ahead box all live after the heading, so the heading is never the
@@ -3407,8 +3407,8 @@ typed, because all of this is rendering and none of it is the wire."
       (if (string-empty-p flat) agent-org-buffer--prompt-word flat))))
 
 (defun agent-org-buffer-begin-exchange (buffer text)
-  "Open one prompt-response pair in BUFFER, headed by the question TEXT.
-User order: \"there will be ONE heading for each prompt-response pair.  The
+  "Open one prompt/response pair in BUFFER, headed by the question TEXT.
+User order: \"there will be ONE heading for each prompt/response pair.  The
 heading will contain the prompt.\"  So this replaces the old `* PROMPT' echo
 heading: the sent question is no longer body text under a generic word, it IS
 the heading, and the answer that follows belongs to it
@@ -5164,7 +5164,7 @@ renderer — the buffer — and the file simply agrees with it."
   :type 'boolean
   :group 'agent-org-buffer)
 
-(defcustom agent-org-transcript-directory ".agent-org"
+(defcustom agent-org-transcript-dir ".agent-org"
   "Where the per-session Org transcripts go, relative to the chat's project.
 The default is a RELATIVE directory name, and a relative name is resolved
 against the chat buffer's `default-directory' — the session's cwd — so
@@ -5210,7 +5210,7 @@ transcript editable like any other Org file."
   "Non-nil when FILE is an agent-org transcript, judged by its directory.
 The transcript's NAME is a sanitized session id and carries no marker of its
 own, so the containing DIRECTORY is the signal: transcripts sit directly
-inside a directory named like `agent-org-transcript-directory' (`.agent-org'
+inside a directory named like `agent-org-transcript-dir' (`.agent-org'
 by default, or whatever basename an absolute setting ends in).  A relative
 setting is reduced to its basename here, so the answer is the same whatever
 `default-directory' happens to resolve it against.
@@ -5221,7 +5221,7 @@ is exactly when a person `find-file's a transcript to read it."
               (parent (file-name-nondirectory (directory-file-name dir)))
               (wanted (file-name-nondirectory
                         (directory-file-name
-                         (expand-file-name agent-org-transcript-directory)))))
+                         (expand-file-name agent-org-transcript-dir)))))
     (and (> (length parent) 0)
          (string-equal parent wanted))))
 
@@ -5288,14 +5288,14 @@ the user turned off."
 
 (defun agent-org-buffer--transcript-file (session-id)
   "Path of SESSION-ID's transcript, resolved against THIS buffer's project.
-`agent-org-transcript-directory' is a relative name by default, and
+`agent-org-transcript-dir' is a relative name by default, and
 `expand-file-name' is what turns that into \"the chat's own directory\":
 called with the chat buffer current, `default-directory' is the session cwd
 the buffer was created in.  An absolute setting expands to itself, so one
 global pool is still a setting away rather than a code change."
   (expand-file-name (agent-org-buffer--transcript-name session-id)
                     (file-name-as-directory
-                     (expand-file-name agent-org-transcript-directory))))
+                     (expand-file-name agent-org-transcript-dir))))
 
 (defun agent-org-buffer-transcript-queue (session-id)
   "The prompts SESSION-ID's transcript has waiting, oldest first; nil if none.

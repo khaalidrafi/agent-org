@@ -463,7 +463,7 @@ paths, but a framework (vertico, marginalia, consult) is free to ignore
 metadata it does not implement.  So this is "we no longer hand our order
 away", not "the order is enforced" — the pinned test asserts what we
 offer, not what a given UI shows.  Worth checking on your own completion
-stack; =test-agent-org-prompt-collection-pins-our-order= is the one that
+stack; =test-agent-org-collection-pins-our-order= is the one that
 would need extending if you add a =completion-styles= requirement.
 
 ** TODO The lookup is property-free now; =assoc= would have been a silent bug
@@ -1048,7 +1048,7 @@ Two reasons, and the second is the one that would have cost a review to catch:
   turn's =:tool:= drawer, rewritten TODO→DOING→DONE (CONVENTIONS.md §3); appending
   can only add, so the file would carry every superseded state of every call and
   stop being the document the chat made.
-  =test-agent-org-transcript-rewrites-a-tool-line-instead-of-logging-it=
+  =test-agent-org-transcript-tool-line-gets-rewritten=
   is that argument, stated as an assertion: the call's line reads DONE
   once, and no TODO or DOING copy of it survives in the file.
 - a per-chunk write spends its cost inside the stream.  Measured here
@@ -1880,7 +1880,7 @@ asserting the whole board is visible again /and/ that thinking is still folded.
 
 * The =Allow?= dialog: reading ACP's permission options (agent-org.el)
 
-** TODO Read =agent-org--prompt-permission= against the spec
+** TODO Read =agent-org--ask-permission= against the spec
 
 Two questions, both answered by the source and neither by the old suite:
 
@@ -1909,7 +1909,7 @@ its job is the decline path, and Cancel answers nil whatever the keys are.
 That is also the whole point of the story — before this fix all 244 were green
 /with/ the dialog broken, because
 =test-agent-org-permission-quit-sends-cancelled= stubs
-=agent-org--prompt-permission= itself and so never ran the extraction.  The new
+=agent-org--ask-permission= itself and so never ran the extraction.  The new
 tests stub =completing-read= and feed the real option shape — the same rule as
 the acp-client alist in AGENTS.md: a stub that does not mirror the dependency's
 data shape makes the suite test the stub.
@@ -2217,7 +2217,7 @@ the delimiters work: the agent did not treat the metadata as the request.
 * One heading per exchange: the question IS the heading, the answer a quote block
 
 The user's order, verbatim: /"From now on, there will be ONE heading for each
-prompt-response pair. The heading will contain the prompt. And, the response
+prompt/response pair. The heading will contain the prompt. And, the response
 should be contained in an Org quote block, with the narrator/author as the model
 name. Read Org manual on how to set the author of a quote in a quote template."/
 
