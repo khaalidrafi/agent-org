@@ -116,7 +116,7 @@
 (declare-function agent-org-loader-begin "agent-org-loader.el" (buffer))
 (declare-function agent-org-buffer-append-chunk "agent-org-buffer.el" (buffer text session))
 
-(defvar agent-org-transcript-directory)  ; agent-org-buffer.el defcustom
+(defvar agent-org-transcript-dir)  ; agent-org-buffer.el defcustom
 
 ;;;; The prompt-send hook consumer (the CI clock-in)
 
@@ -277,7 +277,7 @@ every other exit is 42 = fall back to the direct CLI lane."
               ;; bytes, not the chat buffer's markdown rendering
               agent-org-convert-markdown nil)
         (when (getenv "AGENT_ORG_TRANSCRIPT_DIR")
-          (setq agent-org-transcript-directory
+          (setq agent-org-transcript-dir
                 (expand-file-name (getenv "AGENT_ORG_TRANSCRIPT_DIR"))))
         (agent-org-batch--load-deps)
         (advice-add 'agent-org-buffer-append-chunk
