@@ -17,7 +17,7 @@ Top to bottom, a session buffer is exactly:
 
 1. **One auto-managed metadata block** at `point-min` (see §2).
 2. A blank line separating it from the conversation.
-3. The conversation: **one exchange per prompt-response pair**, each exchange
+3. The conversation: **one exchange per prompt/response pair**, each exchange
    ONE level-1 heading whose text is the prompt, the answer under it inside an
    Org `quote` block preceded by `#+ATTR_TEXINFO: :author <model>` (see the
    exchange rule below).  The exchange carries a `:thinking:` drawer of the
@@ -80,7 +80,7 @@ Nothing else may live in the body.  Status, progress and errors never
 become text — see §6.
 
 **One heading per exchange, and the heading IS the prompt** — the user's order:
-*"From now on, there will be ONE heading for each prompt-response pair.  The
+*"From now on, there will be ONE heading for each prompt/response pair.  The
 heading will contain the prompt.  And, the response should be contained in an Org
 quote block, with the narrator/author as the model name."*  So `agent-org-buffer-begin-exchange`
 writes the prompt as the heading (its first line after the `* `, every later line
@@ -963,7 +963,7 @@ first's parts rather than writing its own:
 ## 14. The session's Org file is a mirror, written at boundaries
 
 `agent-org-transcribe` (default on) keeps one file per session in
-`agent-org-transcript-directory`, named `<sanitized session id>.org`.  Its body
+`agent-org-transcript-dir`, named `<sanitized session id>.org`.  Its body
 is the chat buffer's frozen body — `point-min` to `agent-org-buffer--render-end`
 — so the transcript is the same document the user is reading, and the same
 `:ID:` in its `PROPERTIES` drawer makes it an `id:`-linkable target.

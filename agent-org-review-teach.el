@@ -128,8 +128,8 @@ tier gets `agent-org-review-teach-default-tier'."
 
 (defcustom agent-org-review-teach-lessons-file
   (expand-file-name "AGENT-LESSONS.org"
-                    (concat (or (and (boundp 'agent-org-transcript-directory)
-                                     agent-org-transcript-directory)
+                    (concat (or (and (boundp 'agent-org-transcript-dir)
+                                     agent-org-transcript-dir)
                                 "~/.agent-org/")
                             "agent-org"))
   "Where `agent-org-review-teach-lesson' writes its reusable standards.
