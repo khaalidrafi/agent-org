@@ -15,6 +15,14 @@
    finalize undoes — that is the stall streak.  Escalated with measurements + a
    verified one-line fix: CHAT.org 2026-10-28 00:00 UTC.  Unit #183 is already
    written on ai/turn-20261027-2321 (35d0e59) and still applies cleanly to HEAD.
+   LEAD MACHINERY FIXES landed 2026-10-28 on ai/quickstart (Lead commits, all
+   verified before push): secret-guard patterns anchored e47b488 (85 false
+   positives -> 0, all real shapes still caught), substantive commit subjects
+   59c7ca9, qoder global-law mirror 5b17819, acp-traffic baked 277e236.
+   STILL BLOCKED ON FUEL: qoder credits exhausted (error 118, run 161) —
+   Owner ruling needed; zai acting lane rate-limited (transient).  Turn stays
+   with deepseek-flash@qoder: re-author Unit #183's redacted identifiers on
+   the first lane that runs.
 ** DONE WO-2 model selection menu — labels + cleaned-id fallback; ERT 432/432 (agent-org.el:1679)
 ** TODO WO-3 steer — inject into the live turn — TODOs.org §Steer
 ** TODO WO-4 hooks on the response boundary + automation — TODOs.org §Hooks
