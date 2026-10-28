@@ -20,10 +20,14 @@
    positives -> 0, all real shapes still caught), substantive commit subjects
    59c7ca9, qoder global-law mirror 5b17819, acp-traffic baked 277e236.
    STILL BLOCKED ON FUEL (evidence runs 161+163+166, 2026-10-28): qoder
-   credits exhausted (error 118, both model ids) — Owner ruling needed;
+   personal credits exhausted (error 118, both model ids) — Owner ruling needed;
    zai/glm-4.7-flash@goose acting lane is RECURRING-rate-limited (two runs
    killed mid-turn after 2-4 API calls) — unreliable until the quota
-   changes.  MACHINERY IS GREEN: batch lane loads acp (no more
+   changes.  FUEL CORRECTION (Owner 2026-10-28 #agent-org): qwen3.8-flash
+   is BUILT-IN FREE at Qoder (bundled with the harness) — the #+TURN seat
+   proceeds on it; deepseek-v4.1-flash@codebuddy hired and wired as the
+   next fallback (free pool, CODEBUDDY_AUTH_TOKEN on file).
+   MACHINERY IS GREEN: batch lane loads acp (no more
    "cannot load"), branch-mode guard redactions=0.  Turn stays with
    deepseek-flash@qoder: re-author Unit #183's redacted identifiers on
    the first lane that runs.
@@ -41,6 +45,15 @@
 ** TODO WO-13 clock seconds fix (designed, not written) — TODOs.org §Clock seconds
 ** TODO WO-14 "later" porting bucket — TODOs.org §Later
 ** TODO WO-15 tracker: everything else still open — TODOs.org §Everything else
+** TODO WO-16 CLI support parity — every agent-team-ci harness body supported
+   in agent-org (Owner order 2026-10-28 #agent-org).  Harness bakes 10 bodies;
+   agent-org supports 7 — MISSING: omp (native ACP, command ("omp" "acp"),
+   omp.sh/docs/acp), pi (NO native ACP — ride the community pi-acp adapter,
+   command ("pi-acp"), spawns pi --mode rpc; document limits: no client
+   FS/terminal delegation, MCP ignored), dsh (verify the ACP surface in
+   official docs first; if none, REPORT the gap — never invent a command).
+   Allowed files: agent-org-providers.el + tests/ (ERT required); provider
+   drift test pins every id <-> start-agent command.
 ** ONGOING CI-kit adoption (teamify, Lead) — ci/ submodule @ b86e5eb: dual-law
    harness baked, per-seat session reuse ON, .agent-org transcripts committed;
    seats owe the INTEGRATION.md section 6 verification matrix in CHAT.org
