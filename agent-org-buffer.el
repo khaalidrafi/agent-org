@@ -5180,6 +5180,43 @@ transcripts are notes you want committed."
   :type 'directory
   :group 'agent-org-buffer)
 
+(defcustom agent-org-cross-index-file "cross-agent.org"
+  "Name of the per-project cross-agent mapping index, inside the transcript pool.
+A cross-agent session is ONE conversation spread over several agents, so the
+package has to remember which session id belongs to which leg of it.  The
+index is one file per project because the legs live in one project: the
+transcript the conversion reads is a project file, and so is every session
+file it writes.
+
+The NAME is an option because the pool is a directory the user may have
+pointed anywhere (`agent-org-transcript-dir'); the name is what identifies
+the index within it, and `agent-org-buffer--cross-index-p' is the one reader
+of that fact."
+  :type 'string
+  :group 'agent-org-buffer)
+
+(defun agent-org-buffer--cross-index-file ()
+  "Path of THIS project's cross-agent index.
+Resolved exactly like `agent-org-buffer--transcript-file' — a relative
+`agent-org-transcript-dir' against the calling buffer's `default-directory',
+which in a chat is the session's own cwd — because an index that resolved
+against \"whatever directory is current\" would record a project's legs
+somewhere else entirely (the mistake `agent-org-review-teach-lessons-file'
+already makes)."
+  (expand-file-name agent-org-cross-index-file
+                    (file-name-as-directory
+                     (expand-file-name agent-org-transcript-dir))))
+
+(defun agent-org-buffer--cross-index-p (file)
+  "Non-nil when FILE is a project's cross-agent index, judged by its NAME.
+The index lives IN the transcript pool, and the pool is judged by directory
+(see `agent-org-buffer--transcript-file-p'), so without this one name check
+the index would be opened read-only with the message \"transcript is a
+mirror\" and listed in the transcripts report as a chat with no turns.  It is
+a mapping table the package writes, not a conversation."
+  (and (stringp file)
+       (equal (file-name-nondirectory file) agent-org-cross-index-file)))
+
 (defun agent-org-buffer--transcript-name (session-id)
   "File name of SESSION-ID's transcript: the sanitized id, then `.org'.
 The id is the only fact about a chat that survives a rename, a title
@@ -5216,8 +5253,14 @@ setting is reduced to its basename here, so the answer is the same whatever
 `default-directory' happens to resolve it against.
 
 Judged on the path alone, so it works for a file no session has open -- that
-is exactly when a person `find-file's a transcript to read it."
-  (when-let* ((dir (file-name-directory file))
+is exactly when a person `find-file's a transcript to read it.
+
+The cross-agent index (see `agent-org-buffer--cross-index-p') is excluded by
+NAME: it lives in this same directory and is a mapping table, not a
+conversation, so it must neither open read-only as a mirror nor be listed by
+the transcripts report as a chat with no turns."
+  (when-let* ((file (and (not (agent-org-buffer--cross-index-p file)) file))
+              (dir (file-name-directory file))
               (parent (file-name-nondirectory (directory-file-name dir)))
               (wanted (file-name-nondirectory
                         (directory-file-name
