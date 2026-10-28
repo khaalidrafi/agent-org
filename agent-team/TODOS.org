@@ -45,7 +45,7 @@
 ** TODO WO-13 clock seconds fix (designed, not written) — TODOs.org §Clock seconds
 ** TODO WO-14 "later" porting bucket — TODOs.org §Later
 ** TODO WO-15 tracker: everything else still open — TODOs.org §Everything else
-** TODO WO-16 CLI support parity — every agent-team-ci harness body supported
+** PROGRESS WO-16 CLI support parity — every agent-team-ci harness body supported
    in agent-org (Owner order 2026-10-28 #agent-org).  Harness bakes 10 bodies;
    agent-org supports 7 — MISSING: omp (native ACP, command ("omp" "acp"),
    omp.sh/docs/acp), pi (NO native ACP — ride the community pi-acp adapter,
