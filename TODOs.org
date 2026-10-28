@@ -1908,7 +1908,52 @@ written by the block builder, so a change alerts for exactly ONE turn.
 - Docs still to fold in (NOT done): the §18 bullet in AGENTS.md and CONVENTIONS.md,
   README.org, AI-REVIEW.org.
 
-** TODO Cross-agent sessions --- Qoder ⇄ Codebuddy (the urgent one; design DONE, code NOT started)
+** PROGRESS Cross-agent sessions --- Qoder ⇄ Codebuddy (the urgent one; design DONE, code NOT started)
+:LOGBOOK:
+- Unit #184 (the mapping store) LANDED [2026-10-28 Wed 17:09 UTC]
+  =agent-org-cross--parse-text= / =--render= (the format pair, a plain
+  heading-and-drawer scan — never =org-element=), =agent-org-cross--read=,
+  =agent-org-cross-lookup=, =agent-org-cross-legs= and
+  =agent-org-cross-record= in agent-org.el, with the pool path helpers
+  =agent-org-buffer--cross-index-file= / =--cross-index-p= and the new
+  =agent-org-cross-index-file= option in agent-org-buffer.el.  DEVIATIONS from
+  the plan below, both measured: (a) every reader takes the CHAT BUFFER as its
+  first argument, because the index path must resolve against the chat's
+  =default-directory= (the =agent-org-review-teach-lessons-file:129= mistake is
+  exactly what an argument-less reader would make); (b) a parsed leg also
+  carries =:title=, the heading text the renderer wrote, so a leg a person
+  renamed survives a re-render.  TWO BUGS the tests caught, both now pinned:
+  =insert= with a nil argument (an absent =:FILE:= crashed the writer with
+  =char-or-string-p nil= — the writer is a =concat= now), and a scan that read
+  =match-string= AFTER calling its own helper (the AGENTS.md match-data trap —
+  the groups are read from the STRING immediately after the match).
+  =agent-org-buffer--transcript-file-p= now excludes the index BY NAME, since
+  it lives in the same directory the pool is judged by: without that the index
+  would open read-only as a "mirror" and the transcripts report would list it
+  as a chat with no turns.
+  Evidence: byte-compile clean with =byte-compile-error-on-warn t=, ERT
+  453/453 (447 + 6 new), batch lane 15/15, 2026-10-28T17:08Z.
+- State "PROGRESS" from "TODO" [2026-10-28 Wed 17:05 UTC]
+  Unit #183 (parser) RE-AUTHORED and LANDED [2026-10-28]: the four earlier seats
+  wrote it and the unanchored secret guard rewrote its identifiers in transit
+  (board WO-1); the Lead anchored the guard (e47b488), so this segment re-wrote
+  the unit from that redacted tree (35d0e59) with clean names, and did NOT touch
+  any file the guard had damaged outside the unit's own scope.
+  In agent-org-buffer.el: =agent-org-buffer--transcript-text= extracted so the
+  writer and the sync check share ONE definition of "what the file should hold";
+  =agent-org-buffer-transcript-synced-p= comparing the FILE's bytes and never
+  =--transcript-cache=; and =agent-org-buffer-transcript-messages= parsing a
+  transcript to =(:role "user"|"assistant" :text …)= messages, oldest first —
+  classification positional in the package's own keyword defcustoms, never
+  =org-element=, so the 9.7.11/9.8.10 skew cannot bite.
+  MEASURED corrections to the plan below: a prompt's continuation lines are NOT
+  indented in a transcript (only a drawer body takes §3.3's one space), so no
+  un-indent step belongs in the parser; and the suite binds
+  =agent-org-activity-style= to =drawers= globally while the shipped default is
+  =headings= — the parser tests state =headings=, because only that style gives
+  an answer a =** WROTE= part to live in (the limit is documented in the parser).
+  #184 (mapping store), #185 (writers) and #186 (verbs + docs) still open.
+:END:
 User order, verbatim: "Urgently add a feature for cross-agent session handling by
 mapping the session IDs for EACH agent, for a cross-agent session… You'll take the
 Org transcript, confirm it's synced, then convert it to another agent's session
