@@ -4,7 +4,7 @@
 
 agent-org is an Emacs Lisp package: an Org-native chat UI for coding
 agents that speak ACP (Agent Client Protocol), rendering each
-prompt-response pair as one Org exchange (heading = prompt, answer in an
+prompt/response pair as one Org exchange (heading = prompt, answer in an
 attributed quote block, tool calls and thinking in drawers, response time
 on the clock) and mirroring every session to a transcript Org file.
 

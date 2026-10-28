@@ -2039,7 +2039,7 @@ kind is handled here and nothing is delegated to another handler."
          (agent-org-buffer-set-status buffer :state 'awaiting :message "Permission required")
          (unwind-protect
              (condition-case nil
-                 (let ((option-id (agent-org--prompt-permission opts)))
+                 (let ((option-id (agent-org--ask-permission opts)))
                    (acp-send-response
                     :client client
                     :response
@@ -2058,7 +2058,7 @@ kind is handled here and nothing is delegated to another handler."
        (agent-org-buffer-set-status
         buffer :message (format "Unhandled request: %s" method))))))
 
-(defun agent-org--prompt-permission (options)
+(defun agent-org--ask-permission (options)
   "Prompt the user over ACP permission OPTIONS; return the chosen optionId.
 
 OPTIONS are PermissionOption objects -- alists keyed `optionId', `name'
@@ -3471,7 +3471,7 @@ nothing at all."
 
 (defun agent-org--report-transcripts (directory)
   "Every `.org' transcript in DIRECTORY, newest first; nil if there is none.
-DIRECTORY is the result of resolving `agent-org-transcript-directory' the way
+DIRECTORY is the result of resolving `agent-org-transcript-dir' the way
 `agent-org-buffer--transcript-file' resolves it -- a relative name against
 the calling buffer's `default-directory', which in a chat is the session's
 own cwd -- so one project's report reads one project's chats.  A missing
@@ -3572,7 +3572,7 @@ report is never stale in the way a cached summary is: it is a fresh read of
 data that only a turn boundary changes."
   (interactive "P")
   (let* ((directory (file-name-as-directory
-                     (expand-file-name agent-org-transcript-directory)))
+                     (expand-file-name agent-org-transcript-dir)))
          (session (and only-this (agent-org--session-for-buffer (current-buffer))))
          (id (plist-get session :session-id))
          (summaries (mapcar #'agent-org--report-summary
