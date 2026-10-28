@@ -1910,6 +1910,29 @@ written by the block builder, so a change alerts for exactly ONE turn.
 
 ** PROGRESS Cross-agent sessions --- Qoder ⇄ Codebuddy (the urgent one; design DONE, code NOT started)
 :LOGBOOK:
+- Unit #184 (the mapping store) LANDED [2026-10-28 Wed 17:09 UTC]
+  =agent-org-cross--parse-text= / =--render= (the format pair, a plain
+  heading-and-drawer scan — never =org-element=), =agent-org-cross--read=,
+  =agent-org-cross-lookup=, =agent-org-cross-legs= and
+  =agent-org-cross-record= in agent-org.el, with the pool path helpers
+  =agent-org-buffer--cross-index-file= / =--cross-index-p= and the new
+  =agent-org-cross-index-file= option in agent-org-buffer.el.  DEVIATIONS from
+  the plan below, both measured: (a) every reader takes the CHAT BUFFER as its
+  first argument, because the index path must resolve against the chat's
+  =default-directory= (the =agent-org-review-teach-lessons-file:129= mistake is
+  exactly what an argument-less reader would make); (b) a parsed leg also
+  carries =:title=, the heading text the renderer wrote, so a leg a person
+  renamed survives a re-render.  TWO BUGS the tests caught, both now pinned:
+  =insert= with a nil argument (an absent =:FILE:= crashed the writer with
+  =char-or-string-p nil= — the writer is a =concat= now), and a scan that read
+  =match-string= AFTER calling its own helper (the AGENTS.md match-data trap —
+  the groups are read from the STRING immediately after the match).
+  =agent-org-buffer--transcript-file-p= now excludes the index BY NAME, since
+  it lives in the same directory the pool is judged by: without that the index
+  would open read-only as a "mirror" and the transcripts report would list it
+  as a chat with no turns.
+  Evidence: byte-compile clean with =byte-compile-error-on-warn t=, ERT
+  453/453 (447 + 6 new), batch lane 15/15, 2026-10-28T17:08Z.
 - State "PROGRESS" from "TODO" [2026-10-28 Wed 17:05 UTC]
   Unit #183 (parser) RE-AUTHORED and LANDED [2026-10-28]: the four earlier seats
   wrote it and the unanchored secret guard rewrote its identifiers in transit

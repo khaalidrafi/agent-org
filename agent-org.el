@@ -2605,6 +2605,214 @@ file the user turned off."
       (message "[agent-org] transcript synced for %d chat%s"
                written (if (= written 1) "" "s")))))
 
+;;;; The cross-agent session index (tracker #184)
+;;
+;; A cross-agent session is ONE conversation spread over several agents, so the
+;; package must remember which session id belongs to which LEG of it: Qoder's
+;; file for the group and Codebuddy's file for the same group are two different
+;; ids, and the hop back has to find the first one again.  The record is one
+;; file per project — `.agent-org/cross-agent.org', resolved exactly like a
+;; transcript (`agent-org-buffer--cross-index-file') because the legs live in
+;; the project that owns the transcript.
+;;
+;; It is Org for the same reason the queue is Org text: a person can read it,
+;; and `C-x C-f' answers what this project has ported where.  Parsing is a plain
+;; heading-and-drawer regex scan, NEVER `org-element', so the built-in-vs-ELPA
+;; Org skew (9.7.11 batch / 9.8.10 live, AGENTS.md) cannot change the answer and
+;; a standalone file with no `#+TODO:' lines parses the same as a visited one.
+
+(defun agent-org-cross--parse-text (text)
+  "The legs the cross-agent index TEXT records, oldest first.
+Each is a plist (:xagent :agent :session :file :from :synced :title) read from
+the heading's `:PROPERTIES:' drawer; a heading that carries neither `:XAGENT:'
+nor `:AGENT:' is not a leg and is skipped, so the preamble comments, a
+`#+TITLE:' line and any note a person adds between headings cost nothing.
+
+A line-by-line scan of the shape `agent-org-cross--render' writes, NEVER
+`org-element' or `org-entry-get': the pair is the whole format (tracker #184),
+column-0 only, and a standalone file with no `#+TODO:' line must parse the
+same under built-in Org 9.7 as under ELPA Org 9.8 (AGENTS.md: version skew)."
+  (let ((legs nil) (title nil) (props nil))
+    (cl-flet ((flush ()
+                (when-let* ((xagent (cdr (assoc "xagent" props)))
+                            (agent (cdr (assoc "agent" props))))
+                  (push (list :xagent xagent :agent agent
+                              :session (or (cdr (assoc "session" props)) "")
+                              :file (cdr (assoc "file" props))
+                              :from (cdr (assoc "from" props))
+                              :synced (cdr (assoc "synced" props))
+                              :title title)
+                        legs))
+                (setq title nil props nil)))
+      (dolist (line (split-string text "\n"))
+        ;; The groups are read with the STRING argument, straight after the
+        ;; match: this scan collects match data once per line and `flush' is a
+        ;; helper, and a helper that matches anything would otherwise clobber
+        ;; the global match data the scan is built on (AGENTS.md).
+        (let ((head (and (string-match "^\\* +\\(.+\\)$" line)
+                         (match-string 1 line)))
+              (prop (and (string-match "^:\\([A-Z][A-Z0-9_-]*\\):[[:space:]]+\\(.+\\)$"
+                                       line)
+                         (cons (downcase (match-string 1 line))
+                               (match-string 2 line)))))
+          (cond
+           (head (flush) (setq title head))
+           ((and title prop) (push prop props)))))
+      (flush)
+      (nreverse legs))))
+
+(defun agent-org-cross--render (legs)
+  "The cross-agent index file text recording LEGS, oldest first.
+The preamble is fixed and every leg is one level-1 heading with a
+`:PROPERTIES:' drawer, so the file is a TABLE the package regenerates rather
+than a document it appends to: `agent-org-cross-record' rewrites it whole from
+the legs it parsed plus the one it is recording, which is what keeps ONE
+heading per (xagent, agent) pair instead of a stack of stale ones.
+
+A leg's `:FILE:'/`:FROM:'/`:SYNCED:' are optional and are simply absent then —
+and each piece is built with `concat', never passed to `insert' as a nil
+argument, which is what `char-or-string-p nil' means."
+  (let ((out (concat "#+TITLE: agent-org cross-agent sessions\n"
+                     "#+OPTIONS: num:nil tex:t\n\n"
+                     ";; One heading per LEG of a cross-agent session: the same\n"
+                     ";; conversation continued in another agent, each leg with\n"
+                     ";; its own session id and file.  Written and rewritten by\n"
+                     ";; agent-org (`agent-org-cross-record') — read it, do not\n"
+                     ";; hand-edit it.\n\n")))
+    (dolist (leg legs)
+      (setq out
+            (concat out "* "
+                    (or (plist-get leg :title)
+                        (format "%s:%s" (plist-get leg :agent)
+                                (or (plist-get leg :session) "")))
+                    "\n:PROPERTIES:\n"
+                    (format ":XAGENT: %s\n" (plist-get leg :xagent))
+                    (format ":AGENT: %s\n" (plist-get leg :agent))
+                    (format ":SESSION: %s\n" (or (plist-get leg :session) ""))
+                    (if-let* ((file (plist-get leg :file)))
+                        (format ":FILE: %s\n" file)
+                      "")
+                    (if-let* ((from (plist-get leg :from)))
+                        (format ":FROM: %s\n" from)
+                      "")
+                    (if-let* ((synced (plist-get leg :synced)))
+                        (format ":SYNCED: %s\n" synced)
+                      "")
+                    ":END:\n\n")))
+    out))
+
+(defun agent-org-cross--read (buffer)
+  "The legs recorded in BUFFER's project index; nil when there is none.
+nil, never an error: an index that is absent is the ordinary state of a
+project that has never ported a session, and a caller must be able to ask
+\"is this session already a leg of something?\" without a file existing yet."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (let ((file (agent-org-buffer--cross-index-file)))
+        (when (file-readable-p file)
+          (condition-case nil
+              (agent-org-cross--parse-text
+               (with-temp-buffer
+                 (insert-file-contents file)
+                 (buffer-string)))
+            (file-error nil)))))))
+
+(defun agent-org-cross-lookup (buffer xagent agent)
+  "BUFFER's leg of group XAGENT for AGENT, or nil.
+The pair is the identity of a leg: one group has at most one session id per
+agent, which is what lets a hop back find the SAME file it wrote rather than
+the newest one that agent happens to hold."
+  (seq-find (lambda (leg)
+              (and (equal (plist-get leg :xagent) xagent)
+                   (equal (plist-get leg :agent) agent)))
+            (agent-org-cross--read buffer)))
+
+(defun agent-org-cross-legs (buffer xagent)
+  "Every leg of group XAGENT recorded in BUFFER's project index, oldest first."
+  (seq-filter (lambda (leg) (equal (plist-get leg :xagent) xagent))
+              (agent-org-cross--read buffer)))
+
+(defun agent-org-cross--merge-leg (old new)
+  "A recorded leg OLD updated by a fresh record NEW of the same pair.
+`:session:' always moves (that is the point of re-recording a leg), and
+`:file:'/`:from:'/`:synced:' are replaced only when NEW carries them, so a
+later hop that knows the session id but not the source cannot erase where the
+leg came from.  `:title:' is dropped: it is the rendered heading, and keeping
+the old one would print a stale session id next to the new one."
+  (let ((merged (list :xagent (plist-get old :xagent)
+                      :agent (plist-get old :agent)
+                      :session (or (plist-get new :session)
+                                   (plist-get old :session)))))
+    (dolist (key '(:file :from :synced))
+      (when-let* ((value (or (plist-get new key) (plist-get old key))))
+        (setq merged (plist-put merged key value))))
+    merged))
+
+(defun agent-org-cross-record (buffer leg)
+  "Record LEG (a plist with :xagent :agent and :session) in BUFFER's index.
+An existing leg for the SAME (xagent, agent) pair is UPDATED in place and
+keeps its position; a pair not yet recorded is appended.  Never a second
+heading for one pair — two records of one leg is a table whose answer depends
+on which row a scan happens to reach first, and the whole point of the index
+is that the answer is one value.
+
+The file is regenerated from `agent-org-cross--render', so it always holds
+exactly the legs the package knows about; VISIT stays nil because this buffer
+is a chat, and a non-nil one would make `C-x s' save the chat into its own
+index.  Returns the file written."
+  (let ((xagent (plist-get leg :xagent))
+        (agent (plist-get leg :agent)))
+    (unless (and (stringp xagent) (stringp agent)
+                 (> (length xagent) 0) (> (length agent) 0))
+      (user-error "A cross-agent leg needs both a group id and an agent"))
+    (with-current-buffer buffer
+      (let ((legs (agent-org-cross--read buffer))
+            (index 0)
+            (found nil))
+        (while (and (not found) (< index (length legs)))
+          (let ((old (nth index legs)))
+            (when (and (equal (plist-get old :xagent) xagent)
+                       (equal (plist-get old :agent) agent))
+              (setq found t)
+              (setcar (nthcdr index legs)
+                      (agent-org-cross--merge-leg old leg))))
+          (setq index (1+ index)))
+        (unless found (setq legs (append legs (list leg))))
+        (let ((file (agent-org-buffer--cross-index-file)))
+          (make-directory (file-name-directory file) t)
+          (write-region (agent-org-cross--render legs) nil file nil)
+          file)))))
+
+;;;###autoload
+(defun agent-org-cross-list (&optional buffer)
+  "Show this project's cross-agent groups in a temporary Org buffer.
+BUFFER defaults to the current one; a chat resolves its own project, so the
+list is what THIS project has ported where, and an empty project says so
+rather than erroring (the file is absent until the first leg is recorded)."
+  (interactive)
+  (let* ((buffer (or buffer (current-buffer)))
+         (legs (agent-org-cross--read buffer))
+         (groups nil))
+    (dolist (leg legs)
+      (unless (member (plist-get leg :xagent) groups)
+        (push (plist-get leg :xagent) groups)))
+    (with-output-to-temp-buffer "*agent-org cross-agent*"
+      (princ (format "Cross-agent legs recorded in %s\n\n"
+                     (with-current-buffer buffer
+                       (agent-org-buffer--cross-index-file))))
+      (if (null groups)
+          (princ "No cross-agent sessions yet in this project.\n")
+        (dolist (xagent (nreverse groups))
+          (princ (format "%s\n" xagent))
+          (dolist (leg (agent-org-cross-legs buffer xagent))
+            (princ (format "  %-12s %s%s\n"
+                           (plist-get leg :agent)
+                           (plist-get leg :session)
+                           (if-let* ((synced (plist-get leg :synced)))
+                               (format "  (from %s, synced %s)"
+                                       (or (plist-get leg :from) "-") synced)
+                             "")))))))))
+
 ;;;; The queue, edited where it is read
 ;;
 ;; The waiting prompts live at the BOTTOM of the chat buffer as `* TODO'
