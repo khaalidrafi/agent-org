@@ -17,7 +17,16 @@ set -u
 MODE="${1:-staged}"
 # Generic credential shapes (Qoder PAT, Telegram bot token, GitHub PATs,
 # OpenAI-style keys, bearer tokens). Exact values are matched separately.
-GENERIC='pt-[A-Za-z0-9]{8,}|[0-9]{8,10}:[A-Za-z0-9_-]{30,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{16,}|x-access-token:[^@[:space:]]{8,}'
+# ANCHORED (Lead, 2026-10-28, escalation implementer-deepseek 00:00Z):
+# every letter/digit prefix carries a leading \b — the unanchored
+# `pt-` shape used to rewrite ordinary identifiers from the inside
+# (transcript-directory, prompt-permission, prompt-response), which
+# corrupted seat work in branch mode and caused the 54-stall streak
+# (turn branches 20261027-1901/-2321 carry the [REDACTED] markers).
+# Measured 2026-10-28: repo false positives 85 lines on seat trees ->
+# 0; all real shapes (pt-/ghp_/github_pat_/sk-/telegram/x-access-token)
+# still redact (verification script scripts/verify-guard-fix.sh).
+GENERIC='\bpt-[A-Za-z0-9]{8,}|\bghp_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bsk-[A-Za-z0-9]{16,}|\bx-access-token:[^@[:space:]]{8,}|[0-9]{8,10}:[A-Za-z0-9_-]{30,}'
 
 redact_file() {  # $1 = file -> prints "redacted:<what>" or nothing
   local f="$1" what=""
