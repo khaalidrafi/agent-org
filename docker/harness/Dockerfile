@@ -18,6 +18,10 @@
 #     pins (no-dup law: fetched, never vendored into this repo). The
 #     batch lane gets it via AGENT_ORG_LOAD_PATH=/opt/acp-site:/workspace
 #     (the workspace itself supplies the agent-org*.el sources).
+#     acp-traffic.el rides along: acp.el v0.14.3 does (require
+#     'acp-traffic) at top level, and without it the batch lane's
+#     precondition fails "cannot load: acp agent-org" (CI run 161,
+#     2026-10-28) and every send falls back to the direct CLI lane.
 FROM agent-org-base:local
 
 RUN apt-get update \
@@ -27,5 +31,8 @@ RUN apt-get update \
 RUN mkdir -p /opt/acp-site \
  && curl -fsSL "https://raw.githubusercontent.com/xenodium/acp.el/v0.14.3/acp.el" \
       -o /opt/acp-site/acp.el \
+ && curl -fsSL "https://raw.githubusercontent.com/xenodium/acp.el/v0.14.3/acp-traffic.el" \
+      -o /opt/acp-site/acp-traffic.el \
  && test -s /opt/acp-site/acp.el \
+ && test -s /opt/acp-site/acp-traffic.el \
  && grep -q "acp" /opt/acp-site/acp.el
