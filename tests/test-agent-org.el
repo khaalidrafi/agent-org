@@ -254,7 +254,10 @@ Command shape is the one omp.sh/docs/acp recommends for client config
 spelling\"), transport stdio.  It fronts many providers but resolves its
 own default from ~/.omp/agent/config.yml, so a pin would fight the
 agent's config; `PI_*' credentials are environment fallbacks to omp's
-stored login, which is why the env function exports nothing unless asked."
+stored login, which is why the env function exports nothing unless asked.
+Confirmed against the LIVE server in this image (2026-10-28, an
+`initialize' over stdin): agentInfo omp 18.13.3, loadSession t and
+sessionCapabilities (list, fork, resume, close)."
   (let ((omp (agent-org--provider-spec 'omp)))
     (should (equal (plist-get omp :name) "OMP"))
     (should (equal (plist-get omp :command) '("omp" "acp")))
@@ -284,7 +287,12 @@ apps/cli/README (deepseek-ai/deepseek-harness) lists
 disconnect\", and states \"SDK and ACP are profiles, not separate public
 bins\" — so `dsh acp' would be an invented shape.  It advertises the
 `model' config option (session/set_config_option), so a pin is possible
-but the harness default route is the honest start."
+but the harness default route is the honest start.
+Confirmed against the LIVE server in this image (2026-10-28, an
+`initialize' over stdin): agentInfo \"deepseek-harness-acp\",
+sessionCapabilities (close, list, resume) and NO loadSession key at all —
+which is exactly what `agent-org--supports-load-p' reads via
+`map-nested-elt', so the absent key and a nil value take the same branch."
   (let ((dsh (agent-org--provider-spec 'dsh)))
     (should (equal (plist-get dsh :name) "DSH"))
     (should (equal (plist-get dsh :command) '("dsh" "--profile" "acp")))

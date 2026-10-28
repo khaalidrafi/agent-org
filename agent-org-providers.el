@@ -135,6 +135,12 @@
    ;; stored login (PI_LLM_API_KEY &c., all present in the binary), so pin
    ;; nothing.  `OMP_PROFILE' / `PI_CONFIG_DIR' are the documented selectors
    ;; of WHICH omp profile owns the session, so those two pass through.
+   ;; LIVE SMOKE 2026-10-28 (this image): an `initialize' over stdin answers
+   ;; loadSession t and sessionCapabilities (list, fork, resume, close), so
+   ;; resume-replay and the pager both apply to it.  It also carries
+   ;; _meta.steering.supported = t — a vendor hint, NOT the ACP standard, so
+   ;; the Steer port goes through the standard `session/cancel' plus a new
+   ;; prompt (TODOs.org §Steer) and reads no _meta.
    (list :id 'omp
          :name "OMP"
          :command '("omp" "acp")
@@ -152,6 +158,9 @@
    ;; from its OWN map file (~/.pi/pi-acp/session-map.json), not from ACP
    ;; history.  Provider keys belong to pi's own config — nothing is
    ;; exported.
+   ;; NOT SMOKE-TESTED: the harness image bakes `pi' but not the `pi-acp'
+   ;; adapter, so a Pi chat needs `npm install -g pi-acp' first (reported to
+   ;; @lead 2026-10-28 as the one body the image still cannot drive).
    (list :id 'pi
          :name "Pi"
          :command '("pi-acp")
@@ -172,6 +181,10 @@
    ;; the C-c a m path works (`:mode' is not — dsh rejects modes).
    ;; Credentials live in $DSH_HOME/.credentials.yaml; DEEPSEEK_API_KEY is
    ;; the documented `apiKeyEnv' default fallback for the official route.
+   ;; LIVE SMOKE 2026-10-28 (this image): `initialize' answers
+   ;; agentInfo "deepseek-harness-acp" with sessionCapabilities (close,
+   ;; list, resume) and NO loadSession key at all — exactly the gate our
+   ;; `agent-org--supports-load-p' reads, so a DSH chat opens fresh.
    (list :id 'dsh
          :name "DSH"
          :command '("dsh" "--profile" "acp")
@@ -293,9 +306,10 @@ stored credentials or `PI_*' environment fallbacks, so run `omp' and
   "Start an interactive Pi agent-org chat through the `pi-acp' adapter.
 Pi has no ACP server of its own: this spawns `pi-acp', which bridges ACP
 stdio to `pi --mode rpc' (github.com/svkozak/pi-acp, `npm install -g
-pi-acp').  Expect the adapter's documented limits — no client filesystem or
-terminal delegation, and MCP servers are not passed through to pi.  Pi
-keeps its own provider config, so configure that outside Emacs first."
+pi-acp' -- the harness image bakes `pi' but not the adapter).  Expect the
+adapter's documented limits — no client filesystem or terminal delegation,
+and MCP servers are not passed through to pi.  Pi keeps its own provider
+config, so configure that outside Emacs first."
   (interactive)
   (agent-org-start 'pi))
 

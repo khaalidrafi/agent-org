@@ -406,9 +406,10 @@ stored credentials or `PI_*' environment fallbacks, so run `omp' and
 Start an interactive Pi agent-org chat through the `pi-acp' adapter.
 Pi has no ACP server of its own: this spawns `pi-acp', which bridges ACP
 stdio to `pi --mode rpc' (github.com/svkozak/pi-acp, `npm install -g
-pi-acp').  Expect the adapter's documented limits — no client filesystem or
-terminal delegation, and MCP servers are not passed through to pi.  Pi
-keeps its own provider config, so configure that outside Emacs first." t)
+pi-acp' -- the harness image bakes `pi' but not the adapter).  Expect the
+adapter's documented limits — no client filesystem or terminal delegation,
+and MCP servers are not passed through to pi.  Pi keeps its own provider
+config, so configure that outside Emacs first." t)
 (autoload 'agent-org-dsh-start-agent "agent-org-providers" "\
 Start an interactive DSH (DeepSeek Harness) agent-org chat.
 ACP is a profile there, not a flag: this spawns `dsh --profile acp', which
