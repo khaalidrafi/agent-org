@@ -42,7 +42,11 @@
   - :last-dispatch: 0
   - duties: owns provider integrations (agent-org-providers.el: goose, cline,
     copilot, cursor, codebuddy), prompt-queue mechanics, and small fixes;
-    first pick for cheap high-volume turns
+    first pick for cheap high-volume turns; OWNS WO-16 (CLI support parity:
+    omp, pi via adapter, dsh verdict)
+  - :fuel: BUILT-IN FREE (Owner correction 2026-10-28 #agent-org: qwen3.8-flash
+    is bundled free with the Qoder harness — the error-118 burn ledger applied
+    to the personal-credit lane, NOT this seat; turn proceeds)
   - rank: coding #2 (proven-performance rule: track record in THIS repo
     outranks generic benchmarks) — evidence: commits 041196a (Cline provider),
     b16cb5c (Copilot/Cursor/CodeBuddy), 39dbb67 (resume queue), 1d862c2
@@ -72,6 +76,19 @@
     and falls back to the proven default, so a wrong id degrades to
     work-as-usual — if the fallback fires, REPORT the correct model id
     in chat as :note: @lead.
+
+* Implementer (features) — DeepSeek V4.1 Flash @ codebuddy.com
+  - :last-dispatch: 0
+  - duties: third implementer seat and the fuel-independent fallback lane —
+    takes WO segments when the qoder seats stall; wired into agent-team.yml
+    as the direct-CLI fallback after the zai acting lane (Lead wiring,
+    2026-10-28); never owns a board item first
+  - rank: HIRED per Owner order 2026-10-28 #agent-org ("DS Flash is free at
+    CodeBuddy!") — free pool (same catalog as the WorkBuddy.ai cloud lane,
+    CANDIDATES.org §Agent — Cloud), no dated expiry; CODEBUDDY_AUTH_TOKEN on
+    file (repo secrets); codebuddy body BAKED in the harness Dockerfile
+    (headless: -p with -y); INTERN until one green segment lands here
+    (proven-performance rule)
 
 * Relief Engineer — openrouter/minimax/minimax-m3.1-flash@goose (ACTING — FREE THROUGH 2026-10-25)
   - :last-dispatch: 0
