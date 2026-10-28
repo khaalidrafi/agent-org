@@ -122,7 +122,60 @@
    (list :id 'cline
          :name "Cline"
          :command '("cline" "--acp")
-         :environment #'agent-org-cline-environment))
+         :environment #'agent-org-cline-environment)
+   ;; OMP (oh-my-pi, omp.sh) is a native ACP agent: `omp acp' over stdio is
+   ;; the launch shape its own docs recommend for client configuration
+   ;; (omp.sh/docs/acp — `omp --mode acp' is equivalent but not the
+   ;; recommended spelling).  MEASURED in the harness image 2026-10-28
+   ;; (omp v18.13.3): `omp --help' COMMANDS lists `acp — Run omp as an ACP
+   ;; (Agent Client Protocol) server over stdio' and `omp acp --help' takes
+   ;; no flags.  It advertises session create/list/load/resume/fork/close,
+   ;; so resume works, and it resolves its own model from
+   ;; ~/.omp/agent/config.yml plus `PI_*' credential env fallbacks to its
+   ;; stored login (PI_LLM_API_KEY &c., all present in the binary), so pin
+   ;; nothing.  `OMP_PROFILE' / `PI_CONFIG_DIR' are the documented selectors
+   ;; of WHICH omp profile owns the session, so those two pass through.
+   (list :id 'omp
+         :name "OMP"
+         :command '("omp" "acp")
+         :environment #'agent-org-omp-environment)
+   ;; Pi (earendil-works/pi) has NO native ACP server, so this rides the
+   ;; community adapter `pi-acp' (github.com/svkozak/pi-acp, npm install -g
+   ;; pi-acp), which speaks ACP JSON-RPC over stdio and spawns
+   ;; `pi --mode rpc' itself.  MEASURED 2026-10-28: `pi --help' (v1.4.x in
+   ;; the image) lists modes text/json/rpc and NO acp subcommand, so the
+   ;; adapter is the only ACP surface.  Two limits the adapter documents and
+   ;; an ACP client must respect: it implements NO fs/* or terminal/*
+   ;; delegation (pi reads, writes and executes locally, so an editor's
+   ;; unsaved buffers are invisible to it), and MCP servers arrive in the
+   ;; params but are never wired through to pi.  It answers `session/load'
+   ;; from its OWN map file (~/.pi/pi-acp/session-map.json), not from ACP
+   ;; history.  Provider keys belong to pi's own config — nothing is
+   ;; exported.
+   (list :id 'pi
+         :name "Pi"
+         :command '("pi-acp")
+         :environment #'agent-org-pi-environment)
+   ;; DSH (DeepSeek Harness, @deepseek-ai/dsh) serves ACP as a PROFILE, not
+   ;; a flag or a separate bin: `dsh --profile acp' (apps/cli/README — "SDK
+   ;; and ACP are profiles, not separate public bins").  MEASURED in the
+   ;; harness image 2026-10-28 (dsh 0.2.1-rc.2): the baked
+   ;; `@deepseek-ai/dsh-acp-app' names its command "dsh --profile acp"
+   ;; (lib/index.js:21), so the shape is the vendor's own, not invented.
+   ;; Its automation surface (packages/acp/acp/README) is narrower than the
+   ;; others: session/list, `session/resume' and `session/close' yes,
+   ;; `session/load', fork, delete, modes, commands, plans, terminals and
+   ;; client filesystem operations NO.  So resume-replay is unavailable and
+   ;; `agent-org-start' degrades to `session/new' at the capability gate;
+   ;; `agent-org-resume-session' says so rather than hanging.  Model and
+   ;; reasoning effort DO arrive as `session/set_config_option' options, so
+   ;; the C-c a m path works (`:mode' is not — dsh rejects modes).
+   ;; Credentials live in $DSH_HOME/.credentials.yaml; DEEPSEEK_API_KEY is
+   ;; the documented `apiKeyEnv' default fallback for the official route.
+   (list :id 'dsh
+         :name "DSH"
+         :command '("dsh" "--profile" "acp")
+         :environment #'agent-org-dsh-environment))
   "List of supported ACP providers.
 Each entry is a plist; see `agent-org-providers.el' commentary."
   :type '(repeat sexp)
@@ -145,6 +198,9 @@ live on that path from this package -- until then the claim is untested."
                  (const :tag "Cursor" cursor)
                  (const :tag "CodeBuddy" codebuddy)
                  (const :tag "Cline" cline)
+                 (const :tag "OMP" omp)
+                 (const :tag "Pi" pi)
+                 (const :tag "DSH" dsh)
                  (symbol :tag "Other provider id"))
   :group 'agent-org)
 
@@ -221,6 +277,38 @@ Cline's CLI serves ACP over `--acp'; it keeps its own credential store, so
 sign in once outside Emacs (see https://cline.bot/cli) before starting."
   (interactive)
   (agent-org-start 'cline))
+
+;;;###autoload
+(defun agent-org-omp-start-agent ()
+  "Start an interactive OMP (oh-my-pi) agent-org chat.
+OMP serves ACP natively on stdio (`omp acp'); it authenticates from its own
+stored credentials or `PI_*' environment fallbacks, so run `omp' and
+`/login <provider>' once outside Emacs if this fails to start
+(https://omp.sh/docs/acp)."
+  (interactive)
+  (agent-org-start 'omp))
+
+;;;###autoload
+(defun agent-org-pi-start-agent ()
+  "Start an interactive Pi agent-org chat through the `pi-acp' adapter.
+Pi has no ACP server of its own: this spawns `pi-acp', which bridges ACP
+stdio to `pi --mode rpc' (github.com/svkozak/pi-acp, `npm install -g
+pi-acp').  Expect the adapter's documented limits — no client filesystem or
+terminal delegation, and MCP servers are not passed through to pi.  Pi
+keeps its own provider config, so configure that outside Emacs first."
+  (interactive)
+  (agent-org-start 'pi))
+
+;;;###autoload
+(defun agent-org-dsh-start-agent ()
+  "Start an interactive DSH (DeepSeek Harness) agent-org chat.
+ACP is a profile there, not a flag: this spawns `dsh --profile acp', which
+auto-initializes on first use (apps/cli/README in deepseek-ai/deepseek-
+harness).  The automation surface omits `session/load', so a DSH chat opens
+fresh and resumes by listing rather than replaying history; store the key
+through dsh's own settings or export DEEPSEEK_API_KEY."
+  (interactive)
+  (agent-org-start 'dsh))
 
 (defun agent-org--env-value (var)
   "The value of environment VAR, or nil when unset OR empty.
@@ -313,6 +401,48 @@ Cline keeps its own credential store (signed in through the CLI outside
 Emacs), so nothing has to be exported and this returns nil by default —
 the same out-of-band login CodeBuddy uses."
   nil)
+
+(defun agent-org-omp-environment ()
+  "Return environment variables for the OMP (oh-my-pi) ACP client.
+Nothing credential-shaped is forwarded: omp resolves `PI_*' provider keys
+against its own stored login (omp.sh/docs/env), and Emacs reading that
+store would make it a second source of truth for a secret.  `OMP_PROFILE'
+and `PI_CONFIG_DIR' are the documented selectors of which omp profile and
+config root the session binds — the same steer `SLAVE_HOME' is for
+slave-agent — so they pass through when the environment names them."
+  (let ((profile (agent-org--env-value "OMP_PROFILE"))
+        (config-dir (agent-org--env-value "PI_CONFIG_DIR"))
+        (out nil))
+    (when profile
+      (setq out (cons (format "OMP_PROFILE=%s" profile) out)))
+    (when config-dir
+      (setq out (cons (format "PI_CONFIG_DIR=%s" config-dir) out)))
+    (nreverse out)))
+
+(defun agent-org-pi-environment ()
+  "Return environment variables for the Pi ACP client.
+ALWAYS nil.  The `pi-acp' adapter runs the `pi' executable, and pi resolves
+its provider keys from its own settings and auth.json (its README:
+\"configure pi separately for your model providers/API keys\") — so there is
+no variable this package may name.  Forwarding a key would be exactly the
+second source of truth the Secret Law forbids."
+  nil)
+
+(defun agent-org-dsh-environment ()
+  "Return environment variables for the DSH (DeepSeek Harness) ACP client.
+DSH keeps its credentials in `$DSH_HOME/.credentials.yaml' and resolves a
+route's key from the `apiKeyEnv' name it configures, whose default for the
+official DeepSeek route is DEEPSEEK_API_KEY (packages/llm/
+llm-deepseek-api-key).  So only two things cross, both pass-through: the
+state dir this session binds, and that documented fallback."
+  (let ((home (agent-org--env-value "DSH_HOME"))
+        (key (agent-org--env-value "DEEPSEEK_API_KEY"))
+        (out nil))
+    (when home
+      (setq out (cons (format "DSH_HOME=%s" home) out)))
+    (when key
+      (setq out (cons (format "DEEPSEEK_API_KEY=%s" key) out)))
+    (nreverse out)))
 
 (provide 'agent-org-providers)
 ;;; agent-org-providers.el ends here
