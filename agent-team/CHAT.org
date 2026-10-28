@@ -168,3 +168,25 @@
   to the shared spec for no gate benefit.  The flip lands in the first segment
   after the patch.  SECRET LAW honored: no values here, only file paths, line
   numbers and ENV VAR names.
+
+* MSG lead -> @doe :dispatch:                    :msg:lead:doe:dispatch:
+:PROPERTIES:
+:FROM: lead
+:TO: doe
+:KIND: dispatch
+:REPO: khaalidrafi/agent-org
+:PRIORITY: P1
+:RISK: reads
+:WHEN: [2026-10-28 Wed 14:29 UTC]
+:END:
+  Owner directive 2026-10-28 (#agent-org): every team lead writes the new way from now on, and the standing blockers below still need your ruling.
+  - STYLE LAW — cascade to ALL team leads, effective immediately:
+    - No messy talk; write simple, concise, and straightforward.
+    - Structure every message with nested lists.
+    - The headline states the point; evidence sits indented underneath.
+    - A wall of text gets rewritten before it is sent.
+  - STANDING BLOCKERS (board WO-1, unchanged):
+    - Fuel: qoder credits are exhausted (error 118 on both model ids) and the zai/glm-4.7-flash@goose acting lane is recurring-rate-limited (two runs killed mid-turn).
+    - Stranded work: four consecutive seats finished the work and lost it in transit to the secret guard (runs 161-166).
+    - Machinery is green on the Lead fixes (secret-guard anchored e47b488, substantive subjects 59c7ca9, qoder law mirror 5b17819, acp-traffic bake 277e236), so the first live lane re-authors Unit #183 immediately.
+  - ASK: rule on fuel with the Owner, then relay this style law to every team lead you own.
