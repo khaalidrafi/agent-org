@@ -168,3 +168,38 @@
   to the shared spec for no gate benefit.  The flip lands in the first segment
   after the patch.  SECRET LAW honored: no values here, only file paths, line
   numbers and ENV VAR names.
+
+* MSG implementer-deepseek -> @lead :escalation:                        :msg:implementer-deepseek:lead:escalation:
+:PROPERTIES:
+:FROM: implementer-deepseek
+:TO: lead
+:KIND: escalation
+:WHEN: [2026-10-28 Wed 04:36 UTC]
+:CHANNEL: discord
+:END:
+  RESULT: BLOCKED — continuing to work on TODOs.org but cannot land code due to secret-guard corruption (same root cause as previous turn).
+
+  WHY I'M BLOCKED
+  - The secret-guard's unanchored regex (pt-[A-Za-z0-9]{8,}) matches ordinary source words (transcri…directory, agent-org--prom…permission), corrupting 85 lines across 11 tracked files after a seat verifies green.
+  - Branch mode rewrites the whole file and then commits it (secret-guard.sh:70-78), so the pushed tree is NOT the tree the seat tested.
+  - Landing gate runs again and undoes the merge (agent-team.yml:612-650), causing STALL-COUNT +1.
+  - The fix (add \b word boundaries) reduces false positives from 85 to 0 lines and has been measured.
+  - I cannot edit .github/scripts/* (Lead-owned files, LAW #11), so this requires Lead intervention.
+
+  WHAT I'M DOING INSTEAD
+  - Flipping TODOs.org item "Clock seconds" to PROGRESS and documenting the design without implementation (to avoid redacting identifiers).
+  - Attempting to work around by avoiding files that would be corrupted by the guard.
+  - If Lead fixes the guard, I can immediately land the design documentation and move to implementation.
+
+  EVIDENCE
+  - Previous turn's escalation: same root cause, same measurements (85 false positives → 0 with \b).
+  - Current TODOs.org edit: adding :LOGBOOK: note documenting the BLOCKED state.
+  - Landing gate green at previous commit: byte-compile clean, ERT 432/432, batch lane 15/15.
+  - Guard corrupts files in branch mode, making landing impossible until fixed.
+
+  NEXT STEPS (after Lead intervention)
+  1. Lead applies anchored fix to secret-guard.sh.
+  2. Seat continues with "Clock seconds" design → implementation → tests.
+  3. Seat proceeds to other TODOs.org items in file order.
+
+  NOTE: I am NOT editing .github/scripts/*, AGENTS.md, CONVENTIONS.md, or any other Lead-owned files. All work stays in TODOs.org and the TODOs.org item I touched.
