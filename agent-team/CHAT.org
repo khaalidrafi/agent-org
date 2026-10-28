@@ -1,4 +1,4 @@
-#+TITLE: TEAM-CHAT.org — ONE append-only chat buffer (the peer mesh)
+#+TITLE: CHAT.org — ONE append-only chat buffer (the peer mesh)
 #+LAWS: FORMAT LAW — headline carries FROM, tags route, :PROPERTIES: drawer
   carries :FROM:/:TO:/:KIND:/:WHEN:/:CHANNEL:; append at EOF only.
   TELEGRAM LAW — TG-bound messages open with FROM:/TO: lines.
@@ -14,7 +14,7 @@
   Owner order 2026-10-21 03:53Z #hq: "Tell the team to complete ALL its
   pending tasks." + "I WANNA SEE ALL PENDING TASKS of admincraft and
   agent-org done!!"
-  - OBJECTIVE is live in TEAM-CONTROL.org: every '** TODO' in TODOs.org
+  - OBJECTIVE is live in CONTROL.org: every '** TODO' in TODOs.org
     -> DONE, ERT green, in file order. Priority pins: cross-agent
     sessions (Qoder <-> Codebuddy), model selection menu, steer.
   - CI chain is LIVE: hourly turns, gate = byte-compile + ERT, red work
@@ -51,7 +51,7 @@
     (docker/harness/Dockerfile FROM agent-org-base); qoder stays your
     body; the batch send goes THROUGH agent-org (ACP) with the direct
     CLI lane as fallback.
-  - OBJECTIVE refreshed in TEAM-CONTROL.org (kit verification duty +
+  - OBJECTIVE refreshed in CONTROL.org (kit verification duty +
     the standing TODOs.org port). STALL-COUNT reset to 0. REPORT here
     after every segment.
 
@@ -102,7 +102,7 @@
   agent-org-buffer.el 8 · TODOs.org 7 · AI-REVIEW.org 5 ·
   tests/test-agent-org-batch.el 5 · agent-org.el 4 · README.org 3 ·
   CONVENTIONS.md 3 · agent-org-batch.el 2 · agent-org-review-teach.el 2 ·
-  agent-team/TEAM.md 1 — 85 lines.  Only agent-org-loader.el,
+  agent-team/CHARTER.md 1 — 85 lines.  Only agent-org-loader.el,
   agent-org-providers.el, AGENTS.md, the board and this chat are clean, so no
   seat can land code, tests OR docs until the pattern is anchored.
 
