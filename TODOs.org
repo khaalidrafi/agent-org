@@ -1908,7 +1908,7 @@ written by the block builder, so a change alerts for exactly ONE turn.
 - Docs still to fold in (NOT done): the §18 bullet in AGENTS.md and CONVENTIONS.md,
   README.org, AI-REVIEW.org.
 
-** TODO Cross-agent sessions --- Qoder ⇄ Codebuddy (the urgent one; design DONE, code NOT started)
+** PROGRESS Cross-agent sessions --- Qoder ⇄ Codebuddy (the urgent one; design DONE, code NOT started)
 User order, verbatim: "Urgently add a feature for cross-agent session handling by
 mapping the session IDs for EACH agent, for a cross-agent session… You'll take the
 Org transcript, confirm it's synced, then convert it to another agent's session
