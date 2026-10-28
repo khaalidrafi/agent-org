@@ -443,15 +443,27 @@ jobs:
                   echo "TURN_RESULT=qoder run OK (lane: qwen3.8-flash@qoder)"
                 fi
               elif [ -n "$ZAI_API_KEY" ] && command -v goose >/dev/null 2>&1; then
-                env GOOSE_PROVIDER=openai GOOSE_MODEL=glm-4.7-flash \
+                if env GOOSE_PROVIDER=openai GOOSE_MODEL=glm-4.7-flash \
                     OPENAI_API_KEY="$ZAI_API_KEY" \
                     OPENAI_HOST="https://api.z.ai" \
                     OPENAI_BASE_PATH="/api/paas/v4/chat/completions" \
-                    goose run --no-session -t "$BRIEF" \
-                  && echo "TURN_RESULT=goose run OK (acting lane: zai/glm-4.7-flash@goose)" \
-                  || echo "TURN_RESULT=BLOCKED (qoder + zai acting lane both failed)"
+                    goose run --no-session -t "$BRIEF"; then
+                  echo "TURN_RESULT=goose run OK (acting lane: zai/glm-4.7-flash@goose)"
+                elif [ -n "$CODEBUDDY_AUTH_TOKEN" ] && command -v codebuddy >/dev/null 2>&1; then
+                  env CODEBUDDY_AUTH_TOKEN="$CODEBUDDY_AUTH_TOKEN" \
+                      codebuddy -p "$BRIEF" -y \
+                    && echo "TURN_RESULT=codebuddy run OK (fallback lane: deepseek-v4.1-flash@codebuddy — hired 2026-10-28)" \
+                    || echo "TURN_RESULT=BLOCKED (qoder + zai + codebuddy lanes all failed)"
+                else
+                  echo "TURN_RESULT=BLOCKED (qoder + zai failed, no codebuddy credential — check lanes)"
+                fi
+              elif [ -n "$CODEBUDDY_AUTH_TOKEN" ] && command -v codebuddy >/dev/null 2>&1; then
+                env CODEBUDDY_AUTH_TOKEN="$CODEBUDDY_AUTH_TOKEN" \
+                    codebuddy -p "$BRIEF" -y \
+                  && echo "TURN_RESULT=codebuddy run OK (fallback lane: deepseek-v4.1-flash@codebuddy — hired 2026-10-28)" \
+                  || echo "TURN_RESULT=BLOCKED (qoder + codebuddy lanes failed, no zai key)"
               else
-                echo "TURN_RESULT=BLOCKED (qoder failed and no ZAI fallback — check harness/lane)"
+                echo "TURN_RESULT=BLOCKED (qoder failed and no ZAI/codebuddy fallback — check harness/lane)"
               fi
               ;;
             *)
@@ -474,7 +486,7 @@ jobs:
             -v "$PWD/.sessions-restore":/sessions-restore:ro \
             -e SEAT="${SEAT}" -e BRIEF="${BRIEF}" \
             -e QODER_PERSONAL_ACCESS_TOKEN -e ZAI_API_KEY \
-            -e GH_TOKEN -e CURSOR_API_KEY \
+            -e GH_TOKEN -e CURSOR_API_KEY -e CODEBUDDY_AUTH_TOKEN \
             agent-org-harness:local bash /workspace/.turn-inside.sh \
             > /tmp/.turn-out.txt 2>&1; then
             echo "container verdict captured"
