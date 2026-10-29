@@ -1,0 +1,25 @@
+:PROPERTIES:
+:Provider: qoder
+:ID: 5cfce1f6-8c78-4f64-87c5-e16cceabcc78
+:Mode: Default
+:Model: Qwen3.8-Flash (default)
+:Context: unknown
+:Cost: $0.00
+:END:
+
+#+TITLE: qoder
+
+:MODES:
+Default (id: default) — Prompts for approval
+Accept Edits (id: acceptEdits) — Auto-approves edit tools
+Auto (id: auto) — Auto-approves via the safety classifier
+Don't Ask (id: dontAsk) — Refuses instead of prompting
+Bypass Permissions (id: yolo) — Auto-approves all tools
+:END:
+
+:CONFIG:
+Mode — Default
+Model — Qwen3.8-Flash (default)
+Reasoning Effort — Extra High
+:END:
+
