@@ -223,7 +223,26 @@
    (list :id 'gemini
          :name "Gemini"
          :command '("gemini" "--acp")
-         :environment #'agent-org-gemini-environment))
+         :environment #'agent-org-gemini-environment)
+  ;; Devin (CognitionAI/devin-cli) serves ACP natively: `devin acp' speaks
+  ;; JSON-RPC over stdio and is meant to be spawned by an ACP-aware client —
+  ;; the same subcommand Zed, JetBrains and Xcode configure (docs.devin.ai/
+  ;; cli/reference/commands).  MEASURED 2026-10-29 (devin 3000.11.228,
+  ;; in-sandbox smoke): an `initialize' over stdio starts the server
+  ;; (acp_startup log, credential load step present).  AUTH is the vendor's
+  ;; own chain: the ACP server "reads credentials from WINDSURF_API_KEY if
+  ;; set, otherwise from the credentials stored by `devin auth login'" and
+  ;; may also answer an ACP `authenticate' request — agent-org drives no
+  ;; authenticate step, so WINDSURF_API_KEY is the headless path (the
+  ;; harness image bakes the body; the Owner's Devin access seals the
+  ;; seat).  It fronts many models ("every frontier model") and DEVIN_MODEL
+  ;; is its documented default-model selector, so pin nothing — the
+  ;; account's own default is already right; DEVIN_MODEL passes through
+  ;; when the environment names it.
+  (list :id 'devin
+        :name "Devin"
+        :command '("devin" "acp")
+        :environment #'agent-org-devin-environment))
   "List of supported ACP providers.
 Each entry is a plist; see `agent-org-providers.el' commentary."
   :type '(repeat sexp)
@@ -250,6 +269,7 @@ live on that path from this package -- until then the claim is untested."
                  (const :tag "Pi" pi)
                  (const :tag "DSH" dsh)
                  (const :tag "Gemini" gemini)
+                 (const :tag "Devin" devin)
                  (symbol :tag "Other provider id"))
   :group 'agent-org)
 
@@ -371,6 +391,15 @@ yet, so this raises \"Command not found\" until `npm install -g
 @google/gemini-cli'."
   (interactive)
   (agent-org-start 'gemini))
+
+;;;###autoload
+(defun agent-org-devin-start-agent ()
+  "Start an interactive Devin agent-org chat.
+Devin serves ACP natively on stdio (`devin acp' — the subcommand Zed,
+JetBrains and Xcode spawn); authenticate once outside Emacs with
+`devin auth login', or export WINDSURF_API_KEY for headless use."
+  (interactive)
+  (agent-org-start 'devin))
 
 (defun agent-org--env-value (var)
   "The value of environment VAR, or nil when unset OR empty.
@@ -519,6 +548,23 @@ route, so forwarding both would fight itself."
                    ((agent-org--env-value "GOOGLE_API_KEY") "GOOGLE_API_KEY"))))
     (when var
       (list (format "%s=%s" var (agent-org--env-value var))))))
+
+(defun agent-org-devin-environment ()
+  "Return environment variables for the Devin ACP client.
+The `devin acp' server reads WINDSURF_API_KEY from the environment when it
+is set (its documented non-interactive credential; otherwise the stored
+`devin auth login' credentials apply) and DEVIN_MODEL is its documented
+default-model selector.  Both pass through when present; per
+`agent-org--env-value' a blank is the same as absent, so a blank
+WINDSURF_API_KEY can never override the CLI's own stored login."
+  (let ((key (agent-org--env-value "WINDSURF_API_KEY"))
+        (model (agent-org--env-value "DEVIN_MODEL"))
+        (out nil))
+    (when key
+      (setq out (cons (format "WINDSURF_API_KEY=%s" key) out)))
+    (when model
+      (setq out (cons (format "DEVIN_MODEL=%s" model) out)))
+    (nreverse out)))
 
 (provide 'agent-org-providers)
 ;;; agent-org-providers.el ends here
