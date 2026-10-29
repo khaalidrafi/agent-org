@@ -232,8 +232,9 @@ live process, so the kill hook stays silent."
 (ert-deftest test-agent-org-devin-provider-present ()
   "Devin (CognitionAI/devin-cli) serves ACP natively: `devin acp'.
 The same subcommand Zed, JetBrains and Xcode spawn (docs.devin.ai/cli/
-reference/commands); the ACP server reads WINDSURF_API_KEY from the
-environment when set, else the credentials stored by `devin auth login'.
+reference/commands); the ACP server honors only the credentials stored
+by `devin auth login' (WINDSURF_API_KEY serves Devin's cloud sessions,
+not local ACP — measured 2026-10-29).
 It fronts many models, so like OpenCode it pins nothing — DEVIN_MODEL,
 its documented default-model selector, passes through when the
 environment names it."
@@ -246,8 +247,9 @@ environment names it."
 
 (ert-deftest test-agent-org-devin-passes-only-what-it-needs ()
   "Devin's environment is pass-through or nothing, like every provider here:
-WINDSURF_API_KEY (the `devin acp' server's documented non-interactive
-credential) and DEVIN_MODEL (its default-model selector) cross when
+WINDSURF_API_KEY (documented for Devin's cloud sessions — the local
+`devin acp' server does not accept it) and DEVIN_MODEL (its
+default-model selector) cross when
 present, and nothing — not even a blank — crosses when absent."
   (let ((process-environment '("WINDSURF_API_KEY=" "DEVIN_MODEL=")))
     (should-not (agent-org-devin-environment)))
