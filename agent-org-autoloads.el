@@ -417,6 +417,14 @@ auto-initializes on first use (apps/cli/README in deepseek-ai/deepseek-
 harness).  The automation surface omits `session/load', so a DSH chat opens
 fresh and resumes by listing rather than replaying history; store the key
 through dsh's own settings or export DEEPSEEK_API_KEY." t)
+(autoload 'agent-org-gemini-start-agent "agent-org-providers" "\
+Start an interactive Gemini CLI agent-org chat.
+Gemini CLI serves ACP over stdio with the `--acp' flag (`gemini --acp', see
+https://geminicli.com/docs/cli/acp-mode); it keeps its own credentials —
+sign in with a Google account once outside Emacs, or export GEMINI_API_KEY
+for the documented headless path.  The harness image does not bake `gemini'
+yet, so this raises \"Command not found\" until `npm install -g
+@google/gemini-cli'." t)
 (register-definition-prefixes "agent-org-providers" '("agent-org-"))
 
 
