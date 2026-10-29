@@ -229,13 +229,18 @@
   ;; the same subcommand Zed, JetBrains and Xcode configure (docs.devin.ai/
   ;; cli/reference/commands).  MEASURED 2026-10-29 (devin 3000.11.228,
   ;; in-sandbox smoke): an `initialize' over stdio starts the server
-  ;; (acp_startup log, credential load step present).  AUTH is the vendor's
-  ;; own chain: the ACP server "reads credentials from WINDSURF_API_KEY if
-  ;; set, otherwise from the credentials stored by `devin auth login'" and
-  ;; may also answer an ACP `authenticate' request — agent-org drives no
-  ;; authenticate step, so WINDSURF_API_KEY is the headless path (the
-  ;; harness image bakes the body; the Owner's Devin access seals the
-  ;; seat).  It fronts many models ("every frontier model") and DEVIN_MODEL
+  ;; (acp_startup log, credential load step present).  AUTH — the vendor
+  ;; doc says the ACP server "reads credentials from WINDSURF_API_KEY if
+  ;; set, otherwise from the credentials stored by `devin auth login'",
+  ;; but MEASURED 2026-10-29 (Owner intel, confirmed in-sandbox on
+  ;; 3000.11.228): WINDSURF_API_KEY serves CLOUD sessions only — with it
+  ;; set the local server still exits silently on initialize (no JSON-RPC
+  ;; response, exit 0) and `devin models' reports "Not logged in".  The
+  ;; local ACP server honors ONLY the credentials.toml written by a real
+  ;; `devin auth login' (browser PKCE; --force-manual-token-flow pastes
+  ;; the browser-issued code, NOT the API key).  agent-org therefore
+  ;; passes the env through untouched (cloud lanes may use it) while the
+  ;; seat's real activation = CLI login credentials.  It fronts many models ("every frontier model") and DEVIN_MODEL
   ;; is its documented default-model selector, so pin nothing — the
   ;; account's own default is already right; DEVIN_MODEL passes through
   ;; when the environment names it.
@@ -397,7 +402,8 @@ yet, so this raises \"Command not found\" until `npm install -g
   "Start an interactive Devin agent-org chat.
 Devin serves ACP natively on stdio (`devin acp' — the subcommand Zed,
 JetBrains and Xcode spawn); authenticate once outside Emacs with
-`devin auth login', or export WINDSURF_API_KEY for headless use."
+`devin auth login' — the only credential the local ACP server honors
+(WINDSURF_API_KEY serves Devin's cloud sessions, not local ACP)."
   (interactive)
   (agent-org-start 'devin))
 
@@ -551,9 +557,10 @@ route, so forwarding both would fight itself."
 
 (defun agent-org-devin-environment ()
   "Return environment variables for the Devin ACP client.
-The `devin acp' server reads WINDSURF_API_KEY from the environment when it
-is set (its documented non-interactive credential; otherwise the stored
-`devin auth login' credentials apply) and DEVIN_MODEL is its documented
+WINDSURF_API_KEY is the vendor-documented non-interactive credential for
+Devin's CLOUD sessions (measured 2026-10-29: the local `devin acp'
+server does not accept it — its only local credential is the
+credentials.toml from `devin auth login'); DEVIN_MODEL is its documented
 default-model selector.  Both pass through when present; per
 `agent-org--env-value' a blank is the same as absent, so a blank
 WINDSURF_API_KEY can never override the CLI's own stored login."
