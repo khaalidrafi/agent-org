@@ -372,6 +372,67 @@ registered id; this proves the id baked into the call is the right one."
                     (plist-get (agent-org--session-for-buffer buf) :name)))
         (kill-buffer buf)))))
 
+(ert-deftest test-agent-org-gemini-provider-present ()
+  "Gemini CLI serves ACP with the `--acp' FLAG — verified in its own docs.
+geminicli.com/docs/cli/acp-mode (developer guide, page updated 2026-04-10)
+states it in two lines: \"To start Gemini CLI in ACP mode, use the `--acp'
+flag:  gemini --acp\", JSON-RPC 2.0 over stdio.  So `gemini acp' would be an
+invented shape, and the flag spelling is pinned here because a drift to a
+subcommand would spawn a chat that never answers.  Nothing is pinned as a
+MODEL: the guide routes model changes through `unstable_setSessionModel',
+not a `model' config option, and `agent-org--apply-pinned-model' sends
+`session/set_config_option' for an advertised id only.  The method list
+carries `loadSession' (initialize, authenticate, newSession, loadSession,
+prompt, cancel) so resume applies, and unlike the `pi-acp' adapter it
+implements the proxied file system — but it names NO `session/list', so the
+session pager may find nothing to page.  Every capability above is read from
+the docs: this image has no `gemini' binary to ask (see
+`test-agent-org-unbaked-body-fails-loud-not-silent')."
+  (let ((gemini (agent-org--provider-spec 'gemini)))
+    (should (equal (plist-get gemini :name) "Gemini"))
+    (should (equal (plist-get gemini :command) '("gemini" "--acp")))
+    (should-not (plist-get gemini :model))
+    (should (equal (plist-get gemini :environment)
+                   #'agent-org-gemini-environment))))
+
+(ert-deftest test-agent-org-gemini-start-opens-gemini ()
+  "The Gemini entry point opens the Gemini session, not a copy-pasted id."
+  (ao--capture-wire
+    (let ((buf (agent-org-gemini-start-agent)))
+      (should (buffer-live-p buf))
+      (should (eq 'gemini (plist-get (agent-org--session-for-buffer buf) :name)))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-gemini-environment-passes-one-key ()
+  "Gemini keeps its own login; at most ONE documented key crosses.
+The authentication guide lists GEMINI_API_KEY (AI Studio) and, for the
+Vertex API-key route, GOOGLE_API_KEY — and CAUTIONS that a set key disables
+ADC (\"you must unset them\").  So forwarding both would fight itself:
+preferred-first, one only, and a blank counts as absent."
+  (let ((process-environment '("GEMINI_API_KEY=" "GOOGLE_API_KEY=")))
+    (should-not (agent-org-gemini-environment)))
+  ;; an account login is the common case: nothing set, nothing exported
+  (let ((process-environment '("GOOGLE_CLOUD_PROJECT=some-project")))
+    (should-not (agent-org-gemini-environment)))
+  (let ((process-environment '("GEMINI_API_KEY=key-a" "GOOGLE_API_KEY=key-b")))
+    (should (equal (agent-org-gemini-environment) '("GEMINI_API_KEY=key-a"))))
+  (let ((process-environment '("GEMINI_API_KEY=" "GOOGLE_API_KEY=key-b")))
+    (should (equal (agent-org-gemini-environment) '("GOOGLE_API_KEY=key-b")))))
+
+(ert-deftest test-agent-org-unbaked-body-fails-loud-not-silent ()
+  "A wired provider whose binary the image does not bake must raise.
+MEASURED 2026-10-29 in this harness container: `gemini' is ABSENT from PATH
+(cline too), so `agent-org--open-session' hits its `executable-find' gate
+and answers a `user-error' naming the command — the chat never opens and
+nothing waits on a process that does not exist.  This is the honest state of
+WO-16 for Gemini: the flag is verified in the vendor docs, the entry is
+wired, the body still has to be baked (`npm install -g
+@google/gemini-cli') before a live smoke test.  Skipped once baked, so the
+suite keeps its meaning either way."
+  (skip-unless (not (executable-find "gemini")))
+  (should-error (agent-org--open-session (agent-org--provider-spec 'gemini))
+                :type 'user-error))
+
 (ert-deftest test-agent-org-unloadable-provider-starts-fresh-not-broken ()
   "A body that answers no session/load must not block starting a chat.
 packages/acp/acp/README: DSH omits `session/load' from its automation
