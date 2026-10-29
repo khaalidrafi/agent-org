@@ -64,6 +64,13 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   ~dsh --profile acp~ (DeepSeek Harness, where ACP is a profile rather
   than a flag; its automation surface omits ~session/load~, so a DSH chat
   opens fresh instead of replaying history).
+  One more is wired but not baked in the harness image yet: ~gemini --acp~
+  (Gemini CLI --- the flag is spelled out in its own developer guide,
+  geminicli.com/docs/cli/acp-mode).  Its documented methods include
+  ~loadSession~ and it proxies the filesystem through the client, but its
+  model moves through ~unstable_setSessionModel~ rather than a ~model~
+  config option, so no model is pinned; open a Gemini chat after ~npm
+  install -g @google/gemini-cli~.
   slave-agent keeps its keys in a ~.env~ inside its state dir and its model in
   ~config.yaml~, both read by the adapter itself, so Emacs exports nothing for
   it; set ~SLAVE_HOME~ in the environment Emacs was started with to bind a
@@ -81,7 +88,12 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   ~$DSH_HOME/.credentials.yaml~ (its official DeepSeek route falls back to
   ~DEEPSEEK_API_KEY~), and ~DSH_HOME~ plus OMP's ~OMP_PROFILE~ /
   ~PI_CONFIG_DIR~ pass through when set, which is how an Emacs chat binds
-  one profile's state rather than the launch default.
+  one profile's state rather than the launch default.  Gemini CLI keeps its
+  own login in its ~.gemini~ home directory (sign in with a Google account
+  once outside Emacs); the documented headless key passes through when
+  present --- ~GEMINI_API_KEY~, or ~GOOGLE_API_KEY~ for the Vertex API-key
+  route, and only one of them, because a set key disables Application
+  Default Credentials.
 
 * Install
 
