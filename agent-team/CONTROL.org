@@ -3,5 +3,5 @@
 #+OBJECTIVE: umbrella/01 (Owner 2026-10-29 #hq — agent-org + agent-team.el ONE umbrella, common Lead z.ai-agent; "Add all missing ACP clients to agent-org"): WO-16 CLI/ACP support parity — wire every missing ACP client provider in agent-org-providers.el + tests/ (omp ("omp" "acp") · pi (pi-acp adapter) · dsh (verify ACP surface in docs first, REPORT gaps — never invent) · mcode ("mcode" "acp") · gemini-cli ("gemini" "--acp")), one provider per segment, provider drift test green per landing; continue the WO-1 unit series (#184 index, #185 writers, #186 verbs+docs) between providers; fuel law stands (qwen3.8-flash built-in free at Qoder · deepseek-v4.1-flash@codebuddy wired fallback · paid qoder ids stay dead until the Owner refuels)
 #+OBJECTIVE-STATE: OPEN
 #+TURN: deepseek-flash@qoder (Implementer)
-#+STALL-COUNT: 4
+#+STALL-COUNT: 5
 #+LAST-VERDICT: 6322c6a73d1f
