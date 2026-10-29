@@ -62,6 +62,29 @@
    flag spelling against geminicli.com docs before wiring).  Allowed
    files: agent-org-providers.el + tests/ (ERT required); provider drift
    test pins every id <-> start-agent command.
+   :LOGBOOK:
+   - Note taken on 2026-10-29 16:22 UTC "gemini wired on vendor docs (implementer-deepseek)":
+     all five named bodies now have an entry — minimax/mcode (b33bc2b line,
+     already present), omp + pi + dsh (b33bc2b, evidence re-proved live in
+     8ca27a8), and gemini this segment: :command ("gemini" "--acp"), flag
+     spelling quoted from geminicli.com/docs/cli/acp-mode (page dated
+     2026-04-10) rather than invented.  NOTHING pinned — its model rides
+     `unstable_setSessionModel', not a `model' config option.  GATE GREEN:
+     byte-compile clean with error-on-warn, ERT 457/457 main (+4 new),
+     15/15 batch.
+   - EVIDENCE GAP, REPORTED: `gemini' is NOT baked in this harness image
+     (measured in-container: on PATH = qoder goose opencode mcode copilot
+     agent codebuddy omp pi dsh; ABSENT = cline gemini), so the flag is
+     doc-verified but never smoke-tested.  `npm install -g
+     @google/gemini-cli' in ci/docker/harness/Dockerfile is the Lead-owned
+     step; after it, an `initialize' probe should re-prove loadSession and
+     the absence of session/list the way 8ca27a8 re-proved omp and dsh.
+   - ROSTER ARITHMETIC: the parity roster test still asserts the TEN baked
+     bodies (test-agent-org-every-harness-body-is-a-provider); gemini and
+     cline are wired entries the image does not provide, so they are
+     deliberately NOT in that list — the test asserts only "no baked body
+     lacks an entry", never a total.
+   :END:
 ** ONGOING CI-kit adoption (teamify, Lead) — ci/ submodule bumped to 479480b
    2026-10-29 (deduped prompt laws + Cursor env law): dual-law harness baked,
    per-seat session reuse ON, .agent-org transcripts committed
