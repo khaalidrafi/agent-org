@@ -1,125 +1,42 @@
-#+TITLE: MEMBERS.org — ranked members, ordered by roles
-#+ROSTER: API roster authority = GET /v1/models on the gateway
-#+ROSTER_STATUS: gateway URL not in dispatch; 8 candidate hosts DNS-fail 2026-10-19;
-  bodies below are provisional until GET /v1/models confirms them
+#+TITLE: MEMBERS.org — umbrella pointer + live lanes
+#+ROSTER: CANONICAL HR FILE = khaalidrafi/agent-team.el agent-team/MEMBERS.org
+          (one canonical copy — Owner umbrella order 2026-10-29 #hq; this
+          file is a pointer + THIS repo's live lanes. Fetch the canonical
+          file current at staffing time; never duplicate the roster here.)
 
-* Director of Engineering — Kimi-K2.6 @ kimi.ai
-  - :last-dispatch: 2
-  - duties: owns mission and priorities; writes dispatches; rules on BLOCKED
-    (:OWN:); the owner interface; approves merges to the default branch
-  - rank: strategy/planning #1 (appointment, DISPATCH #1); coding — not ranked,
-    does not code
+* Umbrella (2026-10-29)
 
-* Engineering Manager — Kimi-K2.6 @ kimi.ai
-  - :last-dispatch: 2
-  - duties: owns staffing + roster; dispatches work; verifies every REVIEW
-    against the repo; sole flipper of DONE on the board; keeps AGENT-TEAM
-    files true; reports PROGRESS/BLOCKED/REVIEW
-  - rank: EM/dispatch/verification #1 (appointment); research+writing #1 —
-    evidence: SWE-Bench Pro 58.6% (beats GPT-5.4 57.7, Opus 4.6 53.4),
-    HLE w/tools 54.0% leads frontier, Terminal-Bench 2.0 66.7%
-    (https://www.kimi.ai/blog/kimi-k2-6 ;
-    https://deepinfra.com/blog/kimi-k2-6-api-benchmarks-latency-throughput-cost) ;
-    known limit: slower, needs a tight harness (HN practitioner consensus,
-    https://news.ycombinator.com/item?id=47993235)
+- Lead + DoE: z.ai-agent — Owner appointment, common Lead over
+  agent-org + agent-team.el (both pkgs developed by one team).
+- Full roster with hire reasons, agent reasons, pair fits and rank-3
+  fallback chains: khaalidrafi/agent-team.el agent-team/MEMBERS.org.
+- Hire consult posted 2026-10-29 05:15Z #hq; Owner fiat 05:19Z
+  ("do urself. Add devin.") — consult-before-activate satisfied.
 
-* Implementer (features) — Claude Opus 4.7 @ anthropic
-  - :last-dispatch: 0
-  - duties: owns agent-org application code — new features in
-    agent-org-buffer.el / agent-org.el / agent-org-review-teach.el with ERT
-    tests in tests/; keeps CONVENTIONS.md rules when rendering Org
-  - rank: coding #1 on benchmarks — evidence: WebDev Arena top cluster
-    (claude-opus-4-7-thinking #1, 1567 Elo; opus-4-7 #2)
-    (https://www.propelcode.ai/blog/lm-arena-coding-leaderboard-insights-for-developers) ;
-    SWE-Bench Verified 87.6% — public leader
-    (https://www.truefoundry.com/blog/kimi-k2-6-the-open-source-coding-giant-thats-reshaping-agentic-ai) ;
-    GDPval-AA knowledge-work leader (Opus 5, 1862)
-    (https://benchlm.ai/benchmarks/gdpvalaa) ; INTERN for this repo until the
-    gateway roster confirms a body AND one intern round (5 real tasks) passes
-    — benchmark != track record here
+* Live lanes in THIS repo (rotation order)
 
-* Implementer (features) — Qwen3.8-Flash @ qoder.com
-  - :last-dispatch: 0
-  - duties: owns provider integrations (agent-org-providers.el: goose, cline,
-    copilot, cursor, codebuddy), prompt-queue mechanics, and small fixes;
-    first pick for cheap high-volume turns; OWNS WO-16 (CLI support parity:
-    omp, pi via adapter, dsh verdict)
-  - :fuel: BUILT-IN FREE (Owner correction 2026-10-28 #agent-org: qwen3.8-flash
-    is bundled free with the Qoder harness — the error-118 burn ledger applied
-    to the personal-credit lane, NOT this seat; turn proceeds)
-  - rank: coding #2 (proven-performance rule: track record in THIS repo
-    outranks generic benchmarks) — evidence: commits 041196a (Cline provider),
-    b16cb5c (Copilot/Cursor/CodeBuddy), 39dbb67 (resume queue), 1d862c2
-    (goose menu), 60b335b (clock-report fix), c4a4850 (review-teach arc),
-    all landed with tests on ai/quickstart; benchmarks mid-tier but
-    flash-class models praised for tool calling at low cost
-    (https://news.ycombinator.com/item?id=47993235)
+1. deepseek-v4.1-flash@codebuddy — Implementer (hired per Owner fuel
+   correction 2026-10-28; re-authored + landed Unit #183; wired on
+   CODEBUDDY_AUTH_TOKEN). Current #+TURN.
+2. qwen3.8-flash@qoder — Platform / CI Engineer (umbrella re-hire
+   2026-10-29; the brain is BUILT-IN FREE at Qoder per the Owner's
+   fuel correction — paid qoder ids stay dead until refuel).
+3. openrouter/poolside/laguna-s-2.1:free@opencode — Implementer
+   (umbrella hire 2026-10-29; OpenRouter :free lane — probe on turn).
+4. nvidia/nemotron-3.5-lightning:free@cline — QA + Docs Engineer
+   (umbrella hire 2026-10-29; enters rotation after the cline-on-CI
+   body proof).
+5. devin@devin.ai — Cloud Agent, PROVISIONAL (Owner fiat 2026-10-29
+   "Add devin"; closed + paid product — values exception recorded;
+   seat activates when the Owner's Devin access is sealed).
 
-* Scout (research) — Gemini 3.7 Flash @ google
-  - :last-dispatch: 0
-  - duties: owns web research for dispatches — benchmark checks, doc lookups,
-    sentiment scans; never writes repo files; returns cited findings to the EM
-  - rank: research #1 — evidence: WebDev Arena leader (Gemini 3.7 Flash,
-    1588 Elo, cheapest near-leader at $0.75/M)
-    (https://llm-stats.com/benchmarks/webdev-arena) ; INTERN for this team —
-    no track record in repo or on gateway yet; intern round: 5 research tasks
+* Superseded rows (2026-10-29 — history preserved in git, not deleted)
 
-* Implementer (features) — DeepSeek-Flash @ qoder.com
-  - :last-dispatch: 0
-  - duties: second qoder seat — implements TODOs.org port items in file
-    order (agent-org*.el + ERT tests); pairs with the qwen3.8-flash seat
-    through CHAT.org; takes priority-pin items when free
-  - rank: coding lane #2 (HIRED per Owner order 2026-10-21 03:53Z #hq:
-    "Qoder also has DeepSeek Flash free. Hire that, too.") — free tier,
-    zero spend; INTERN until one green segment lands on this team's CI
-    (proven-performance rule). Lane self-probes the qoder --model flag
-    and falls back to the proven default, so a wrong id degrades to
-    work-as-usual — if the fallback fires, REPORT the correct model id
-    in chat as :note: @lead.
-
-* Implementer (features) — DeepSeek V4.1 Flash @ codebuddy.com
-  - :last-dispatch: 0
-  - duties: third implementer seat and the fuel-independent fallback lane —
-    takes WO segments when the qoder seats stall; wired into agent-team.yml
-    as the direct-CLI fallback after the zai acting lane (Lead wiring,
-    2026-10-28); never owns a board item first
-  - rank: HIRED per Owner order 2026-10-28 #agent-org ("DS Flash is free at
-    CodeBuddy!") — free pool (same catalog as the WorkBuddy.ai cloud lane,
-    CANDIDATES.org §Agent — Cloud), no dated expiry; CODEBUDDY_AUTH_TOKEN on
-    file (repo secrets); codebuddy body BAKED in the harness Dockerfile
-    (headless: -p with -y); INTERN until one green segment lands here
-    (proven-performance rule)
-
-* Relief Engineer — openrouter/minimax/minimax-m3.1-flash@goose (ACTING — FREE THROUGH 2026-10-25)
-  - :last-dispatch: 0
-  - duties: universal relief lane for every seat — overflow WO segments
-    and dead-lane rescue turns; the seat lead wires it into agent-team.yml
-    seat cases as the fallback slot BEFORE external accounts (zai →
-    minimax:free → codebuddy → qoder); never owns a board item first;
-    lane liveness :note: @lead after every run (quota/HTTP evidence)
-  - rank: HIRED per Owner order 2026-10-21 05:33Z #hq ("MiniMax M3.1 Flash
-    is free across a number of platforms... Hire 'em all.") — OpenRouter
-    :free promo ($0.00 in/out/cache, 1,000,000-token context, AA 43 /
-    Terminal-Bench 4.0 25.8), EXPIRY 2026-10-25 on record; INTERN until
-    one green segment lands here (proven-performance rule). Fallbacks
-    independent of the promo: zai/glm-4.7-flash → codebuddy@cli →
-    qwen3.8-flash@qoder. Body = goose (opencode body is
-    headless-defective, mesh/01 evidence in agent-team.el); OpenRouter
-    normalizes Goose's developer role server-side (demo/01 evidence).
-    Consumes the repo's existing OPENROUTER_API_KEY — no new secrets.
-
-,* HR REVIEW (at every pause window — KEEP/WATCH/PROBE/RELEASE)
-  | date | member | segments | gate-first-try | stalls | findings | verdict |
-  |------+--------+----------+----------------+--------+----------+---------|
-  | 2026-10-28 | implementer-deepseek | 1 | n/a (no landing was possible) | machinery, not seats | found + measured + patched the secret-guard corruption behind the 56-stall streak; also caught the qoder law-slot gap and the subject-guard conflict | KEEP |
-  | 2026-10-28 | qoder seats (qwen3.8-flash, deepseek-flash) | 4 | yes (their own gate ran green) | work lost in transit, not seat error | turn branches 20261027-1901/-2321 carry the [REDACTED] markers from the guard | KEEP |
-
-,* STRENGTH NOTES (one line per member per segment — ROLE ATTACHMENT)
-  | date | member | segment | did better / worse than roster average |
-  |------+--------+---------+----------------------------------------|
-  | 2026-10-28 | implementer-deepseek | machinery escalation | BETTER: root-caused a Lead-owned CI defect with reproducible measurements (85 redacted lines, exact file:line evidence) and a verified patch, while honoring the lead-owned not-touch law; delivered the INTEGRATION matrix the 16:20 dispatch asked for |
-
-,* BURN LEDGER (visiting members / expiring credits)
-  | date | member | segment | credits burned | note |
-  |------+--------+---------+----------------+------|
-  | 2026-10-28 | qoder seats | runs ~140-162 | 0 (credits EXHAUSTED, error 118) | qoder personal credits exhausted — no spend possible until the Owner tops up; zai acting lane ran on the Owner's zai key, ended on provider rate limit |
+- Kimi-K2.6 @ kimi.ai (DoE + EM seats) — superseded by the umbrella
+  Lead appointment.
+- Claude Opus 4.7 @ anthropic — paid + closed; values filter.
+- Gemini 3.7 Flash @ google — closed; values filter.
+- DeepSeek-Flash @ qoder.com — body dead on fuel (qoder paid ids);
+  the lane moved to codebuddy.
+- openrouter/minimax/minimax-m3.1-flash@goose (Relief) — BURN-LAW
+  2026-10-24 + promo dead 2026-10-25.

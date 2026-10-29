@@ -49,14 +49,19 @@
 ** TODO WO-14 "later" porting bucket — TODOs.org §Later
 ** TODO WO-15 tracker: everything else still open — TODOs.org §Everything else
 ** TODO WO-16 CLI support parity — every agent-team-ci harness body supported
-   in agent-org (Owner order 2026-10-28 #agent-org).  Harness bakes 10 bodies;
-   agent-org supports 7 — MISSING: omp (native ACP, command ("omp" "acp"),
-   omp.sh/docs/acp), pi (NO native ACP — ride the community pi-acp adapter,
-   command ("pi-acp"), spawns pi --mode rpc; document limits: no client
-   FS/terminal delegation, MCP ignored), dsh (verify the ACP surface in
-   official docs first; if none, REPORT the gap — never invent a command).
-   Allowed files: agent-org-providers.el + tests/ (ERT required); provider
-   drift test pins every id <-> start-agent command.
-** ONGOING CI-kit adoption (teamify, Lead) — ci/ submodule @ b86e5eb: dual-law
-   harness baked, per-seat session reuse ON, .agent-org transcripts committed;
-   seats owe the INTEGRATION.md section 6 verification matrix in CHAT.org
+   in agent-org (Owner order 2026-10-28 #agent-org; RE-SPECCED 2026-10-29
+   #hq "Add all missing ACP clients to agent-org" — umbrella/01 objective).
+   Harness bakes 10 bodies; agent-org supports 7 — MISSING: omp (native ACP,
+   command ("omp" "acp"), omp.sh/docs/acp), pi (NO native ACP — ride the
+   community pi-acp adapter, command ("pi-acp"), spawns pi --mode rpc;
+   document limits: no client FS/terminal delegation, MCP ignored), dsh
+   (verify the ACP surface in official docs first; if none, REPORT the gap
+   — never invent a command), mcode (ACP subcommand per CANDIDATES.org
+   Bodies section — command ("mcode" "acp"), ADDED to this item
+   2026-10-29), gemini-cli (native --acp flag, ADDED 2026-10-29 — verify
+   flag spelling against geminicli.com docs before wiring).  Allowed
+   files: agent-org-providers.el + tests/ (ERT required); provider drift
+   test pins every id <-> start-agent command.
+** ONGOING CI-kit adoption (teamify, Lead) — ci/ submodule bumped to 479480b
+   2026-10-29 (deduped prompt laws + Cursor env law): dual-law harness baked,
+   per-seat session reuse ON, .agent-org transcripts committed
