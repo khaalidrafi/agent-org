@@ -229,6 +229,36 @@ live process, so the kill hook stays silent."
       (should (eq 'cline (plist-get (agent-org--session-for-buffer buf) :name)))
       (kill-buffer buf))))
 
+(ert-deftest test-agent-org-devin-provider-present ()
+  "Devin (CognitionAI/devin-cli) serves ACP natively: `devin acp'.
+The same subcommand Zed, JetBrains and Xcode spawn (docs.devin.ai/cli/
+reference/commands); the ACP server reads WINDSURF_API_KEY from the
+environment when set, else the credentials stored by `devin auth login'.
+It fronts many models, so like OpenCode it pins nothing — DEVIN_MODEL,
+its documented default-model selector, passes through when the
+environment names it."
+  (let ((devin (agent-org--provider-spec 'devin)))
+    (should (equal (plist-get devin :name) "Devin"))
+    (should (equal (plist-get devin :command) '("devin" "acp")))
+    (should-not (plist-get devin :model))
+    (should (equal (plist-get devin :environment)
+                   #'agent-org-devin-environment))))
+
+(ert-deftest test-agent-org-devin-passes-only-what-it-needs ()
+  "Devin's environment is pass-through or nothing, like every provider here:
+WINDSURF_API_KEY (the `devin acp' server's documented non-interactive
+credential) and DEVIN_MODEL (its default-model selector) cross when
+present, and nothing — not even a blank — crosses when absent."
+  (let ((process-environment '("WINDSURF_API_KEY=" "DEVIN_MODEL=")))
+    (should-not (agent-org-devin-environment)))
+  (let ((process-environment '("WINDSURF_API_KEY=dvsk_headless"
+                               "DEVIN_MODEL=opus")))
+    (should (equal (agent-org-devin-environment)
+                   '("WINDSURF_API_KEY=dvsk_headless" "DEVIN_MODEL=opus"))))
+  (let ((process-environment '("WINDSURF_API_KEY=dvsk_headless")))
+    (should (equal (agent-org-devin-environment)
+                   '("WINDSURF_API_KEY=dvsk_headless")))))
+
 (ert-deftest test-agent-org-copilot-cursor-codebuddy-start-open-themselves ()
   "Each new per-provider command is the same thin call with its id baked in.
 The drift test already proves one `agent-org-<id>-start-agent' exists for
