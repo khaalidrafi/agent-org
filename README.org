@@ -71,8 +71,9 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   rather than a ~model~ config option, so no model is pinned; open a Gemini
   chat after ~npm install -g @google/gemini-cli~.  And ~devin acp~ (Devin,
   CognitionAI/devin-cli — the same subcommand Zed, JetBrains and Xcode
-  spawn; its ACP server reads ~WINDSURF_API_KEY~ from the environment when
-  set, else the credentials stored by ~devin auth login~).
+  spawn; its ACP server honors only the credentials stored by ~devin auth
+  login~ --- ~WINDSURF_API_KEY~ serves Devin's cloud sessions, not local
+  ACP).
   slave-agent keeps its keys in a ~.env~ inside its state dir and its model in
   ~config.yaml~, both read by the adapter itself, so Emacs exports nothing for
   it; set ~SLAVE_HOME~ in the environment Emacs was started with to bind a
@@ -95,8 +96,8 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   once outside Emacs); the documented headless key passes through when
   present --- ~GEMINI_API_KEY~, or ~GOOGLE_API_KEY~ for the Vertex API-key
   route, and only one of them, because a set key disables Application
-  Default Credentials.  Devin authenticates via ~devin auth login~ once
-  outside Emacs, or export ~WINDSURF_API_KEY~ for headless use;
+  Default Credentials.  Devin authenticates via ~devin auth login~ once outside Emacs (the only
+  credential local ACP honors; ~WINDSURF_API_KEY~ serves cloud sessions);
   ~DEVIN_MODEL~ optionally names its default model.
 
 * Install
