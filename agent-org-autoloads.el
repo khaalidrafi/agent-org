@@ -425,6 +425,11 @@ sign in with a Google account once outside Emacs, or export GEMINI_API_KEY
 for the documented headless path.  The harness image does not bake `gemini'
 yet, so this raises \"Command not found\" until `npm install -g
 @google/gemini-cli'." t)
+(autoload 'agent-org-devin-start-agent "agent-org-providers" "\
+Start an interactive Devin agent-org chat.
+Devin serves ACP natively on stdio (`devin acp' — the subcommand Zed,
+JetBrains and Xcode spawn); authenticate once outside Emacs with
+`devin auth login', or export WINDSURF_API_KEY for headless use." t)
 (register-definition-prefixes "agent-org-providers" '("agent-org-"))
 
 
