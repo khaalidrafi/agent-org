@@ -188,7 +188,42 @@
    (list :id 'dsh
          :name "DSH"
          :command '("dsh" "--profile" "acp")
-         :environment #'agent-org-dsh-environment))
+         :environment #'agent-org-dsh-environment)
+   ;; Gemini CLI (google-gemini/gemini-cli) serves ACP with the `--acp' FLAG,
+   ;; verified against its own developer guide BEFORE wiring (geminicli.com/
+   ;; docs/cli/acp-mode, page updated 2026-04-10): "To start Gemini CLI in ACP
+   ;; mode, use the `--acp' flag:  gemini --acp" — JSON-RPC 2.0 over stdio,
+   ;; implementation in packages/cli/src/acp/acpClient.ts.  NOT baked in the
+   ;; harness image: measured 2026-10-29 in this very container, `gemini' is
+   ;; absent from PATH, so `agent-org--open-session' raises "Command not
+   ;; found: gemini" until `npm install -g @google/gemini-cli' runs (reported
+   ;; to @lead) — the same standing Cline has, a real ACP agent the roster
+   ;; test does not claim the image provides.
+   ;; Its documented method list covers `initialize', `newSession',
+   ;; `loadSession', `prompt' and `cancel', so resume-REPLAY applies — but
+   ;; `session/list' is NOT among the listed methods, so the picker may have
+   ;; nothing to page: `agent-org--lists-sessions-p' reads the advertisement
+   ;; and failure degrades to `session/new' with an echo-area note (§10).
+   ;; `setSessionMode' moves the tool-approval level (modes exist), and the
+   ;; model arrives through `unstable_setSessionModel' — NOT a `model' config
+   ;; option, which is why nothing is PINNED here: a pin rides
+   ;; `session/set_config_option' and `agent-org--apply-pinned-model' sends
+   ;; only an advertised id.  Unlike the `pi-acp' adapter it does implement
+   ;; the proxied file system (agent reads and writes through the ACP client)
+   ;; and it wires MCP servers registered at `initialize' through to the
+   ;; model.
+   ;; The capabilities above are READ FROM THE DOCS, not from a live
+   ;; `initialize' — this image has no `gemini' to ask.  A smoke test after it
+   ;; is baked should re-prove them the way 8ca27a8 re-proved omp and dsh.
+   ;; Auth is the CLI's own: `gemini' sign-in with a Google account caches
+   ;; credentials under ~/.gemini, and the documented headless path is
+   ;; GEMINI_API_KEY (AI Studio) or Vertex AI ADC.  A live ACP `authenticate'
+   ;; request would open a browser, which an Emacs-spawned child cannot finish
+   ;; — same out-of-band story as Cursor and Cline.
+   (list :id 'gemini
+         :name "Gemini"
+         :command '("gemini" "--acp")
+         :environment #'agent-org-gemini-environment))
   "List of supported ACP providers.
 Each entry is a plist; see `agent-org-providers.el' commentary."
   :type '(repeat sexp)
@@ -214,6 +249,7 @@ live on that path from this package -- until then the claim is untested."
                  (const :tag "OMP" omp)
                  (const :tag "Pi" pi)
                  (const :tag "DSH" dsh)
+                 (const :tag "Gemini" gemini)
                  (symbol :tag "Other provider id"))
   :group 'agent-org)
 
@@ -323,6 +359,18 @@ fresh and resumes by listing rather than replaying history; store the key
 through dsh's own settings or export DEEPSEEK_API_KEY."
   (interactive)
   (agent-org-start 'dsh))
+
+;;;###autoload
+(defun agent-org-gemini-start-agent ()
+  "Start an interactive Gemini CLI agent-org chat.
+Gemini CLI serves ACP over stdio with the `--acp' flag (`gemini --acp', see
+https://geminicli.com/docs/cli/acp-mode); it keeps its own credentials —
+sign in with a Google account once outside Emacs, or export GEMINI_API_KEY
+for the documented headless path.  The harness image does not bake `gemini'
+yet, so this raises \"Command not found\" until `npm install -g
+@google/gemini-cli'."
+  (interactive)
+  (agent-org-start 'gemini))
 
 (defun agent-org--env-value (var)
   "The value of environment VAR, or nil when unset OR empty.
@@ -457,6 +505,20 @@ state dir this session binds, and that documented fallback."
     (when key
       (setq out (cons (format "DEEPSEEK_API_KEY=%s" key) out)))
     (nreverse out)))
+
+(defun agent-org-gemini-environment ()
+  "Return environment variables for the Gemini CLI ACP client.
+Nothing is exported by default: `gemini' keeps its own credential state under
+~/.gemini (cached Google sign-in, ADC, or a `.gemini/.env' it loads itself),
+and Emacs reading that store would make it a second source of truth for a
+secret.  The documented headless keys pass through, preferred-first —
+GEMINI_API_KEY (AI Studio) then GOOGLE_API_KEY (a Vertex AI API key) —
+because the authentication guide warns that setting either DISABLES the ADC
+route, so forwarding both would fight itself."
+  (let ((var (cond ((agent-org--env-value "GEMINI_API_KEY") "GEMINI_API_KEY")
+                   ((agent-org--env-value "GOOGLE_API_KEY") "GOOGLE_API_KEY"))))
+    (when var
+      (list (format "%s=%s" var (agent-org--env-value var))))))
 
 (provide 'agent-org-providers)
 ;;; agent-org-providers.el ends here

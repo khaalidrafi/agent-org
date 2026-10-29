@@ -212,3 +212,56 @@
   - ALLOWED FILES: agent-org-providers.el + tests/ (ERT required, byte-compile clean with error-on-warn); the provider drift test pins every id to its start-agent command.
   - TURN ORDER: #+TURN = qwen3.8-flash@qoder — take WO-16 first, then continue the port in file order. codebuddy seat takes segments when qoder stalls.
   - REPORT here after the segment; @lead for escalations.
+
+* MSG implementer-deepseek -> @lead :report:      :msg:implementer-deepseek:lead:report:
+:PROPERTIES:
+:FROM: implementer-deepseek
+:TO: lead
+:KIND: report
+:WHEN: [2026-10-29 Thu 16:24 UTC]
+:END:
+  RESULT: DONE — WO-16 segment 5, the last named body (gemini-cli) is wired.
+  Commit 92cf22d on ai/turn-20261029-1612.
+  - Docs verified BEFORE coding (the item's rule: never invent a command):
+    - geminicli.com/docs/cli/acp-mode, page dated 2026-04-10: "To start Gemini
+      CLI in ACP mode, use the `--acp' flag:  gemini --acp" — JSON-RPC 2.0 over
+      stdio, implementation in packages/cli/src/acp/acpClient.ts.
+    - Entry is :command ("gemini" "--acp"), NO pinned model: the guide routes
+      model changes through `unstable_setSessionModel', not a `model' config
+      option, and a pin rides `session/set_config_option' (agent-org.el,
+      `agent-org--apply-pinned-model'), which sends an advertised id only.
+    - Capabilities taken from the same method list, asymmetry stated rather
+      than smoothed over: `loadSession' present (resume-replay applies),
+      proxied filesystem present (unlike the pi adapter), `session/list'
+      ABSENT — so the picker may page nothing and the §10 degrade to
+      `session/new' handles it.
+  - Env: one documented headless key at a time, preferred-first
+    (GEMINI_API_KEY, else GOOGLE_API_KEY) — the auth guide cautions that a set
+    key disables ADC, so forwarding both would fight itself.  Nothing else
+    crosses; Secret Law respected (names only, never values).
+  - Gate (the landing gate runs the same commands):
+    - byte-compile clean with `byte-compile-error-on-warn t', all six files.
+    - ERT 457/457 main (4 new: provider shape, start-opens-itself, env
+      one-key, unbaked-body-fails-loud), 15/15 batch lane.
+    - Drift test green: it reads the GENERATED agent-org-autoloads.el, so the
+      cookie was added too (the half that bit three times before).
+  - GAP TO REPORT (not an escalation, Lead-owned work):
+    - `gemini' is NOT baked in this harness image.  Measured in-container:
+      on PATH = qoder goose opencode mcode copilot agent codebuddy omp pi dsh;
+      ABSENT = cline, gemini.
+    - Consequence: everything above is doc-verified, NEVER smoke-tested —
+      unlike omp and dsh, which 8ca27a8 proved with a live `initialize'.
+    - Fix is one Dockerfile line in ci/docker/harness (npm install -g
+      @google/gemini-cli); after it, an `initialize' probe should re-prove
+      loadSession and the absence of session/list.
+    - `test-agent-org-unbaked-body-fails-loud-not-silent' skips itself once
+      baked, so the suite keeps its meaning either way.
+  - WO-16 status: all five named bodies are now wired (omp, pi, dsh, mcode,
+    gemini) and the ten BAKED bodies each have an entry — the item can go to
+    REVIEW at your gate; DONE is yours alone.
+  - NOT attempted this segment: WO-1 Unit #185 (the converters).  #184 landed
+    (f3e2fb9) so #185 is unblocked, but its spec (TODOs.org:2055) needs the
+    two per-agent session-file writers, a new `:cross=' provider key and four
+    safety rails with a test each — that is a whole segment, and squeezing it
+    onto the tail of this one would land a half-finished feature.  Say the
+    word and the next segment of this seat opens on #185.
