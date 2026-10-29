@@ -63,14 +63,16 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   delegation and does not forward MCP servers to pi), and
   ~dsh --profile acp~ (DeepSeek Harness, where ACP is a profile rather
   than a flag; its automation surface omits ~session/load~, so a DSH chat
-  opens fresh instead of replaying history).
-  One more is wired but not baked in the harness image yet: ~gemini --acp~
-  (Gemini CLI --- the flag is spelled out in its own developer guide,
-  geminicli.com/docs/cli/acp-mode).  Its documented methods include
-  ~loadSession~ and it proxies the filesystem through the client, but its
-  model moves through ~unstable_setSessionModel~ rather than a ~model~
-  config option, so no model is pinned; open a Gemini chat after ~npm
-  install -g @google/gemini-cli~.
+  opens fresh instead of replaying history).  One more is wired but not
+  baked in the harness image yet: ~gemini --acp~ (Gemini CLI --- the flag is
+  spelled out in its own developer guide, geminicli.com/docs/cli/acp-mode).
+  Its documented methods include ~loadSession~ and it proxies the filesystem
+  through the client, but its model moves through ~unstable_setSessionModel~
+  rather than a ~model~ config option, so no model is pinned; open a Gemini
+  chat after ~npm install -g @google/gemini-cli~.  And ~devin acp~ (Devin,
+  CognitionAI/devin-cli — the same subcommand Zed, JetBrains and Xcode
+  spawn; its ACP server reads ~WINDSURF_API_KEY~ from the environment when
+  set, else the credentials stored by ~devin auth login~).
   slave-agent keeps its keys in a ~.env~ inside its state dir and its model in
   ~config.yaml~, both read by the adapter itself, so Emacs exports nothing for
   it; set ~SLAVE_HOME~ in the environment Emacs was started with to bind a
@@ -93,7 +95,9 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   once outside Emacs); the documented headless key passes through when
   present --- ~GEMINI_API_KEY~, or ~GOOGLE_API_KEY~ for the Vertex API-key
   route, and only one of them, because a set key disables Application
-  Default Credentials.
+  Default Credentials.  Devin authenticates via ~devin auth login~ once
+  outside Emacs, or export ~WINDSURF_API_KEY~ for headless use;
+  ~DEVIN_MODEL~ optionally names its default model.
 
 * Install
 
@@ -121,7 +125,7 @@ The checkout ships ~agent-org-autoloads.el~, so lazy loading via
              agent-org-codebuddy-start-agent
              agent-org-cline-start-agent
              agent-org-omp-start-agent agent-org-pi-start-agent
-             agent-org-dsh-start-agent))
+             agent-org-dsh-start-agent agent-org-devin-start-agent))
 #+end_src
 
 ** As a ~package.el~ package (tarball)
