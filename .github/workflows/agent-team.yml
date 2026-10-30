@@ -516,14 +516,38 @@ jobs:
           if ! git diff --quiet || ! git diff --cached --quiet; then
             git add -A
             if [ -n "${TURN_AGENT:-}" ]; then
-              # Author = the agent that ran; email = deterministic noreply
-              # (RFC 2606 .invalid — synthetic, never routable).
-              AGENT_EMAIL="$(printf '%s' "$TURN_AGENT" | tr '/' '-' | tr '@' '.')@agents.invalid"
-              GIT_AUTHOR_NAME="$TURN_AGENT" GIT_AUTHOR_EMAIL="$AGENT_EMAIL" \
-                git commit -m "host commits seat ${SEAT} workspace diff" \
+              # OWNER CORRECTION 2026-10-30 #hq + AGENTS.md format: author =
+              # MODEL <MODEL@PROVIDER> — the model NAME (older compliant
+              # commits: Qwen3.8-Flash <qwen3.8-flash@qoder.com>,
+              # GLM-5.3 <glm-5.3@z.ai>, DeepSeek V4.1 Flash <...@codebuddy.com>),
+              # never the raw lane string, never "unknown". Lane -> model id
+              # (strip runner prefix, take the pre-@ part); canonical map
+              # first, literal MODEL@PROVIDER fallback. Subject unified to
+              # the kit guard's reserved turn(<seat>) prefix so rule 3
+              # enforces authorship here too.
+              LANE=$(printf '%s' "$TURN_AGENT" | sed -E 's#^[A-Za-z0-9._-]+/##')
+              MODEL_ID=${LANE%%@*}
+              PROVIDER_PREFIX=$(printf '%s' "$TURN_AGENT" | sed -nE 's#^([A-Za-z0-9._-]+)/.*#\1#p')
+              MODEL_PROVIDER=${PROVIDER_PREFIX:-${LANE#*@}}
+              case "$MODEL_ID" in
+                qwen3.8-flash)       TURN_AUTHOR="Qwen3.8-Flash <qwen3.8-flash@qoder.com>" ;;
+                glm-5.3)             TURN_AUTHOR="GLM-5.3 <glm-5.3@z.ai>" ;;
+                glm-5.3-flash)       TURN_AUTHOR="GLM-5.3-Flash <glm-5.3-flash@z.ai>" ;;
+                glm-4.7-flash)       TURN_AUTHOR="GLM-4.7-Flash <glm-4.7-flash@z.ai>" ;;
+                glm-5.3-flash-free)  TURN_AUTHOR="glm-5.3-flash-free <glm-5.3-flash-free@opencode>" ;;
+                deepseek-v4.1-flash) TURN_AUTHOR="DeepSeek V4.1 Flash <deepseek-v4.1-flash@codebuddy.com>" ;;
+                kimi-k2.6)           TURN_AUTHOR="Kimi K2.6 <kimi-k2.6@kimi.ai>" ;;
+                qwen3.8-max)         TURN_AUTHOR="Qwen3.8-Max <qwen3.8-max@qwen.ai>" ;;
+                minimax-m3.1-flash)  TURN_AUTHOR="MiniMax-M3.1-Flash <minimax-m3.1-flash@openrouter.ai>" ;;
+                *)                   TURN_AUTHOR="$MODEL_ID <$MODEL_ID@$MODEL_PROVIDER>" ;;
+              esac
+              GIT_AUTHOR_NAME="${TURN_AUTHOR%% <*}" \
+              GIT_AUTHOR_EMAIL="$(printf '%s' "$TURN_AUTHOR" | sed -nE 's/.*<([^@]+@[^>]+)>.*/\1/p')" \
+                git commit -m "turn(${SEAT}): segment work — host-committed" \
                 -m "result: ${TURN_RESULT}" || echo "::notice::workspace commit failed"
             else
-              git commit -m "host commits seat ${SEAT} workspace diff" \
+              echo "::error::host-commit without a resolvable lane — fell back to CI author; fix the lane string (law: MODEL <MODEL@PROVIDER>)"
+              git commit -m "turn(${SEAT}): segment work — host-committed" \
                 -m "result: ${TURN_RESULT}" || echo "::notice::workspace commit failed"
             fi
           else
