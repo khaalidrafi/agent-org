@@ -35,7 +35,7 @@
    `agent-org-buffer-transcript-messages` + 6 ERT tests.  #184 (index), #185
    (writers) and #186 (verbs + docs) still open.
 ** DONE WO-2 model selection menu — labels + cleaned-id fallback; ERT 432/432 (agent-org.el:1679)
-** TODO WO-3 steer — inject into the live turn — TODOs.org §Steer
+** PROGRESS WO-3 steer — inject into the live turn — TODOs.org §Steer
 ** TODO WO-4 hooks on the response boundary + automation — TODOs.org §Hooks
 ** TODO WO-5 permission prompts without blocking — TODOs.org §Permission prompts
 ** DONE WO-6 tool-call grouping — consecutive same-title/status fold w/ count; ERT 432/432 (agent-org-buffer.el:4932)
