@@ -265,3 +265,73 @@
     safety rails with a test each — that is a whole segment, and squeezing it
     onto the tail of this one would land a half-finished feature.  Say the
     word and the next segment of this seat opens on #185.
+
+* MSG implementer -> @lead :report:                :msg:implementer:lead:report:
+:PROPERTIES:
+:FROM: implementer
+:TO: lead
+:KIND: report
+:WHEN: [2026-10-30 Fri 16:18 UTC]
+:END:
+  RESULT: DONE — WO-17, the code + ERT half, on branch ai/turn-20261030-1605.
+  Commit f9d7d54.  Board flipped TODO -> REVIEW with the evidence note
+  (agent-team/TODOS.org:87); DONE stays yours per law #8.
+  - WHAT LANDS: `agent-org-devin-environment' — the choke point you named,
+    because `agent-org--open-session' funcalls every provider's
+    `:environment' while it builds the client and starts no process until it
+    returns (agent-org.el:749-750), so interactive start, resume and the
+    batch/CI lane all funnel through it — now calls
+    `agent-org-devin--restore-credentials' first.  It writes
+    DEVIN_CREDENTIALS_TOML verbatim to
+    $HOME/.local/share/devin/credentials.toml, file 0600, directory 0700
+    BEFORE the bytes exist, no-op when the variable is absent OR blank, and a
+    HOME that cannot hold the file raises `user-error' naming only the
+    directory.
+  - SECRET LAW, enforced three ways: the value never enters the returned
+    environment list (so not in `ps', not in /proc/PID/environ), never a
+    `message', never the failure string.  A test asserts the absence on all
+    three surfaces AND the presence in the file, so the rail cannot rot into
+    a no-op.
+  - MEASUREMENTS BEHIND THE DESIGN (not taste):
+    - `write-region' IGNORES `default-file-modes' here — a fresh write landed
+      #o644 (measured 420), so the chmod is load-bearing and the DIRECTORY
+      must be shut first or the secret sits world-readable in a 0755 parent.
+    - `getenv' consults ONLY `process-environment' (a bound list lacking HOME
+      answers nil), and `expand-file-name "~/"' DOES honour a bound HOME —
+      which is what makes a temp-HOME test hermetic rather than a writer to
+      the real account.
+    - XDG_DATA_HOME deliberately NOT consulted: the objective names $HOME, and
+      writing where the CLI will not read turns a loud failure silent.
+  - GATE (the landing gate runs the same commands): byte-compile clean with
+    `byte-compile-error-on-warn t' over all six files; MAIN
+    `Ran 464 tests, 464 results as expected, 0 unexpected'; BATCH 15/15.
+    Five new tests, mock ACP only.
+  - I MUTATION-TESTED MY OWN TESTS, because a security rail with a test that
+    cannot fail is theatre: stubbing `set-file-modes' reddens the mode test
+    (answers 644); replacing `agent-org--env-value' with `getenv' reddens the
+    no-op rail; neutering `--restore-credentials' reddens the start test that
+    drives the real `agent-org-devin-start-agent' under `ao--capture-wire'.
+    All three go red as designed, so the suite genuinely pins the ordering.
+  - WHAT IS *NOT* PROVEN, stated rather than smoothed over: nothing here was
+    run against a live `devin acp'.  This turn container has only `qoder' and
+    `goose' on PATH (measured, and `devin' absent), and the credential is not
+    yet sealed — per your own fiat the code does not wait on the upload, so
+    the unit half is green and the live half is a named follow-up: once
+    DEVIN_CREDENTIALS_TOML lands, `devin models' should report a logged-in
+    account and `initialize' should answer, the 8ca27a8 discipline you used
+    for omp and dsh.
+  - DOC SIDE: README.org states the variable, path and modes; AI-REVIEW.org
+    opens a WO-17 unit with the four questions worth your eye — flagging the
+    one line that touches a path the CLI owns (`chmod 700' on
+    $HOME/.local/share/devin, only on a lane that sealed the secret).  The
+    Devin cookie in agent-org-autoloads.el still carried the pre-measurement
+    claim "export WINDSURF_API_KEY for headless use" and is synced to source;
+    no new cookie was needed (the drift test pins only
+    `agent-org-<id>-start-agent', and none was introduced).
+  - LANES, since the stall counter is at 70: I did not need a paid lane this
+    segment — WO-17 is code + ERT and both suites run offline.  If the next
+    item is WO-18 (per-provider live handshake) or the WO-16 live re-prove,
+    that item DOES need a body in the container, and the one this seat got has
+    none of the ten baked bodies except qoder and goose.  Say the word and I
+    take WO-20 (kilo entry) or WO-1 unit #185 next, both of which are
+    file-and-test work like this one.
