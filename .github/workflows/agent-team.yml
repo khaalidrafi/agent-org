@@ -619,8 +619,8 @@ jobs:
           echo "branch=${TURN_BRANCH:-}" >> "$GITHUB_OUTPUT"
           CTL=agent-team/CONTROL.org
           case "${{ steps.control.outputs.seat }}" in
-            implementer-deepseek) NEXT="deepseek-flash@qoder (Implementer)" ;;
-            implementer)          NEXT="deepseek-flash@qoder (Implementer)" ;;
+            implementer-deepseek) NEXT="qwen3.8-flash@qoder (Implementer)" ;;
+            implementer)          NEXT="qwen3.8-flash@qoder (Implementer)" ;;
             *)                    NEXT="qwen3.8-flash@qoder (Implementer)" ;;
           esac
           git checkout -f ai/quickstart
