@@ -95,7 +95,7 @@
    credentials.toml mode 600, no-op on absent/blank, content never
    logged; choke point the devin :environment fn) with the ERT set
    (unset/blank x temp HOME). Live seal happens when the Owner uploads.
-** TODO WO-18 provider works-test — live handshake per provider, evidence matrix
+** PROGRESS WO-18 provider works-test — live handshake per provider, evidence matrix
    Spec: CONTROL.org OBJECTIVE (Owner 2026-10-29 #hq). initialize
    handshake per provider, evidence matrix provider->verdict, gaps
    REPORTED never invented; includes proving/wiring the glm-5.3@chat.z.ai
