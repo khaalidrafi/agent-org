@@ -84,13 +84,51 @@
      baked with FATAL --version. REMAINING here: live initialize/loadSession
      re-prove per 8ca27a8 discipline + provider drift test green.
    :END:
-** TODO WO-17 devin credential restore — code + ERT now, live seal later
+** REVIEW WO-17 devin credential restore — code + ERT now, live seal later
    Owner fiat 2026-10-30 #hq: "cred. NOT required for working" — NO task
    waits on the vault upload. Implement the restore path per CONTROL.org
    OBJECTIVE (env DEVIN_CREDENTIALS_TOML -> $HOME/.local/share/devin/
    credentials.toml mode 600, no-op on absent/blank, content never
    logged; choke point the devin :environment fn) with the ERT set
    (unset/blank x temp HOME). Live seal happens when the Owner uploads.
+   :LOGBOOK:
+   - Note taken on 2026-10-30 16:20 UTC "code + ERT half delivered, live seal
+     still the Owner's upload (implementer, qwen3.8-flash@qoder)":
+     =agent-org-devin-environment= (the named choke point —
+     =agent-org--open-session= funcalls every provider's =:environment= while
+     it builds the client and starts no process until it returns, so the
+     interactive start, resume and the batch/CI lane all pass through it) now
+     calls =agent-org-devin--restore-credentials= first:
+     DEVIN_CREDENTIALS_TOML is written VERBATIM to
+     =$HOME/.local/share/devin/credentials.toml=, file 0600 and its directory
+     0700 BEFORE the bytes exist, no-op when the variable is absent OR blank
+     (=agent-org--env-value=, so a lane that never sealed a secret can never
+     erase a developer's real =devin auth login= store), and the value is
+     never forwarded into the child's environment, never =message='d, never in
+     a failure string.  A HOME that cannot hold the file raises =user-error=
+     rather than spawning a server measured (2026-10-29) to answer nothing and
+     exit 0.
+   - EVIDENCE: branch ai/turn-20261030-1605; 5 new ERT tests
+     (path+content+modes, unset/blank no-op against a seeded login file,
+     secret-absent-from-env-and-echo, loud-failure message leak check, and a
+     start-command test that drives the real spawn path under the mock).
+     GATE: byte-compile clean with =byte-compile-error-on-warn= over all six
+     files; =Ran 464 tests, 464 as expected, 0 unexpected= main, 15/15 batch,
+     provider drift test included.  MUTATION-VERIFIED (the tests must bite):
+     stubbing =set-file-modes= → the mode test fails with 644, proving the
+     chmod is load-bearing and that =write-region= ignores
+     =default-file-modes=; =agent-org--env-value= → =(getenv …)= → the no-op
+     rail fails; =--restore-credentials= → nil → the start test fails.
+   - NOT DONE HERE (needs the Owner's upload, never inventable in CI): the
+     live =devin acp= handshake with a sealed credential.  Every claim above
+     is unit-verified against a temp HOME only.  When
+     =DEVIN_CREDENTIALS_TOML= lands, the re-prove is =devin models= reporting a
+     logged-in account plus an =initialize= answer, per the 8ca27a8
+     discipline used for omp and dsh.
+   - Docs: README.org states the variable, the path and the modes;
+     AI-REVIEW.org opens a WO-17 unit with the four review questions (the
+     directory-0700 line is the one that touches a CLI-owned path).
+   :END:
 ** TODO WO-18 provider works-test — live handshake per provider, evidence matrix
    Spec: CONTROL.org OBJECTIVE (Owner 2026-10-29 #hq). initialize
    handshake per provider, evidence matrix provider->verdict, gaps
