@@ -84,7 +84,34 @@
      cline are wired entries the image does not provide, so they are
      deliberately NOT in that list — the test asserts only "no baked body
      lacks an entry", never a total.
+   - IMAGE GAP CLOSED 2026-10-30 (kit 260f1d2, Lead): gemini-cli 0.66.0
+     baked with FATAL --version. REMAINING here: live initialize/loadSession
+     re-prove per 8ca27a8 discipline + provider drift test green.
    :END:
+** TODO WO-17 devin credential restore — code + ERT now, live seal later
+   Owner fiat 2026-10-30 #hq: "cred. NOT required for working" — NO task
+   waits on the vault upload. Implement the restore path per CONTROL.org
+   OBJECTIVE (env DEVIN_CREDENTIALS_TOML -> $HOME/.local/share/devin/
+   credentials.toml mode 600, no-op on absent/blank, content never
+   logged; choke point the devin :environment fn) with the ERT set
+   (unset/blank x temp HOME). Live seal happens when the Owner uploads.
+** TODO WO-18 provider works-test — live handshake per provider, evidence matrix
+   Spec: CONTROL.org OBJECTIVE (Owner 2026-10-29 #hq). initialize
+   handshake per provider, evidence matrix provider->verdict, gaps
+   REPORTED never invented; includes proving/wiring the glm-5.3@chat.z.ai
+   lane (ZAI_API_KEY on file) for the Senior EL seat.
+** TODO WO-19 agentic scripting — org-file prompt-queue script runner
+   Spec: CONTROL.org OBJECTIVE (Owner 2026-10-29 #hq). Design (file
+   format + API + abort/continue semantics) BEFORE code; sequential
+   batch-lane execution; results written back into the org file; ERT.
+** TODO WO-20 kilo provider entry — half (b) of the kilo add
+   Half (a) DONE 2026-10-30 (kit 260f1d2: @kilocode/cli baked, command
+   kilo, FATAL version check, no creds). Remaining seat half: ACP
+   provider entry in agent-org-providers.el on the native server
+   `kilo acp' + provider drift test green (WO-16 discipline); verify
+   the ACP surface in the CLI's own docs/help before wiring — REPORT
+   gaps never invent (dsh precedent). Update the parity roster test's
+   transcribed list when the entry lands.
 ** ONGOING CI-kit adoption (teamify, Lead) — ci/ submodule bumped to 479480b
    2026-10-29 (deduped prompt laws + Cursor env law): dual-law harness baked,
    per-seat session reuse ON, .agent-org transcripts committed
