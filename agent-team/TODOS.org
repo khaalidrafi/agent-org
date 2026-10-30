@@ -134,10 +134,47 @@
    handshake per provider, evidence matrix provider->verdict, gaps
    REPORTED never invented; includes proving/wiring the glm-5.3@chat.z.ai
    lane (ZAI_API_KEY on file) for the Senior EL seat.
-** TODO WO-19 agentic scripting — org-file prompt-queue script runner
+** PROGRESS WO-19 agentic scripting — org-file prompt-queue script runner
    Spec: CONTROL.org OBJECTIVE (Owner 2026-10-29 #hq). Design (file
    format + API + abort/continue semantics) BEFORE code; sequential
    batch-lane execution; results written back into the org file; ERT.
+   :LOGBOOK:
+   - Note taken on 2026-10-30 18:55 UTC "DESIGN LANDED in TODOs.org; code not started (implementer)":
+     =TODOs.org= opens =** TODO Agentic scripting --- an Org file that runs
+     its own prompt queue (WO-19)= with the format (level-1 heading = one
+     step, =#+AGENT_ORG_SCRIPT_<KEY>= file defaults, per-step properties
+     drawer, runner-owned =:RESULTS:= drawer + example block), the
+     execution model (one =agent-org-batch.el= subprocess per step over the
+     existing =AGENT_ORG_*= contract, session continuity through the
+     already-proven =AGENT_ORG_SESSION_OUT= → =_ID= pair), the
+     abort/continue semantics (record at every boundary, =DONE= skipped,
+     =C-u= re-run all, =C-u C-u= re-run from first non-DONE,
+     =stop-on-error= default t, mtime guard before every write, one run per
+     file, =max-steps= fuel cap + =script-plan= dry run) and the API
+     (=plan=, =run=, =run-step=, =continue=, =clear=, =run-file=,
+     =C-c a= keys).  Build order split into units #187 parser, #188 plan +
+     env, #189 driver, #190 write-back + verbs + docs + e2e, each with its
+     test list.  Code lands in =agent-org-batch.el= +
+     =tests/test-agent-org-batch.el= because the CI gate
+     (=.github/workflows/agent-team.yml:328-336=) hard-codes six compiled
+     files and TWO test files — a new source/test pair would pass locally
+     and never run in CI until the Lead extends those lists.
+   - REPORTED, not invented (dsh precedent): per-step permission/MODE is
+     OUT of v1 — nothing in the package SENDS a mode today (only
+     =agent-org--session-modes= reads =current_mode_update=; the single
+     config write on the send path is the model one,
+     =agent-org--set-model-request=, agent-org.el:549), so =MODE:= is
+     refused at parse time naming what it would need (=session/set_mode=
+     + drift discipline).  Also deferred with the slot named: =FROM:=
+     pipeline substitution (Owner's wording reads as sequence, and
+     =keep=-chaining already gives agent-side memory) and one live chat
+     buffer per step (§12's child-reaping problem inside a loop).
+   - THREE-STATE FACT recorded in the design: a failed resume in the batch
+     lane DEGRADES to a fresh session silently
+     (=agent-org-batch.el:222-254=), so the runner compares the id it fed
+     in with the id it got out and files =:CONTEXT: broken= — a lost hop
+     must be visible, never believed.
+   :END:
 ** TODO WO-20 kilo provider entry — half (b) of the kilo add
    Half (a) DONE 2026-10-30 (kit 260f1d2: @kilocode/cli baked, command
    kilo, FATAL version check, no creds). Remaining seat half: ACP
