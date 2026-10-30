@@ -63,8 +63,9 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   delegation and does not forward MCP servers to pi), and
   ~dsh --profile acp~ (DeepSeek Harness, where ACP is a profile rather
   than a flag; its automation surface omits ~session/load~, so a DSH chat
-  opens fresh instead of replaying history).  One more is wired but not
-  baked in the harness image yet: ~gemini --acp~ (Gemini CLI --- the flag is
+  opens fresh instead of replaying history).  One more, wired from its own
+  vendor docs and baked into the harness image since 2026-10-30:
+  ~gemini --acp~ (Gemini CLI --- the flag is
   spelled out in its own developer guide, geminicli.com/docs/cli/acp-mode).
   Its documented methods include ~loadSession~ and it proxies the filesystem
   through the client, but its model moves through ~unstable_setSessionModel~
@@ -74,6 +75,12 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   spawn; its ACP server honors only the credentials stored by ~devin auth
   login~ --- ~WINDSURF_API_KEY~ serves Devin's cloud sessions, not local
   ACP).
+  And ~kilo acp~ (Kilo Code, Kilo-Org/kilocode --- an OpenCode fork, which is
+  why its ACP surface is the fullest one here: ~loadSession~ true and session
+  list/resume/fork/close advertised, so a Kilo chat resumes by replay AND the
+  ~C-c a v~ pager has something to page; it also exposes a ~model~ config
+  option and ~setSessionMode~.  No model is pinned --- picking one the user
+  never named would be a package default, so choose it with ~C-c a m~).
   slave-agent keeps its keys in a ~.env~ inside its state dir and its model in
   ~config.yaml~, both read by the adapter itself, so Emacs exports nothing for
   it; set ~SLAVE_HOME~ in the environment Emacs was started with to bind a
@@ -87,7 +94,12 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   ~/login <provider>~ and pi reads its own config; no environment variable is
   required.  Cursor authenticates via ~agent login~ (or export
   ~CURSOR_API_KEY~ / ~CURSOR_AUTH_TOKEN~), and Copilot also honours
-  ~COPILOT_GITHUB_TOKEN~ for headless use.  DSH keeps credentials in
+  ~COPILOT_GITHUB_TOKEN~ for headless use.  Kilo Code keeps its own login
+  (~kilo auth login~ / ~kilo auth logout~); its three documented environment
+  overrides pass through when the environment already names them ---
+  ~KILO_PROVIDER~ (which provider ID the session uses), ~KILO_API_KEY~ (the
+  docs' own example of the ~KILO_<FIELD_NAME>~ mapping) and ~KILO_ORG_ID~,
+  which the docs recommend for non-interactive and CI use.  DSH keeps credentials in
   ~$DSH_HOME/.credentials.yaml~ (its official DeepSeek route falls back to
   ~DEEPSEEK_API_KEY~), and ~DSH_HOME~ plus OMP's ~OMP_PROFILE~ /
   ~PI_CONFIG_DIR~ pass through when set, which is how an Emacs chat binds
@@ -132,7 +144,8 @@ The checkout ships ~agent-org-autoloads.el~, so lazy loading via
              agent-org-codebuddy-start-agent
              agent-org-cline-start-agent
              agent-org-omp-start-agent agent-org-pi-start-agent
-             agent-org-dsh-start-agent agent-org-devin-start-agent))
+             agent-org-dsh-start-agent agent-org-devin-start-agent
+             agent-org-gemini-start-agent agent-org-kilo-start-agent))
 #+end_src
 
 ** As a ~package.el~ package (tarball)
