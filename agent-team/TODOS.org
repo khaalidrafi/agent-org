@@ -83,6 +83,13 @@
    - IMAGE GAP CLOSED 2026-10-30 (kit 260f1d2, Lead): gemini-cli 0.66.0
      baked with FATAL --version. REMAINING here: live initialize/loadSession
      re-prove per 8ca27a8 discipline + provider drift test green.
+   - DRIFT HALF CLOSED 2026-10-30 (implementer, 745f888, on the WO-20 landing):
+     the parity test's transcribed roster is now the FULL 14 body stages
+     (devin, cline, gemini, kilo added; pi-acp is not a row — it is what the pi
+     provider spawns), and the provider drift test is green including its
+     autoload half.  STILL REMAINING for this item: the live re-prove, which
+     needs a container carrying the bodies — measured 2026-10-30, this turn's
+     had only qoder and goose, so WO-18 is where the matrix gets filled.
    :END:
 ** REVIEW WO-17 devin credential restore — code + ERT now, live seal later
    Owner fiat 2026-10-30 #hq: "cred. NOT required for working" — NO task
@@ -138,7 +145,7 @@
    Spec: CONTROL.org OBJECTIVE (Owner 2026-10-29 #hq). Design (file
    format + API + abort/continue semantics) BEFORE code; sequential
    batch-lane execution; results written back into the org file; ERT.
-** TODO WO-20 kilo provider entry — half (b) of the kilo add
+** REVIEW WO-20 kilo provider entry — half (b) of the kilo add
    Half (a) DONE 2026-10-30 (kit 260f1d2: @kilocode/cli baked, command
    kilo, FATAL version check, no creds). Remaining seat half: ACP
    provider entry in agent-org-providers.el on the native server
@@ -146,6 +153,52 @@
    the ACP surface in the CLI's own docs/help before wiring — REPORT
    gaps never invent (dsh precedent). Update the parity roster test's
    transcribed list when the entry lands.
+   :LOGBOOK:
+   - State "REVIEW" from "PROGRESS" [2026-10-30 Fri 17:01 UTC]
+     DELIVERED on branch ai/turn-20261030-1647, commit 745f888.  DONE is
+     yours per law #8.
+   - Note taken on 2026-10-30 17:01 UTC "entry wired from vendor docs + source
+     (implementer, qwen3.8-flash@qoder)":
+     =agent-org-providers.el= gained the =kilo= entry (:command ("kilo" "acp"),
+     no pinned model), =agent-org-kilo-environment=, =agent-org-kilo-start-agent=
+     WITH its autoload cookie, and a choice tag in
+     =agent-org-default-provider=.  Verification was done before coding, per the
+     item's rule: the subcommand from kilo.ai's own CLI reference, the STDIO
+     transport from packages/opencode/src/cli/cmd/acp.ts (=ndJsonStream= over
+     =process.stdin=/=process.stdout=; the --port/--hostname/--mdns/--cors flags
+     are the shared local-server options that =kilo [project]= takes too, and
+     the bridge reaches that server through its own SDK client), the capability
+     set from the =initialize= response in src/acp/service.ts (=loadSession t=,
+     sessionCapabilities close/fork/list/resume, promptCapabilities
+     embeddedContext/image, mcpCapabilities http/sse, agentInfo "Kilo"), and the
+     config-option ids =model=/=effort=/=mode= from src/acp/config-option.ts.
+     Second, independent corroboration of the argv: acpx registers
+     installedArgv ["kilo" "acp"].
+   - ROSTER UPDATED as this item ordered: the parity test's transcribed list is
+     14 bodies (devin, cline, gemini, kilo added), the count being the pin that
+     forces a re-transcription when the image gains a body; =body-pi-acp= is not
+     a row (it is what the =pi= provider spawns).  One-directional parity kept.
+   - EVIDENCE: 3 new ERT (shape, start-opens-itself, env pass-through AND the
+     KILO_SERVER_* refusal); GATE = clean rebuild, byte-compile zero warnings
+     over all six files with =byte-compile-error-on-warn=, =Ran 467 tests, 467
+     as expected, 0 unexpected= main, 15/15 batch, drift test green including its
+     AUTOLOAD half.  MUTATION-VERIFIED (4 probes, each restored): cookie removed
+     → drift red; =KILO_SERVER_PASSWORD= forwarded → env test red; start-agent
+     pointed at ='devin= → start test red; roster kilo pair dropped → count red.
+   - GAP, REPORTED NOT INVENTED: =kilo= is ABSENT from this container's PATH
+     (measured: only qoder and goose), so NOTHING here was smoke-tested against
+     a live =kilo acp= — the same standing gemini had, and the row WO-18's
+     matrix should fill (one =initialize= expecting agentInfo "Kilo", loadSession
+     t, sessionCapabilities close/fork/list/resume).
+   - Side observation for WO-18, NOT acted on (out of this item's scope): acpx
+     registers Copilot as ["copilot", "--acp", "--stdio"] while our entry is
+     ("copilot" "--acp") — unverified lead, worth a vendor-doc check before a
+     Copilot lane is believed.
+   - Docs: README.org states the subcommand, the stdio reading, the config
+     options and the env set; AI-REVIEW.org opens a WO-20 unit with the four
+     review questions (the stdio judgment first, since a wrong reading there
+     hangs every Kilo chat silently).
+   :END:
 ** ONGOING CI-kit adoption (teamify, Lead) — ci/ submodule bumped to 479480b
    2026-10-29 (deduped prompt laws + Cursor env law): dual-law harness baked,
    per-seat session reuse ON, .agent-org transcripts committed
