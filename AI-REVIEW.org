@@ -3160,3 +3160,63 @@ unit-verified against a temp HOME, never proven against a real =devin acp=.
 After the Owner seals it: one turn with the variable set and HOME pointing at
 a scratch copy, then =devin models= should report a logged-in account and an
 =initialize= should answer (the 8ca27a8 discipline used for omp and dsh).
+
+* Kilo Code ACP provider (WO-20 half (b), added 2026-10-30)
+
+Owner order 2026-10-29 #hq "add Kilo Code": the harness image already bakes the
+body (half (a), kit 260f1d2); this half wires =kilo acp= as a provider.  The
+questions below are the ones worth a human eye — the command shape itself is
+pinned by tests.
+
+** TODO Decide whether the Kilo env allow-list is the right list
+
+=agent-org-kilo-environment= forwards exactly four variables, each quoted from
+the CLI's own page: =KILO_API_KEY= (the documented =KILO_<FIELD_NAME>= -> apiKey
+override), =KILO_PROVIDER= (active provider id), =KILOCODE_MODEL= (the
+=KILOCODE_<FIELD_NAME>= selector) and =KILO_ORG_ID= ("Best for non-interactive
+and CI environments").  =KILO_CONFIG_CONTENT= is deliberately EXCLUDED: it
+carries a whole config body that can hold other providers' keys, so forwarding
+it would make this package a carrier for secrets it cannot audit.
+
+The genuinely open one is =KILO_CONFIG= (a PATH, not a secret), also excluded.
+It might belong: =acp-make-client='s =:environment-variables= is consumed by the
+real =acp.el=, and this checkout runs against =tests/acp-mock.el=, so
+append-versus-replace semantics could not be measured here (no =acp= package in
+this container).  If it APPENDS, excluding the path costs nothing — the child
+inherits it anyway.  If it REPLACES, a CI lane that points Kilo at a trusted
+config file silently loses it.  Read =acp.el= once and say which rail to trust;
+every other provider function in that file was written under the same
+uncertainty, so the answer settles more than this entry.
+
+** TODO Read the shape as doc-verified, not proven
+
+=(("kilo" "acp"))= is quoted from the kilo.ai CLI Command Reference — "start ACP
+(Agent Client Protocol) server", options =--port=, =--hostname=, =--mdns=,
+=--mdns-domain=, =--cors=, =--cwd= — and matches how Zed's ACP Registry spawns the
+same command over stdio (=npx @kilocode/cli@7.8.18 acp=), so =kilo --acp= would
+have been the invented shape.  What is NOT known, and is stated in the entry
+instead of guessed: no =model= config-option id and no =session/list= /
+=loadSession= capability appear in that documentation, so =:model= is unset and
+the entry claims no resume.  The CLI is described as an OpenCode fork that
+"supports the same configuration options", which HINTS at an advertised model
+option — judge whether you are comfortable shipping the entry on docs alone
+until WO-18 records a live =initialize=, or whether an unproven body should sit
+out of =agent-org-providers= entirely.
+
+** TODO Check the parity roster re-transcription (10 -> 14)
+
+=test-agent-org-every-harness-body-is-a-provider= asserted ten bodies, transcribed
+when the image baked ten.  ci/ ef44236 builds fourteen (devin, cline, gemini and
+kilo arrived since; =body-pi-acp= is the =pi= entry's server, not a fifteenth).
+The list now names all fourteen and the count assertion moved to 14.  Verify two
+things: that the four added pairs really are the binaries those stages install,
+and that the one-directional law still reads correctly — "no baked body lacks an
+entry", never a total, so a future body must not redden the suite for no reason.
+
+** DONE Test and build state for this unit
+
+Byte-compile clean with =byte-compile-error-on-warn t= over all six files; main
+suite =Ran 468 tests, 468 results as expected, 0 unexpected= (four new: shape,
+start-opens-kilo, env allow-list, absent-binary-loud-failure), batch 15/15.  The
+autoload cookie for =agent-org-kilo-start-agent= is in =agent-org-autoloads.el=,
+which is what the provider drift test actually reads.

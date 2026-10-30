@@ -138,7 +138,7 @@
    Spec: CONTROL.org OBJECTIVE (Owner 2026-10-29 #hq). Design (file
    format + API + abort/continue semantics) BEFORE code; sequential
    batch-lane execution; results written back into the org file; ERT.
-** TODO WO-20 kilo provider entry — half (b) of the kilo add
+** PROGRESS WO-20 kilo provider entry — half (b) of the kilo add
    Half (a) DONE 2026-10-30 (kit 260f1d2: @kilocode/cli baked, command
    kilo, FATAL version check, no creds). Remaining seat half: ACP
    provider entry in agent-org-providers.el on the native server
@@ -146,6 +146,23 @@
    the ACP surface in the CLI's own docs/help before wiring — REPORT
    gaps never invent (dsh precedent). Update the parity roster test's
    transcribed list when the entry lands.
+   :LOGBOOK:
+   - Note taken on 2026-10-30 16:36 UTC "segment started, docs verified first (implementer, qwen3.8-flash@qoder)":
+     ACP surface verified in the vendor's own pages BEFORE wiring: the kilo.ai
+     CLI Command Reference names `kilo acp` as a SUBCOMMAND ("start ACP (Agent
+     Client Protocol) server", options --port/--hostname/--mdns/--mdns-domain/
+     --cors/--cwd), and Zed's ACP registry listing spawns `npx @kilocode/cli@
+     7.8.18 acp' — so stdio, and `kilo --acp' would be the invented shape.
+     Auth is the CLI's own store (`kilo auth login [url]`, interactive
+     `/connect`); the documented env overrides are KILO_PROVIDER,
+     KILOCODE_<FIELD> (KILOCODE_MODEL), KILO_<FIELD> (KILO_API_KEY) and
+     KILO_ORG_ID ("Best for non-interactive and CI environments"). NOTHING
+     pinned as model and NO resume claim: the `kilo acp` option block carries
+     no --model and no page names an ACP `model` config-option id or a
+     `session/list`/`loadSession` capability (gemini precedent: doc-verified
+     only). This container has no `kilo` on PATH (measured: qoder + goose
+     only), so the live initialize re-prove stays WO-18.
+   :END:
 ** ONGOING CI-kit adoption (teamify, Lead) — ci/ submodule bumped to 479480b
    2026-10-29 (deduped prompt laws + Cursor env law): dual-law harness baked,
    per-seat session reuse ON, .agent-org transcripts committed
