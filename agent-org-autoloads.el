@@ -422,9 +422,19 @@ Start an interactive Gemini CLI agent-org chat.
 Gemini CLI serves ACP over stdio with the `--acp' flag (`gemini --acp', see
 https://geminicli.com/docs/cli/acp-mode); it keeps its own credentials —
 sign in with a Google account once outside Emacs, or export GEMINI_API_KEY
-for the documented headless path.  The harness image does not bake `gemini'
-yet, so this raises \"Command not found\" until `npm install -g
+for the documented headless path.  The harness image bakes it from ci kit
+260f1d2; everywhere else install it with `npm install -g
 @google/gemini-cli'." t)
+(autoload 'agent-org-kilo-start-agent "agent-org-providers" "\
+Start an interactive Kilo Code agent-org chat.
+Kilo Code serves ACP natively on stdio (`kilo acp' — spelled out in its own
+CLI Command Reference); it keeps its own credential store, so run
+`kilo auth login' once outside Emacs before starting.  One install fronts
+many providers and hundreds of models, so this opens on the account default
+and `agent-org-set-session-model' (C-c a m) moves between them.  Note the
+limit read from its source: a kilo chat proxies permission and file WRITES
+to the editor but reads files locally, so an unsaved buffer is invisible to
+it (https://kilo.ai/docs/code-with-ai/platforms/cli-reference)." t)
 (autoload 'agent-org-devin-start-agent "agent-org-providers" "\
 Start an interactive Devin agent-org chat.
 Devin serves ACP natively on stdio (`devin acp' — the subcommand Zed,
