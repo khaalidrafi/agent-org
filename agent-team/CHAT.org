@@ -335,3 +335,80 @@
     none of the ten baked bodies except qoder and goose.  Say the word and I
     take WO-20 (kilo entry) or WO-1 unit #185 next, both of which are
     file-and-test work like this one.
+
+* MSG implementer -> @lead :report:                :msg:implementer:lead:report:
+:PROPERTIES:
+:FROM: implementer
+:TO: lead
+:KIND: report
+:WHEN: [2026-10-30 Fri 18:08 UTC]
+:END:
+  RESULT: DONE — WO-20 half (b), the kilo provider entry.  Commit 4f07017 on
+  branch ai/turn-20261030-1755.  Board flipped TODO -> PROGRESS -> REVIEW with
+  the evidence note (agent-team/TODOS.org:141); DONE stays yours per law #8.
+  - VERIFIED BEFORE CODING (the dsh/gemini law — never invent a command):
+    - Launch shape quoted from the CLI's own reference,
+      kilo.ai/docs/code-with-ai/platforms/cli-reference: "kilo acp — start ACP
+      (Agent Client Protocol) server", flags --help/--version/--port (0)/
+      --hostname (127.0.0.1)/--mdns/--mdns-domain/--cors/--cwd.
+    - WHY our command carries NO network flag: Kilo's CLI is an OpenCode fork
+      and packages/opencode/src/cli/cmd/acp.ts listens on a localhost port for
+      the CLI's OWN HTTP API, then bridges ACP as ndJSON over
+      process.stdin/process.stdout.  Adding --port would widen a private API,
+      not change the transport — so ("kilo" "acp") is the whole shape.
+    - Capabilities read from that fork's initialize response
+      (packages/opencode/src/acp/service.ts): loadSession TRUE,
+      sessionCapabilities close/fork/LIST/resume, mcpCapabilities http+sse,
+      promptCapabilities image+embeddedContext, plus setSessionMode and
+      setSessionModel.  That is the fullest ACP surface of any entry here —
+      resume-replay AND the C-c a v pager both apply, unlike dsh (no load) and
+      gemini (docs name no list).
+    - Auth: its own store (`kilo auth login [url]' / `kilo auth logout'), and
+      the documented "Environment Variable Overrides" name exactly three
+      variables — KILO_PROVIDER, KILO_API_KEY (their own KILO_<FIELD_NAME> ->
+      apiKey example) and KILO_ORG_ID ("best for non-interactive and CI").
+      Only those three cross in `agent-org-kilo-environment'.  KILOCODE_<FIELD>
+      was NOT forwarded: the only field the docs spell for that prefix is
+      KILOCODE_MODEL, a model selector — forwarding it would silently re-point a
+      developer's configured provider.  No value is ever logged, Secret Law.
+  - PIN DECISION, stated not smoothed: kilo DOES advertise a `model' config
+    option (config-option.ts builds id "model", name "Model"), so a :model pin
+    would actually be SENDABLE via `agent-org--apply-pinned-model' — we pin
+    nothing because naming a model the Owner did not choose is inventing, and
+    C-c a m is the interactive path.  Worth your eye: third-party guides for
+    driving Kilo over ACP warn a fresh session may default to a poor model, so
+    if you want a project default, the place is the provider plist.  That
+    question is in AI-REVIEW.org as a WO-20 unit (four review items).
+  - GATE (the landing gate runs the same commands): byte-compile clean with
+    `byte-compile-error-on-warn t' over all six files; MAIN "Ran 468 tests,
+    468 results as expected, 0 unexpected" (4 new: shape+no-pin+no-flag,
+    start-opens-its-own-id, env allow-list, missing-binary-raises-loud);
+    BATCH 15/15; drift test green — it reads the GENERATED agent-org-autoloads.el,
+    so the cookie is in the commit (the half that bit three times before).
+    Tests MUTATION-CHECKED: giving the command a "--port" "0" reddens the shape
+    test; forwarding a KILOCODE_MODEL reddens the env test.  Neither rail is
+    theatre.
+  - ROSTER, per your board line "update the transcribed list when the entry
+    lands": re-transcribed from the PINNED ci/ checkout (ef442363) — the
+    Dockerfile's final stage COPYs FOURTEEN bodies (ci/docker/harness/
+    Dockerfile:322-351), so devin, cline and gemini join the ten that were
+    listed, plus kilo.  Each of them has an entry; the assertion stays
+    one-directional, so a future body never reddens the suite for no reason.
+  - EVIDENCE GAP, REPORTED: `kilo' was ABSENT from this container's PATH
+    (measured 2026-10-30; on PATH here = qoder, goose only).  The image the
+    seat ran in lags the kit that bakes kilo — so everything above is
+    docs-and-source verified, NEVER smoke-tested.  `test-agent-org-kilo-body-
+    must-fail-loud-when-not-in-image' pins today's honest behaviour (a
+    `user-error', not a silent chat) and skips itself once the image catches
+    up.  The live re-prove is the 8ca27a8 discipline: initialize -> expect
+    loadSession t, and a sessionCapabilities.list that ANSWERS (a capability
+    in the advertisement is not a useful history directory — the goose lesson).
+  - LANES: this segment needed no paid lane, it is file-and-test work.  But
+    the same measurement says WO-18 (live handshake for EVERY provider) and the
+    WO-16 live re-prove cannot be done from this image: twelve of fourteen
+    bodies are absent here.  That is a harness-image question, not a code one.
+  - NOT attempted this segment: WO-1 unit #185 (the cross-agent converters —
+    two per-agent session-file writers, a new :cross provider key, four safety
+    rails with a test each; a full segment) and WO-19/WO-18 (both need more
+    than this seat's image).  Say the word and the next segment of this seat
+    opens on #185.
