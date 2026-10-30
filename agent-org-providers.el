@@ -250,7 +250,48 @@
   (list :id 'devin
         :name "Devin"
         :command '("devin" "acp")
-        :environment #'agent-org-devin-environment))
+        :environment #'agent-org-devin-environment)
+   ;; Kilo Code (Kilo-Org/kilocode, npm @kilocode/cli) serves ACP natively with
+   ;; the `acp' SUBCOMMAND — verified in the CLI's own reference BEFORE wiring
+   ;; (kilo.ai/docs/code-with-ai/platforms/cli-reference): "kilo acp — start ACP
+   ;; (Agent Client Protocol) server".  TRANSPORT, because that reference lists
+   ;; `--port', `--hostname', `--mdns' and `--cors' and a listening server would
+   ;; NOT be an stdio agent: the command source (packages/opencode/src/cli/cmd/
+   ;; acp.ts) builds `ndJsonStream' over `process.stdout' / `process.stdin' and
+   ;; drives `process.stdin.resume()', so the client's framing is stdio ndjson
+   ;; exactly like every entry here; those flags are the SHARED local-server
+   ;; options (packages/opencode/src/cli/network.ts, `port' default 0 = a random
+   ;; port on 127.0.0.1) that `kilo [project]' takes too — `kilo acp' starts one
+   ;; and talks to it through its own SDK client (`createKiloClient({baseUrl:
+   ;; http://hostname:port})'), which is why `--cwd' rather than a URL is the
+   ;; option a client cares about.  A second, independent confirmation: acpx, a
+   ;; headless stdio ACP client, registers the agent as
+   ;; `installedArgv: ["kilo", "acp"]'.
+   ;; CAPABILITIES are read from the `initialize' response in packages/opencode/
+   ;; src/acp/service.ts: `loadSession t', `sessionCapabilities' (close, fork,
+   ;; list, resume — each an empty object, the shape
+   ;; `agent-org--lists-sessions-p' tests by presence), `promptCapabilities'
+   ;; (embeddedContext, image) and `mcpCapabilities' (http, sse), with agentInfo
+   ;; name "Kilo".  So resume-replay AND the session pager both apply, unlike
+   ;; DSH.  Config options come from src/acp/config-option.ts: ids `model',
+   ;; `effort' and `mode', handled by `session/set_config_option', so C-c a m and
+   ;; the mode display both work — yet NOTHING is pinned, because Kilo is one
+   ;; product fronting its own catalog ("500+ AI models") and ~/.config/kilo/
+   ;; kilo.jsonc already names the default.  Its `authenticate' step is a no-op
+   ;; that only checks the method id, and the advertised auth method says
+   ;; "Run `kilo auth login` in the terminal", so login is out-of-band (the
+   ;; Cursor/Cline story); note the vendor's own `terminal-auth' hint names the
+   ;; command `opencode', not `kilo' (a fork slip) — agent-org sends no
+   ;; terminal-auth capability, so nothing reads it.
+   ;; NOT LIVE-SMOKE-TESTED HERE: the harness bakes the body (ci/docker/harness/
+   ;; Dockerfile `body-kilo', WO-20 half (a)) but this turn's container has no
+   ;; `kilo' on PATH (measured 2026-10-30), so every claim above is
+   ;; docs-and-source-verified, and an `initialize' probe should re-prove it the
+   ;; way 8ca27a8 re-proved omp and dsh.
+   (list :id 'kilo
+         :name "Kilo"
+         :command '("kilo" "acp")
+         :environment #'agent-org-kilo-environment))
   "List of supported ACP providers.
 Each entry is a plist; see `agent-org-providers.el' commentary."
   :type '(repeat sexp)
@@ -278,6 +319,7 @@ live on that path from this package -- until then the claim is untested."
                  (const :tag "DSH" dsh)
                  (const :tag "Gemini" gemini)
                  (const :tag "Devin" devin)
+                 (const :tag "Kilo" kilo)
                  (symbol :tag "Other provider id"))
   :group 'agent-org)
 
@@ -411,6 +453,18 @@ A machine with no browser can carry that login file instead: export
 DEVIN_CREDENTIALS_TOML and it is placed before the spawn."
   (interactive)
   (agent-org-start 'devin))
+
+;;;###autoload
+(defun agent-org-kilo-start-agent ()
+  "Start an interactive Kilo Code agent-org chat.
+Kilo Code serves ACP natively on stdio (`kilo acp' — its own CLI reference
+names that subcommand, and acpx spawns the same argv); it keeps its own
+credentials, so run `kilo auth login' once outside Emacs if this fails to
+start.  It advertises `model', `effort' and `mode' as config options, so
+`agent-org-set-session-model' (C-c a m) and the mode display both work, and
+it supports `session/load', so a Kilo chat resumes by replaying history."
+  (interactive)
+  (agent-org-start 'kilo))
 
 (defun agent-org--env-value (var)
   "The value of environment VAR, or nil when unset OR empty.
@@ -629,6 +683,38 @@ starts the process only after it returns."
       (setq out (cons (format "WINDSURF_API_KEY=%s" key) out)))
     (when model
       (setq out (cons (format "DEVIN_MODEL=%s" model) out)))
+    (nreverse out)))
+
+(defun agent-org-kilo-environment ()
+  "Return environment variables for the Kilo Code ACP client.
+Nothing is exported by default: Kilo keeps its credentials in its own store
+(`kilo auth login' / `kilo auth list') and its provider, model and
+permission settings in `~/.config/kilo/kilo.jsonc', and Emacs reading that
+store would make it a second source of truth for a secret.  What crosses is
+pass-through only, and only what a chat legitimately chooses:
+`KILO_CONFIG' / `KILO_CONFIG_DIR' (the trusted-config locations the CLI's own
+env-var doc names), `KILO_PROVIDER' (the documented override of the active
+provider id), `KILO_API_KEY' (the Kilo gateway key, the `KILO_<FIELD_NAME>'
+spelling for a provider's `apiKey' field) and `KILO_ORG_ID', which the
+organization guide recommends for non-interactive and CI use.  Per
+`agent-org--env-value' a blank counts as absent, so a blank KILO_PROVIDER can
+never override the CLI's own config with nothing."
+  (let ((config (agent-org--env-value "KILO_CONFIG"))
+        (config-dir (agent-org--env-value "KILO_CONFIG_DIR"))
+        (provider (agent-org--env-value "KILO_PROVIDER"))
+        (key (agent-org--env-value "KILO_API_KEY"))
+        (org (agent-org--env-value "KILO_ORG_ID"))
+        (out nil))
+    (when config
+      (setq out (cons (format "KILO_CONFIG=%s" config) out)))
+    (when config-dir
+      (setq out (cons (format "KILO_CONFIG_DIR=%s" config-dir) out)))
+    (when provider
+      (setq out (cons (format "KILO_PROVIDER=%s" provider) out)))
+    (when key
+      (setq out (cons (format "KILO_API_KEY=%s" key) out)))
+    (when org
+      (setq out (cons (format "KILO_ORG_ID=%s" org) out)))
     (nreverse out)))
 
 (provide 'agent-org-providers)

@@ -63,8 +63,9 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   delegation and does not forward MCP servers to pi), and
   ~dsh --profile acp~ (DeepSeek Harness, where ACP is a profile rather
   than a flag; its automation surface omits ~session/load~, so a DSH chat
-  opens fresh instead of replaying history).  One more is wired but not
-  baked in the harness image yet: ~gemini --acp~ (Gemini CLI --- the flag is
+  opens fresh instead of replaying history).  Gemini CLI is wired the
+  same way and the harness image has baked it since 2026-10-30:
+  ~gemini --acp~ (the flag is
   spelled out in its own developer guide, geminicli.com/docs/cli/acp-mode).
   Its documented methods include ~loadSession~ and it proxies the filesystem
   through the client, but its model moves through ~unstable_setSessionModel~
@@ -73,7 +74,16 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   CognitionAI/devin-cli — the same subcommand Zed, JetBrains and Xcode
   spawn; its ACP server honors only the credentials stored by ~devin auth
   login~ --- ~WINDSURF_API_KEY~ serves Devin's cloud sessions, not local
-  ACP).
+  ACP).  And ~kilo acp~ (Kilo Code, Kilo-Org/kilocode, npm ~@kilocode/cli~ —
+  the subcommand its own CLI reference names, and the argv an ACP client
+  spawns).  Do not read its ~--port~ flag as the transport: the command builds
+  an ndjson stream over ~process.stdin~ / ~process.stdout~ and starts a local
+  HTTP server only for its own SDK client to talk to, so Emacs spawns the
+  process and speaks stdio like every other agent here.  Its ~initialize~
+  advertises ~loadSession~ plus the ~close~/~fork~/~list~/~resume~ session
+  capabilities and ~model~, ~effort~ and ~mode~ config options, so a Kilo chat
+  resumes by replaying history and ~C-c a m~ works; no model is pinned,
+  because the CLI's own ~kilo.jsonc~ already names the default.
   slave-agent keeps its keys in a ~.env~ inside its state dir and its model in
   ~config.yaml~, both read by the adapter itself, so Emacs exports nothing for
   it; set ~SLAVE_HOME~ in the environment Emacs was started with to bind a
@@ -105,6 +115,18 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   its directory 700) just before ~devin acp~ spawns.  The value goes to that
   file and nowhere else: never into the child's environment, never into a
   log.  Absent or blank leaves any existing store untouched.
+  Kilo Code authenticates out of band (~kilo auth login~, list what it stored
+  with ~kilo auth list~) and keeps provider, model and permission settings in
+  =~/.config/kilo/kilo.jsonc=, so Emacs exports nothing by default; its ACP
+  ~authenticate~ step is a no-op that only checks the method id, so there is no
+  in-band login to drive.  The documented environment selectors pass through
+  when the environment names them --- ~KILO_CONFIG~ / ~KILO_CONFIG_DIR~ (which
+  config the CLI trusts), ~KILO_PROVIDER~ (the active provider id),
+  ~KILO_API_KEY~ (the Kilo gateway key, the ~KILO_<FIELD_NAME>~ spelling for a
+  provider's ~apiKey~) and ~KILO_ORG_ID~ (the organization a non-interactive or
+  CI run routes through).  The local server's basic auth (~KILO_SERVER_PASSWORD~
+  / ~KILO_SERVER_USERNAME~) is deliberately NOT forwarded: the ACP bridge
+  authenticates to its own server internally.
 
 * Install
 
