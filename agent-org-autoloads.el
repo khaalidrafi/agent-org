@@ -406,7 +406,7 @@ stored credentials or `PI_*' environment fallbacks, so run `omp' and
 Start an interactive Pi agent-org chat through the `pi-acp' adapter.
 Pi has no ACP server of its own: this spawns `pi-acp', which bridges ACP
 stdio to `pi --mode rpc' (github.com/svkozak/pi-acp, `npm install -g
-pi-acp' -- the harness image bakes `pi' but not the adapter).  Expect the
+pi-acp', baked into the harness image since the WO-20 kit).  Expect the
 adapter's documented limits — no client filesystem or terminal delegation,
 and MCP servers are not passed through to pi.  Pi keeps its own provider
 config, so configure that outside Emacs first." t)
@@ -422,9 +422,16 @@ Start an interactive Gemini CLI agent-org chat.
 Gemini CLI serves ACP over stdio with the `--acp' flag (`gemini --acp', see
 https://geminicli.com/docs/cli/acp-mode); it keeps its own credentials —
 sign in with a Google account once outside Emacs, or export GEMINI_API_KEY
-for the documented headless path.  The harness image does not bake `gemini'
-yet, so this raises \"Command not found\" until `npm install -g
-@google/gemini-cli'." t)
+for the documented headless path.  The harness image bakes `gemini' only
+since the WO-20 kit, so this raises \"Command not found\" on an older image
+and is still unproven against a live `initialize' from this package." t)
+(autoload 'agent-org-kilo-start-agent "agent-org-providers" "\
+Start an interactive Kilo Code agent-org chat.
+Kilo Code serves ACP natively on stdio (`kilo acp', the launch line Zed's
+ACP Registry publishes); it keeps its own credential store, so sign in once
+outside Emacs with `kilo auth login' — or open `kilo' and use `/connect' —
+before starting.  Model choice is advertised as a `model' config option, so
+C-c a m moves between the providers one Kilo server fronts." t)
 (autoload 'agent-org-devin-start-agent "agent-org-providers" "\
 Start an interactive Devin agent-org chat.
 Devin serves ACP natively on stdio (`devin acp' — the subcommand Zed,

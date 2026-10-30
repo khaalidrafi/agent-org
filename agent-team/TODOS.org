@@ -138,7 +138,7 @@
    Spec: CONTROL.org OBJECTIVE (Owner 2026-10-29 #hq). Design (file
    format + API + abort/continue semantics) BEFORE code; sequential
    batch-lane execution; results written back into the org file; ERT.
-** TODO WO-20 kilo provider entry — half (b) of the kilo add
+** PROGRESS WO-20 kilo provider entry — half (b) of the kilo add
    Half (a) DONE 2026-10-30 (kit 260f1d2: @kilocode/cli baked, command
    kilo, FATAL version check, no creds). Remaining seat half: ACP
    provider entry in agent-org-providers.el on the native server

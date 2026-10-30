@@ -469,28 +469,34 @@ which is exactly what `agent-org--supports-load-p' reads via
 
 (ert-deftest test-agent-org-every-harness-body-is-a-provider ()
   "The agent-team-ci harness image is the roster this package must cover.
-ci/docker/harness/Dockerfile installs each body and FATAL-checks it with
-`--version`; a body with no provider entry is an agent the team cannot
-open from Emacs.  The roster below is transcribed from that Dockerfile
-(Owner order 2026-10-28: 10 bodies baked, 7 supported) rather than read
-from ci/ at run time, because the submodule is optional in a checkout
-and the landing gate must not turn red over a missing `ci/' directory.
-slave-agent is excluded: it is this package's own agent, never baked."
+ci/docker/harness/Dockerfile installs each body as its own `body-<name>'
+stage, FATAL-checks it, and the default target unions EVERY stage
+(COPY --from=body-* lines), so a body with no provider entry is an agent
+the team cannot open from Emacs.  The roster below is transcribed from
+those stage names rather than read from ci/ at run time, because the
+submodule is optional in a checkout and the landing gate must not turn
+red over a missing `ci/' directory.  slave-agent is excluded: it is this
+package's own agent, never baked.  The `pi-acp' stage is NOT a separate
+provider either — it is the adapter the `pi' entry already spawns, so it
+rides the pi mapping and adds no pair."
   (let ((harness-body-to-provider
          '(("opencode" . opencode) ("goose" . goose) ("qoder" . qoder)
            ("codebuddy" . codebuddy) ("pi" . pi) ("dsh" . dsh)
            ("mcode" . minimax) ("agent" . cursor) ("copilot" . copilot)
-           ("omp" . omp)))
+           ("omp" . omp) ("devin" . devin) ("cline" . cline)
+           ("gemini" . gemini) ("kilo" . kilo)))
         (registered (mapcar (lambda (p) (plist-get p :id))
                             agent-org-providers)))
     (dolist (pair harness-body-to-provider)
       (should (plist-get (agent-org--provider-spec (cdr pair)) :id)))
     ;; ONE direction of parity only: an entry the harness does not bake is
-    ;; fine (slave-agent is our own agent, Cline is a real ACP CLI that just
-    ;; is not in the image), so never assert the total count — a future body
-    ;; would break the suite for no reason.  What must never happen is a
-    ;; baked body with no entry, and `set-difference' names it in the failure.
-    (should (= 10 (length harness-body-to-provider)))
+    ;; fine (slave-agent is our own agent), so the REGISTERED total is never
+    ;; asserted — a future body would break the suite for no reason.  What
+    ;; must never happen is a baked body with no entry, and `set-difference'
+    ;; names it in the failure.  The =14= pins only that this transcribed
+    ;; list has not silently lost a pair: a copy-paste deletion there would
+    ;; otherwise make the parity assertion vacuous.
+    (should (= 14 (length harness-body-to-provider)))
     (should (null (seq-difference (mapcar #'cdr harness-body-to-provider)
                                   registered)))))
 
@@ -586,19 +592,76 @@ preferred-first, one only, and a blank counts as absent."
   (let ((process-environment '("GEMINI_API_KEY=" "GOOGLE_API_KEY=key-b")))
     (should (equal (agent-org-gemini-environment) '("GOOGLE_API_KEY=key-b")))))
 
+(ert-deftest test-agent-org-kilo-provider-present ()
+  "Kilo Code serves ACP as a SUBCOMMAND: `kilo acp', nothing pinned.
+Verified in the vendor's own material BEFORE wiring (WO-16 discipline): its
+CLI Command Reference lists `kilo acp' — \"start ACP (Agent Client Protocol)
+server\", options --port/--hostname/--mdns/--mdns-domain/--cors/--cwd — and
+Zed's ACP Registry publishes the client launch line `npx
+@kilocode/cli@7.8.18 acp'.  The flags are pinned as ABSENT from our command
+on purpose: the handler (packages/opencode/src/cli/cmd/acp.ts, read
+2026-10-30) builds `ndJsonStream' over process.stdin/stdout, so JSON-RPC
+rides stdio, and --port only sizes the private HTTP server the CLI reaches
+through its own SDK.
+CAPABILITIES come from that server's `initialize' (acp/service.ts:113-137)
+READ FROM SOURCE, never from a live handshake: loadSession t (resume-replay
+applies), sessionCapabilities (close, fork, list, resume) so the §10 pager
+has a real `session/list', mcpCapabilities (http, sse) with servers handed
+to `session/new' actually registered (unlike the `pi-acp' adapter), and
+promptCapabilities (embeddedContext, image).  A `model' config option IS
+advertised (acp/config-option.ts) so C-c a m works, but nothing is PINNED:
+one kilo server fronts hundreds of models and resolves the account's own
+default, the OpenCode rule."
+  (let ((kilo (agent-org--provider-spec 'kilo)))
+    (should (equal (plist-get kilo :name) "Kilo"))
+    (should (equal (plist-get kilo :command) '("kilo" "acp")))
+    (should-not (plist-get kilo :model))
+    (should (equal (plist-get kilo :environment)
+                   #'agent-org-kilo-environment))))
+
+(ert-deftest test-agent-org-kilo-start-opens-kilo ()
+  "The Kilo entry point opens the Kilo session, not a copy-pasted id."
+  (ao--capture-wire
+    (let ((buf (agent-org-kilo-start-agent)))
+      (should (buffer-live-p buf))
+      (should (eq 'kilo (plist-get (agent-org--session-for-buffer buf) :name)))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-kilo-environment-forwards-nothing ()
+  "Kilo keeps its own login, so Emacs exports NOTHING — not even a KILO_ name.
+The auth method its ACP server advertises says so verbatim, \"Run `kilo auth
+login' in the terminal\" (acp/service.ts:96-99), and the CLI's guide points
+at `/connect' in the TUI; the store is ~/.kilocode (or the legacy ~/.kilo).
+Forwarding a provider key would make Emacs a second source of truth for a
+secret — the Pi rule.  The KILO_* names the CLI strips before spawning a
+model (kilocode/process/env.ts) are plumbing between its own processes, not
+selectors of WHICH account or model a chat opens, and their meaning beyond
+that is undocumented, so this forwards none of them either."
+  (let ((process-environment '("KILO_SERVER_PASSWORD=pw"
+                               "KILO_CONFIG_DIR=/tmp/kilo-profile"
+                               "KILO_CONFIG_CONTENT={}")))
+    (should-not (agent-org-kilo-environment)))
+  (let ((process-environment '("ANTHROPIC_API_KEY=whatever"
+                               "OPENAI_API_KEY=whatever"
+                               "KILO_SERVER_USERNAME=kilo")))
+    (should-not (agent-org-kilo-environment))))
+
 (ert-deftest test-agent-org-unbaked-body-fails-loud-not-silent ()
-  "A wired provider whose binary the image does not bake must raise.
-MEASURED 2026-10-29 in this harness container: `gemini' is ABSENT from PATH
-(cline too), so `agent-org--open-session' hits its `executable-find' gate
-and answers a `user-error' naming the command — the chat never opens and
-nothing waits on a process that does not exist.  This is the honest state of
-WO-16 for Gemini: the flag is verified in the vendor docs, the entry is
-wired, the body still has to be baked (`npm install -g
-@google/gemini-cli') before a live smoke test.  Skipped once baked, so the
-suite keeps its meaning either way."
-  (skip-unless (not (executable-find "gemini")))
-  (should-error (agent-org--open-session (agent-org--provider-spec 'gemini))
-                :type 'user-error))
+  "A wired provider whose binary this container lacks must raise, not hang.
+MEASURED 2026-10-30: this turn's container has only `qoder' and `goose' on
+PATH, so the newly wired bodies (Gemini's `--acp' flag, Kilo's `kilo acp'
+subcommand) are verified against vendor material but NEVER smoke-tested
+here.  `agent-org--open-session' hits its `executable-find' gate and answers
+a `user-error' naming the command — the chat never opens and nothing waits
+on a process that does not exist.  Each id is tested only while ITS binary
+is absent, so the suite keeps its meaning on an image that bakes one, both,
+or neither."
+  (let ((absent (seq-remove (lambda (id) (executable-find (symbol-name id)))
+                            '(gemini kilo))))
+    (skip-unless absent)
+    (dolist (id absent)
+      (should-error (agent-org--open-session (agent-org--provider-spec id))
+                    :type 'user-error))))
 
 (ert-deftest test-agent-org-unloadable-provider-starts-fresh-not-broken ()
   "A body that answers no session/load must not block starting a chat.

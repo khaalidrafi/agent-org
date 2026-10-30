@@ -158,9 +158,10 @@
    ;; from its OWN map file (~/.pi/pi-acp/session-map.json), not from ACP
    ;; history.  Provider keys belong to pi's own config — nothing is
    ;; exported.
-   ;; NOT SMOKE-TESTED: the harness image bakes `pi' but not the `pi-acp'
-   ;; adapter, so a Pi chat needs `npm install -g pi-acp' first (reported to
-   ;; @lead 2026-10-28 as the one body the image still cannot drive).
+   ;; NOT SMOKE-TESTED FROM THIS PACKAGE: the harness image bakes the `pi-acp'
+   ;; adapter only since the WO-20 kit (ci/docker/harness/Dockerfile
+   ;; `body-pi-acp', whose FATAL check IS a live `initialize' handshake), so a
+   ;; Pi chat on an older image still needs `npm install -g pi-acp'.
    (list :id 'pi
          :name "Pi"
          :command '("pi-acp")
@@ -193,12 +194,12 @@
    ;; verified against its own developer guide BEFORE wiring (geminicli.com/
    ;; docs/cli/acp-mode, page updated 2026-04-10): "To start Gemini CLI in ACP
    ;; mode, use the `--acp' flag:  gemini --acp" — JSON-RPC 2.0 over stdio,
-   ;; implementation in packages/cli/src/acp/acpClient.ts.  NOT baked in the
-   ;; harness image: measured 2026-10-29 in this very container, `gemini' is
-   ;; absent from PATH, so `agent-org--open-session' raises "Command not
-   ;; found: gemini" until `npm install -g @google/gemini-cli' runs (reported
-   ;; to @lead) — the same standing Cline has, a real ACP agent the roster
-   ;; test does not claim the image provides.
+   ;; implementation in packages/cli/src/acp/acpClient.ts.  NOT SMOKE-TESTED
+   ;; from this package: the body was ABSENT when the entry landed (measured
+   ;; 2026-10-29, `gemini' not on PATH), and the harness image bakes it only
+   ;; since the WO-20 kit — ci/docker/harness/Dockerfile `body-gemini' installs
+   ;; @google/gemini-cli with a FATAL --version check — so the flag stays
+   ;; doc-verified until an `initialize' probe re-proves it here.
    ;; Its documented method list covers `initialize', `newSession',
    ;; `loadSession', `prompt' and `cancel', so resume-REPLAY applies — but
    ;; `session/list' is NOT among the listed methods, so the picker may have
@@ -224,6 +225,52 @@
          :name "Gemini"
          :command '("gemini" "--acp")
          :environment #'agent-org-gemini-environment)
+   ;; Kilo Code (Kilo-Org/kilocode, npm @kilocode/cli, bin `kilo') serves ACP as
+   ;; a SUBCOMMAND: `kilo acp'.  Verified in the vendor's own material BEFORE
+   ;; wiring (WO-16 discipline): its CLI Command Reference lists `kilo acp'
+   ;; with the description "start ACP (Agent Client Protocol) server" and the
+   ;; options --port/--hostname/--mdns/--mdns-domain/--cors/--cwd, and Zed's
+   ;; ACP Registry publishes the client launch line `npx @kilocode/cli@7.8.18
+   ;; acp' (npm metadata agrees: bin {kilo, kilocode}, version 7.8.18).
+   ;; TRANSPORT, from the source at main read 2026-10-30
+   ;; (packages/opencode/src/cli/cmd/acp.ts): the handler wires
+   ;; `ndJsonStream' over process.stdin/process.stdout, so JSON-RPC rides
+   ;; stdio exactly as our spawner needs; --port only sizes the private HTTP
+   ;; server the CLI reaches through its own SDK, so a client passes NO flags.
+   ;; CAPABILITIES, from that server's `initialize' (acp/service.ts:113-137 —
+   ;; READ FROM SOURCE, never from a live handshake here): `loadSession' t so
+   ;; resume-replay applies; `sessionCapabilities' (close, fork, list, resume)
+   ;; so the §10 pager has a real `session/list' to page; `mcpCapabilities'
+   ;; (http, sse) with the servers handed to `session/new' actually registered
+   ;; (unlike the `pi-acp' adapter); `promptCapabilities' (embeddedContext,
+   ;; image).  Client delegation is PARTIAL: the service implements
+   ;; `requestPermission' and `writeTextFile' (service.ts:53) and never
+   ;; `readTextFile', so an editor's unsaved buffer is invisible to a Kilo
+   ;; READ while a write still comes back through the client.
+   ;; Config options are advertised as `model' (select), `effort' and `mode'
+   ;; (acp/config-option.ts `buildConfigOptions'), so the C-c a m path works —
+   ;; but NOTHING is pinned: one `kilo' server fronts hundreds of models and
+   ;; `selectDefaultModel' resolves the account's own default, which is the
+   ;; OpenCode rule.
+   ;; AUTH is out-of-band, so `agent-org-kilo-environment' forwards NOTHING.
+   ;; GAPS, STATED NOT SMOOTHED (dsh precedent): (a) Kilo has no user-facing
+   ;; ACP docs page — the CLI reference lists the command and stops there, and
+   ;; Kilo-Org/kilocode#6766 ("docs: Add ACP integration documentation", closed
+   ;; 2026-04-07) shows the section was never merged, which is WHY the
+   ;; capability lines above cite source rather than prose.  (b) The
+   ;; `terminal-auth' hint inside that same `initialize' names the command
+   ;; `opencode' with args ["auth" "login"] (service.ts:104-110) — a fork
+   ;; artifact; harmless for agent-org, which drives no `authenticate'
+   ;; request, but wrong for a client that obeys it.  (c) NOT SMOKE-TESTED:
+   ;; measured 2026-10-30, `kilo' is absent from this turn's container PATH
+   ;; even though WO-20 half (a) bakes it in ci/docker/harness/Dockerfile
+   ;; (`body-kilo': npm @kilocode/cli + FATAL --version), so the entry is
+   ;; source-verified only until an `initialize' probe re-proves it the way
+   ;; 8ca27a8 re-proved omp and dsh.
+   (list :id 'kilo
+         :name "Kilo"
+         :command '("kilo" "acp")
+         :environment #'agent-org-kilo-environment)
   ;; Devin (CognitionAI/devin-cli) serves ACP natively: `devin acp' speaks
   ;; JSON-RPC over stdio and is meant to be spawned by an ACP-aware client —
   ;; the same subcommand Zed, JetBrains and Xcode configure (docs.devin.ai/
@@ -277,6 +324,7 @@ live on that path from this package -- until then the claim is untested."
                  (const :tag "Pi" pi)
                  (const :tag "DSH" dsh)
                  (const :tag "Gemini" gemini)
+                 (const :tag "Kilo" kilo)
                  (const :tag "Devin" devin)
                  (symbol :tag "Other provider id"))
   :group 'agent-org)
@@ -370,7 +418,7 @@ stored credentials or `PI_*' environment fallbacks, so run `omp' and
   "Start an interactive Pi agent-org chat through the `pi-acp' adapter.
 Pi has no ACP server of its own: this spawns `pi-acp', which bridges ACP
 stdio to `pi --mode rpc' (github.com/svkozak/pi-acp, `npm install -g
-pi-acp' -- the harness image bakes `pi' but not the adapter).  Expect the
+pi-acp', baked into the harness image since the WO-20 kit).  Expect the
 adapter's documented limits — no client filesystem or terminal delegation,
 and MCP servers are not passed through to pi.  Pi keeps its own provider
 config, so configure that outside Emacs first."
@@ -394,11 +442,22 @@ through dsh's own settings or export DEEPSEEK_API_KEY."
 Gemini CLI serves ACP over stdio with the `--acp' flag (`gemini --acp', see
 https://geminicli.com/docs/cli/acp-mode); it keeps its own credentials —
 sign in with a Google account once outside Emacs, or export GEMINI_API_KEY
-for the documented headless path.  The harness image does not bake `gemini'
-yet, so this raises \"Command not found\" until `npm install -g
-@google/gemini-cli'."
+for the documented headless path.  The harness image bakes `gemini' only
+since the WO-20 kit, so this raises \"Command not found\" on an older image
+and is still unproven against a live `initialize' from this package."
   (interactive)
   (agent-org-start 'gemini))
+
+;;;###autoload
+(defun agent-org-kilo-start-agent ()
+  "Start an interactive Kilo Code agent-org chat.
+Kilo Code serves ACP natively on stdio (`kilo acp', the launch line Zed's
+ACP Registry publishes); it keeps its own credential store, so sign in once
+outside Emacs with `kilo auth login' — or open `kilo' and use `/connect' —
+before starting.  Model choice is advertised as a `model' config option, so
+C-c a m moves between the providers one Kilo server fronts."
+  (interactive)
+  (agent-org-start 'kilo))
 
 ;;;###autoload
 (defun agent-org-devin-start-agent ()
@@ -559,6 +618,23 @@ route, so forwarding both would fight itself."
                    ((agent-org--env-value "GOOGLE_API_KEY") "GOOGLE_API_KEY"))))
     (when var
       (list (format "%s=%s" var (agent-org--env-value var))))))
+
+(defun agent-org-kilo-environment ()
+  "Return environment variables for the Kilo Code ACP client.
+ALWAYS nil.  `kilo' keeps its own credential store in ~/.kilocode (or the
+legacy ~/.kilo) and its own login: the auth method its ACP server
+advertises says so verbatim, \"Run `kilo auth login' in the terminal\", and
+the CLI's own guide points at `/connect' in the TUI.  So there is no
+variable this package may name, exactly as for Pi — forwarding a provider
+key would make Emacs a second source of truth for a secret.  The KILO_-
+prefixed names the CLI itself strips before spawning a model
+(kilocode/process/env.ts: KILO_SERVER_PASSWORD/USERNAME,
+KILO_BROWSER_BROKER_URL/TOKEN, KILO_CONFIG/KILO_CONFIG_CONTENT/
+KILO_CONFIG_DIR) are internal plumbing between the CLI's own processes,
+not selectors of WHICH account or model a chat opens, so nothing here
+forwards them — and their meaning beyond that is undocumented, which is
+reason enough not to depend on it."
+  nil)
 
 (defun agent-org-devin--credentials-file ()
   "Path of the credentials file the `devin' CLI reads for local ACP.
