@@ -138,7 +138,7 @@
    Spec: CONTROL.org OBJECTIVE (Owner 2026-10-29 #hq). Design (file
    format + API + abort/continue semantics) BEFORE code; sequential
    batch-lane execution; results written back into the org file; ERT.
-** TODO WO-20 kilo provider entry — half (b) of the kilo add
+** REVIEW WO-20 kilo provider entry — half (b) of the kilo add
    Half (a) DONE 2026-10-30 (kit 260f1d2: @kilocode/cli baked, command
    kilo, FATAL version check, no creds). Remaining seat half: ACP
    provider entry in agent-org-providers.el on the native server
@@ -146,6 +146,44 @@
    the ACP surface in the CLI's own docs/help before wiring — REPORT
    gaps never invent (dsh precedent). Update the parity roster test's
    transcribed list when the entry lands.
+   :LOGBOOK:
+   - State "REVIEW" from "PROGRESS" [2026-10-30 Fri 18:07 UTC]
+     DELIVERED, branch ai/turn-20261030-1755, commit 4f07017.  Entry
+     =agent-org-providers.el= (:id kilo, :name "Kilo Code", :command
+     ("kilo" "acp"), no :model pin) + =agent-org-kilo-start-agent= +
+     =agent-org-kilo-environment= + the generated autoload cookie; README.org
+     and AI-REVIEW.org updated.  GATE GREEN: clean rebuild with
+     =byte-compile-error-on-warn t' over all six files (zero warnings), main
+     suite "Ran 468 tests, 468 results as expected, 0 unexpected" (+4 new),
+     batch lane 15/15, provider drift test included (it reads the generated
+     =agent-org-autoloads.el', which is why the cookie is in the commit).
+     Tests MUTATION-CHECKED: "kilo acp --port 0" reddens the shape test, a
+     forwarded KILOCODE_MODEL reddens the env test.
+     ROSTER: the parity test's transcribed list is now FOURTEEN bodies — devin,
+     cline and gemini were already COPY'd into the pinned ci/ Dockerfile
+     (:322-351) and each has an entry; kilo joins them.  Assertion stays
+     one-directional (baked body ⇒ entry; never a total).
+     REMAINING (Lead gate, not seat-work): DONE is yours per law #8, and the
+     live =initialize= re-prove — =kilo= was ABSENT from this container's PATH
+     (measured 2026-10-30), so nothing here was smoke-tested; the running
+     harness image lags the kit.  A probe should confirm loadSession t and a
+     sessionCapabilities list that actually answers (the goose lesson).
+   - State "PROGRESS" from "TODO" [2026-10-30 Fri 18:05 UTC]
+     (implementer, qwen3.8-flash@qoder) on branch ai/turn-20261030-1755.
+     ACP surface verified BEFORE coding, from two sources: the CLI's own
+     reference (kilo.ai/docs/code-with-ai/platforms/cli-reference —
+     "kilo acp: start ACP (Agent Client Protocol) server", flags --port/
+     --hostname/--mdns/--cors/--cwd belong to the CLI's internal HTTP API,
+     the ACP link itself is ndJSON over stdin/stdout per
+     packages/opencode/src/cli/cmd/acp.ts) and the fork's initialize
+     response (packages/opencode/src/acp/service.ts: loadSession TRUE,
+     sessionCapabilities close/fork/list/resume, MCP http+sse, prompt
+     image+embeddedContext). Entry pins NO model even though kilo DOES
+     advertise a `model' config option (config-option.ts id "model").
+     GAP REPORTED: `kilo' was ABSENT from this container's PATH
+     (measured 2026-10-30, image lags the pinned ci/), so the entry is
+     docs-and-source verified, never smoke-tested.
+   :END:
 ** ONGOING CI-kit adoption (teamify, Lead) — ci/ submodule bumped to 479480b
    2026-10-29 (deduped prompt laws + Cursor env law): dual-law harness baked,
    per-seat session reuse ON, .agent-org transcripts committed
