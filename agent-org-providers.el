@@ -564,6 +564,8 @@ credentials.toml from `devin auth login'); DEVIN_MODEL is its documented
 default-model selector.  Both pass through when present; per
 `agent-org--env-value' a blank is the same as absent, so a blank
 WINDSURF_API_KEY can never override the CLI's own stored login."
+  ;; Restore credentials from env var before spawning devin
+  (agent-org--restore-devin-credentials)
   (let ((key (agent-org--env-value "WINDSURF_API_KEY"))
         (model (agent-org--env-value "DEVIN_MODEL"))
         (out nil))

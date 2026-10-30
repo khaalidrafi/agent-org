@@ -3990,5 +3990,25 @@ as a new turn.  Returns the turn number if sent, nil if queued."
                               agent-org-auto-continue-prompt session)))))
           turn)))))
 
+;;;###autoload
+(defun agent-org--restore-devin-credentials ()
+  "Restore Devin credentials from DEVIN_CREDENTIALS_TOML env var.
+Writes the content to $HOME/.local/share/devin/credentials.toml with
+mode 600 if the env var is set and non-empty.  Does nothing if the
+env var is absent or blank.  The content is never logged.
+This is called from `agent-org-devin-environment' before any devin
+spawn, so the CLI receives the restored credentials via its :environment fn."
+  (let ((env-val (getenv "DEVIN_CREDENTIALS_TOML")))
+    ;; No-op on absent or blank env var (env-value law)
+    (when (and env-val (not (string-blank-p env-val)))
+      ;; Ensure the directory exists
+      (let ((dir (expand-file-name ".local/share/devin" (getenv "HOME"))))
+        (make-directory dir t))
+      ;; Write the credentials file with mode 600 (owner read/write only)
+      (let ((file (expand-file-name "credentials.toml" dir)))
+        (with-temp-file file
+          (insert env-val)
+          (set-file-modes file #o600))))))
+
 (provide 'agent-org)
 ;;; agent-org.el ends here

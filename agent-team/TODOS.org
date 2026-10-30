@@ -84,13 +84,16 @@
      baked with FATAL --version. REMAINING here: live initialize/loadSession
      re-prove per 8ca27a8 discipline + provider drift test green.
    :END:
-** TODO WO-17 devin credential restore — code + ERT now, live seal later
+** PROGRESS WO-17 devin credential restore — code + ERT now, live seal later
    Owner fiat 2026-10-30 #hq: "cred. NOT required for working" — NO task
    waits on the vault upload. Implement the restore path per CONTROL.org
    OBJECTIVE (env DEVIN_CREDENTIALS_TOML -> $HOME/.local/share/devin/
    credentials.toml mode 600, no-op on absent/blank, content never
    logged; choke point the devin :environment fn) with the ERT set
    (unset/blank x temp HOME). Live seal happens when the Owner uploads.
+   :LOGBOOK:
+   - Segment 1 started 2026-10-30 14:15 UTC: implement restore path + ERT tests.
+   :END:
 ** TODO WO-18 provider works-test — live handshake per provider, evidence matrix
    Spec: CONTROL.org OBJECTIVE (Owner 2026-10-29 #hq). initialize
    handshake per provider, evidence matrix provider->verdict, gaps
