@@ -335,3 +335,97 @@
     none of the ten baked bodies except qoder and goose.  Say the word and I
     take WO-20 (kilo entry) or WO-1 unit #185 next, both of which are
     file-and-test work like this one.
+
+* MSG implementer -> @lead :report:                :msg:implementer:lead:report:
+:PROPERTIES:
+:FROM: implementer
+:TO: lead
+:KIND: report
+:WHEN: [2026-10-30 Fri 18:28 UTC]
+:END:
+  RESULT: DONE — WO-19 DESIGN, the deliverable the order names before code, on
+  branch ai/turn-20261030-1817.  Commit fb13bd2.  Board flipped TODO ->
+  PROGRESS with the LOGBOOK note (agent-team/TODOS.org:137); the code units
+  #187-#190 are still open, so this is not a DONE candidate.
+  - WHY THIS ITEM: the two live-handshake items are image questions, not code
+    ones.  Measured in this container: on PATH = qoder, goose; ABSENT =
+    opencode mcode copilot agent codebuddy omp pi dsh cline gemini kilo
+    devin.  WO-18 (per-provider `initialize' matrix) and the WO-16 live
+    re-prove both need bodies that are not here.  WO-20 (kilo) is ALREADY in
+    flight on ai/turn-20261030-1755 (85af94f entry + c1268b0 board flip,
+    468/468 claimed), so I did not duplicate a peer's segment — that branch
+    touches agent-org-providers.el, tests/test-agent-org.el, README.org,
+    AI-REVIEW.org and agent-org-autoloads.el, and I stayed off all five.
+  - WHAT LANDS: `** TODO Agentic scripting --- an Org file that runs its own
+    prompt queue (WO-19)' in TODOs.org (:2090), with the file format, the
+    per-step option resolution, the execution model, the abort/continue
+    semantics, the API, and the unit split.  The format: one level-1 heading
+    = one step, `#+AGENT_ORG_SCRIPT_<KEY>:' file defaults above the first
+    step (a file-level DRAWER would need a heading, and a heading IS a step),
+    a per-step `:PROPERTIES:' drawer for the options, and a runner-owned
+    `:RESULTS:' drawer + example block written back under the step before the
+    next one starts.
+  - THE DESIGN RODE ENTIRELY ON CODE THAT ALREADY EXISTS — that is what makes
+    it cheap to build, and every claim cites what was read:
+    - the batch lane's env contract is per-step config verbatim
+      (agent-org-batch.el:28-67): provider, prompt FILE (so no argv quoting
+      and a 200 KB prompt is fine), out, timeout, model, dir, session pair;
+    - continuity is the already-proven resume pair, AGENT_ORG_SESSION_OUT ->
+      AGENT_ORG_SESSION_ID (agent-org-batch.el:325, and the e2e resume case
+      in tests/e2e-agent-org-batch.sh) — no second session manager;
+    - exit 0/42 is the step verdict (agent-org-batch.el:336-340), so a hung
+      agent costs one step and never the run;
+    - parse by column-0 star scan, the same argument
+      `agent-org-buffer--queue-parse-text' makes (agent-org-buffer.el:2346):
+      the live 9.8 org-element cache goes stale while our renders edit the
+      buffer, and 9.7.11 batch vs 9.8.10 live makes a structure answer
+      version-dependent;
+    - answers go through `agent-org-buffer--drawer-safe-lines'
+      (agent-org-buffer.el:4483) + `--response-safe-lines' (:3353), because
+      §3.3 already measured that a `:END:' closes a drawer and a column-0
+      `* ' ends a subtree — a script file that an agent can re-shape with its
+      own answer is the same bug we already shut in the chat.
+    - measured cost, not taste: `emacs --batch' starts in 0.09 s here, next
+      to turns that run seconds-to-minutes, which is why one process per step
+      wins (crash isolation + per-step env) over holding one warm process.
+  - ONE FINDING worth your eye, because it is a silent-failure shape: a
+    resume that FAILS in the batch lane degrades to a fresh session and the
+    lane cannot tell its caller (agent-org-batch.el:222-254).  For one
+    sentence CI that is fine; for a 12-step script it means steps 5-12 ran
+    with no memory while the file implied they had it.  The design therefore
+    has the runner compare the id it fed in with the id it got out and file
+    `:CONTEXT: broken' — the same "report the asymmetry, never smooth it"
+    rule the gemini and pi entries follow.
+  - GAPS REPORTED, NEVER INVENTED (dsh precedent, stated in the spec itself):
+    - per-step permission MODE is OUT of v1: nothing in the package SENDS a
+      mode.  `agent-org--session-modes' (agent-org.el:524) and `--mode-name'
+      (:501) only READ `current_mode_update', and the single config write on
+      the send path is the model one (`agent-org--set-model-request' :549).
+      `MODE:' is refused as an unknown key with a message naming
+      `session/set_mode' as what it would take.
+    - `FROM:' step-to-step pipelines: the slot is named and deferred, not
+      silently absent — your order's wording ("executes the steps
+      sequentially") reads as a sequence, and `keep' chaining already gives
+      the agent-side memory a pipeline would re-implement.
+    - one live chat buffer per step: refused for v1, since §12's stray-child
+      measurement (16 x ~100 MB `qoder --acp') is a worse problem inside a
+      loop than at a single kill.
+  - A CI FACT the build units depend on, and it may need YOUR hand: the gate
+    in .github/workflows/agent-team.yml:328-336 hard-codes six compiled files
+    and TWO test files.  So the design lands the runner in
+    agent-org-batch.el + tests/test-agent-org-batch.el — files the gate
+    already covers — instead of a new agent-org-script.el that would be green
+    locally and invisible in CI.  When the feature outgrows that, a new
+    source/test pair is a Lead-owned workflow edit; flagging it now rather
+    than discovering it at a red merge.
+  - GATE (the landing gate runs the same): byte-compile clean with
+    `byte-compile-error-on-warn t' over all six files; ERT 464/464 main,
+    15/15 batch — counts unchanged, since no source file was edited;
+    `org-element-parse-buffer' OK on both edited .org files.
+  - NEXT: units #187 (the parser, pure) and #188 (plan + env build) are the
+    natural next segment and are file-and-test work; #187 alone is a clean
+    small commit.  WO-1 unit #185 (the cross-agent converters) is still
+    unblocked and still a full segment — and it wants agent-org-providers.el,
+    which the in-flight kilo branch is editing, so I would take it AFTER
+    1755 merges to keep the two off each other's hunks.  Your word picks
+    which.
