@@ -3110,3 +3110,53 @@ headline), =…-builder-moves-nothing=, =…-mode-installs-the-scroll-hook-buffe
 Clean rebuild zero warnings; full suite =Ran 423 tests, 423 results as expected,
 0 unexpected=.  Live: =set-window-start= into the streaming exchange fired the
 hook, produced one truncated =org-level-1= row and a 2-row bar.
+
+* Devin CI credential restore (WO-17, added 2026-10-30)
+
+Owner fiat 2026-10-30 #hq: "cred. NOT required for working" — the code and
+its ERT set land now, the live seal lands when the Owner uploads
+=DEVIN_CREDENTIALS_TOML=.  =agent-org-devin-environment= now writes the CLI's
+login file before returning, because =devin auth login= is a browser PKCE
+flow that cannot run in CI while the local =devin acp= server honors only
+that file (measured 2026-10-29: with just WINDSURF_API_KEY set it answers
+nothing and exits 0).
+
+** TODO Read the placement order in =agent-org-devin--restore-credentials=
+
+The security claim is the ordering, not the chmod: =make-directory= →
+=dir 0700= → =write-region= → =file 0600=, because a fresh write lands 0644
+(=write-region= ignores =default-file-modes=, measured on this machine
+2026-10-30 — the mutation test turns the suite red when =set-file-modes= is
+stubbed out).  Is making the credential DIRECTORY 0700 acceptable?  It is a
+tightening of =$HOME/.local/share/devin=, a directory that will now hold a
+secret, and it happens only on a lane that sealed the credential — but it is
+the one line here that touches something the CLI owns, so it is the line to
+police.
+
+** TODO Confirm the env-value law is the whole of the no-op rail
+
+=Absent OR blank ⇒ no write, no chmod, nothing forwarded.=  The blank case
+is what protects a developer's own =devin auth login= store from a CI lane
+that never sealed the secret, so the test seeds a temp HOME with an existing
+file and asserts the bytes survive both cases.  Read
+=tests/test-agent-org.el= =…-credential-restore-is-no-op-unless-sealed= and
+confirm it would fail if the guard ever became =(getenv …)= rather than
+=agent-org--env-value=.
+
+** TODO Verify nothing but the file receives the value (SECRET LAW)
+
+The value must appear in the file and NOWHERE else: not in the returned
+environment list (it would show in =ps= and /proc/PID/environ), not in an
+echo-area =message=, not in a failure string.  One test asserts all three
+surfaces at once; the loud-failure test asserts the =user-error= text names
+the directory and not the secret.  Judge whether a =user-error= that aborts
+the spawn is the right call here — the alternative was a warning plus a
+credential-less spawn, which is the silent-0-exit we already measured.
+
+** TODO Live check, when the seal exists (cannot be done in CI today)
+
+=DEVIN_CREDENTIALS_TOML= is not yet uploaded, so every claim above is
+unit-verified against a temp HOME, never proven against a real =devin acp=.
+After the Owner seals it: one turn with the variable set and HOME pointing at
+a scratch copy, then =devin models= should report a logged-in account and an
+=initialize= should answer (the 8ca27a8 discipline used for omp and dsh).
