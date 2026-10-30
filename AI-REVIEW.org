@@ -3160,3 +3160,57 @@ unit-verified against a temp HOME, never proven against a real =devin acp=.
 After the Owner seals it: one turn with the variable set and HOME pointing at
 a scratch copy, then =devin models= should report a logged-in account and an
 =initialize= should answer (the 8ca27a8 discipline used for omp and dsh).
+* Kilo Code provider (WO-20 half (b), added 2026-10-30)
+
+Owner order 2026-10-29 #hq "add Kilo Code": the harness image already bakes the
+body (half (a), kit 260f1d2), so this segment is the =agent-org-providers.el=
+entry, =agent-org-kilo-environment=, the =agent-org-kilo-start-agent= command
+plus its autoload cookie, and the ERT set.  Everything in the entry is quoted
+from Kilo's own CLI reference or from its ACP source — the item's rule is
+"verify the ACP surface before wiring, report gaps, never invent" (the dsh
+precedent).
+
+** TODO Read the stdio judgment (the expensive one)
+
+The CLI reference lists =--port=, =--hostname=, =--mdns= and =--cors= on
+=kilo acp=, which reads like a listening HTTP server — and an agent that only
+listens would make every Kilo chat hang on =initialize= forever, silently.  The
+entry claims stdio anyway, from packages/opencode/src/cli/cmd/acp.ts: the
+command builds =ndJsonStream= over =process.stdout= / =process.stdin=, resumes
+stdin, and the flags come from the shared local-server options that
+=kilo [project]= takes too (the SDK client it makes points at
+=http://127.0.0.1:<random port>= itself).  Independent corroboration: acpx
+registers =["kilo" "acp"]= as the argv for a stdio ACP client.  THIS IS THE ONE
+LINE TO POLICE: if the reading is wrong the fix is a transport change, not a
+flag tweak, and no test here can see it (the suite mocks ACP).
+
+** TODO Check the env pass-through set against Secret Law
+
+=KILO_CONFIG= / =KILO_CONFIG_DIR= / =KILO_PROVIDER= / =KILO_API_KEY= /
+=KILO_ORG_ID= cross when set; =KILO_SERVER_PASSWORD= / =KILO_SERVER_USERNAME=
+are refused (the ACP bridge authenticates to its own server internally, so
+forwarding basic-auth credentials would be a second path for a secret that the
+child does not need).  Judge whether =KILO_API_KEY= belongs at all — it is the
+documented =KILO_<FIELD_NAME>= override for a provider's =apiKey=, so it is the
+same kind of thing goose's =OPENAI_API_KEY= is; if you disagree, delete it and
+its line in the test.
+
+** TODO Verify the roster transcription, and the guard's rewrite
+
+=test-agent-org-every-harness-body-is-a-provider= is now 14 pairs (devin, cline,
+gemini, kilo added), the count being the pin that forces a re-transcription when
+the image gains a body; =body-pi-acp= is deliberately NOT a row because it is
+what the =pi= provider spawns.  And =test-agent-org-unbaked-body-fails-loud-not-silent=
+changed shape: the old =skip-unless= skipped the whole test as soon as one body
+was baked, so it now loops with the guard INSIDE — which means in a container
+where all three bodies exist it asserts nothing.  Decide whether that is
+acceptable (it is a rail about failure MODES, not a feature) or whether the live
+probe belongs in WO-18's matrix instead.
+
+** TODO Live re-prove, when a lane carries the body
+
+Measured 2026-10-30: this turn's container has =qoder= and =goose= only, so
+=kilo acp= was never asked.  When a lane has it: one =initialize= over stdin
+expecting =agentInfo= name "Kilo", =loadSession t= and sessionCapabilities
+(close/fork/list/resume) — the 8ca27a8 discipline used for omp and dsh, and the
+thing WO-18's matrix wants per provider.

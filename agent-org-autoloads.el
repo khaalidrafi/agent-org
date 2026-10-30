@@ -433,6 +433,14 @@ JetBrains and Xcode spawn); authenticate once outside Emacs with
 (WINDSURF_API_KEY serves Devin's cloud sessions, not local ACP).
 A machine with no browser can carry that login file instead: export
 DEVIN_CREDENTIALS_TOML and it is placed before the spawn." t)
+(autoload 'agent-org-kilo-start-agent "agent-org-providers" "\
+Start an interactive Kilo Code agent-org chat.
+Kilo Code serves ACP natively on stdio (`kilo acp' — its own CLI reference
+names that subcommand, and acpx spawns the same argv); it keeps its own
+credentials, so run `kilo auth login' once outside Emacs if this fails to
+start.  It advertises `model', `effort' and `mode' as config options, so
+`agent-org-set-session-model' (C-c a m) and the mode display both work, and
+it supports `session/load', so a Kilo chat resumes by replaying history." t)
 (register-definition-prefixes "agent-org-providers" '("agent-org-"))
 
 
