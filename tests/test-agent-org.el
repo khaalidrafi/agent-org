@@ -472,15 +472,21 @@ which is exactly what `agent-org--supports-load-p' reads via
 ci/docker/harness/Dockerfile installs each body and FATAL-checks it with
 `--version`; a body with no provider entry is an agent the team cannot
 open from Emacs.  The roster below is transcribed from that Dockerfile
-(Owner order 2026-10-28: 10 bodies baked, 7 supported) rather than read
-from ci/ at run time, because the submodule is optional in a checkout
-and the landing gate must not turn red over a missing `ci/' directory.
-slave-agent is excluded: it is this package's own agent, never baked."
+rather than read from `ci/' at run time, because the submodule is optional
+in a checkout and the landing gate must not turn red over a missing `ci/'
+directory.  RE-TRANSCRIBED 2026-10-30 against ci/ ef44236, which builds
+FOURTEEN bodies (Owner order 2026-10-28 transcribed ten; devin, cline,
+gemini and kilo landed since, and the first three already had entries — the
+stale list under-covered the image, which is exactly the hazard this test
+exists for).  `body-pi-acp' is NOT a fifteenth pair: the adapter IS the
+server the `pi' entry spawns.  slave-agent is excluded: it is this package's
+own agent, never baked."
   (let ((harness-body-to-provider
          '(("opencode" . opencode) ("goose" . goose) ("qoder" . qoder)
            ("codebuddy" . codebuddy) ("pi" . pi) ("dsh" . dsh)
            ("mcode" . minimax) ("agent" . cursor) ("copilot" . copilot)
-           ("omp" . omp)))
+           ("omp" . omp) ("devin" . devin) ("cline" . cline)
+           ("gemini" . gemini) ("kilo" . kilo)))
         (registered (mapcar (lambda (p) (plist-get p :id))
                             agent-org-providers)))
     (dolist (pair harness-body-to-provider)
@@ -490,7 +496,7 @@ slave-agent is excluded: it is this package's own agent, never baked."
     ;; is not in the image), so never assert the total count — a future body
     ;; would break the suite for no reason.  What must never happen is a
     ;; baked body with no entry, and `set-difference' names it in the failure.
-    (should (= 10 (length harness-body-to-provider)))
+    (should (= 14 (length harness-body-to-provider)))
     (should (null (seq-difference (mapcar #'cdr harness-body-to-provider)
                                   registered)))))
 
@@ -586,6 +592,81 @@ preferred-first, one only, and a blank counts as absent."
   (let ((process-environment '("GEMINI_API_KEY=" "GOOGLE_API_KEY=key-b")))
     (should (equal (agent-org-gemini-environment) '("GOOGLE_API_KEY=key-b")))))
 
+(ert-deftest test-agent-org-kilo-provider-present ()
+  "Kilo Code (Kilo-Org/kilocode) serves ACP as a SUBCOMMAND: `kilo acp'.
+Verified in its own reference BEFORE wiring, the dsh precedent: the kilo.ai
+CLI Command Reference names `kilo acp' — \"start ACP (Agent Client Protocol)
+server\" — with --port/--hostname/--mdns/--mdns-domain/--cors/--cwd options,
+so `kilo --acp' would be an invented shape.  The port/hostname options are an
+HTTP transport this client does not use: `acp-make-client' spawns a stdio
+child (agent-org.el:745-750), exactly how Zed's ACP Registry listing starts
+it (\"Start Kilo with: npx @kilocode/cli@7.8.18 acp\").  NOTHING pinned as
+MODEL: the `kilo acp' option block names no --model (only `kilo run' and the
+TUI do) and no page documents an ACP `model' config-option id, so a pin would
+be a guess sent to a method that may not exist.  NO resume claim either —
+`session/list' and `loadSession' are undocumented for this surface, so the
+entry states the doc-verified half only, the same way `gemini' above does.
+The live `initialize' answer belongs to WO-18: this container has no `kilo'
+binary to ask (measured 2026-10-30 — PATH carries `qoder' and `goose' only)
+even though kit 260f1d2 baked the body into the harness image."
+  (let ((kilo (agent-org--provider-spec 'kilo)))
+    (should (equal (plist-get kilo :name) "Kilo"))
+    (should (equal (plist-get kilo :command) '("kilo" "acp")))
+    (should-not (plist-get kilo :model))
+    (should (equal (plist-get kilo :environment)
+                   #'agent-org-kilo-environment))))
+
+(ert-deftest test-agent-org-kilo-start-opens-kilo ()
+  "The Kilo entry point opens the Kilo session, not a copy-pasted id."
+  (ao--capture-wire
+    (let ((buf (agent-org-kilo-start-agent)))
+      (should (buffer-live-p buf))
+      (should (eq 'kilo (plist-get (agent-org--session-for-buffer buf) :name)))
+      (kill-buffer buf))))
+
+(ert-deftest test-agent-org-kilo-environment-passes-documented-overrides ()
+  "Kilo keeps its own login; only the four documented overrides cross.
+\"Environment Variable Overrides\" in the CLI's own page names KILO_PROVIDER
+(override the active provider ID), KILOCODE_<FIELD_NAME> (KILOCODE_MODEL) and
+KILO_<FIELD_NAME> (KILO_API_KEY -> apiKey), and the org-routing page names
+KILO_ORG_ID as \"Best for non-interactive and CI environments\".  All four are
+steering choices an Emacs chat legitimately makes — WHICH provider, model and
+organization answers — never a store Emacs may read, so they pass through and
+nothing credential-shaped is looked up here.  KILO_CONFIG_CONTENT is the one
+documented variable that must NOT cross: it carries a whole config body that
+can hold other providers' keys, so forwarding it would make this package the
+carrier for secrets it cannot audit (Secret Law).  A blank counts as absent,
+so a blank can never override the CLI's own `kilo auth login' store with
+nothing."
+  (let ((process-environment '("KILO_API_KEY=" "KILO_PROVIDER="
+                                "KILOCODE_MODEL=" "KILO_ORG_ID=")))
+    (should-not (agent-org-kilo-environment)))
+  ;; the common case: signed in through `kilo auth login', nothing exported.
+  ;; Another vendor's key in the environment is NOT Kilo's credential, even
+  ;; though the CLI is an OpenCode fork: its own doc names the KILO_*/KILOCODE_
+  ;; overrides, and inventing an OPENAI_API_KEY route would be a guess.
+  (let ((process-environment '("KILO_DISABLE_MOUSE=1"
+                                "OPENAI_API_KEY=not-kilos-business")))
+    (should-not (agent-org-kilo-environment)))
+  ;; a config BODY never travels through Emacs, and neither does its path
+  (let ((process-environment '("KILO_CONFIG_CONTENT={\"provider\":{}}"
+                                "KILO_CONFIG=/tmp/kilo.jsonc")))
+    (should-not (agent-org-kilo-environment)))
+  (let ((process-environment '("KILO_API_KEY=kilo-key"
+                                "KILO_PROVIDER=openai"
+                                "KILOCODE_MODEL=kilocode/gpt-5"
+                                "KILO_ORG_ID=org-7")))
+    (should (equal (agent-org-kilo-environment)
+                   '("KILO_API_KEY=kilo-key"
+                     "KILO_PROVIDER=openai"
+                     "KILOCODE_MODEL=kilocode/gpt-5"
+                     "KILO_ORG_ID=org-7"))))
+  ;; a partial set keeps the same RELATIVE order — the list is built, not sorted
+  (let ((process-environment '("KILO_ORG_ID=org-7" "KILOCODE_MODEL=kilocode/x")))
+    (should (equal (agent-org-kilo-environment)
+                   '("KILOCODE_MODEL=kilocode/x"
+                     "KILO_ORG_ID=org-7")))))
+
 (ert-deftest test-agent-org-unbaked-body-fails-loud-not-silent ()
   "A wired provider whose binary the image does not bake must raise.
 MEASURED 2026-10-29 in this harness container: `gemini' is ABSENT from PATH
@@ -598,6 +679,21 @@ wired, the body still has to be baked (`npm install -g
 suite keeps its meaning either way."
   (skip-unless (not (executable-find "gemini")))
   (should-error (agent-org--open-session (agent-org--provider-spec 'gemini))
+                :type 'user-error))
+
+(ert-deftest test-agent-org-unbaked-kilo-body-fails-loud-not-silent ()
+  "Kilo is doc-wired, so an absent binary must still fail LOUDLY, not hang.
+The harness image bakes the body (kit 260f1d2: `npm install -g
+@kilocode/cli' with a FATAL `kilo --version'), but a turn container does not
+always carry every stage — measured 2026-10-30 in this one, PATH has `qoder'
+and `goose' only.  `agent-org--open-session's `executable-find' gate is the
+honest proof that a chat cannot open onto a process that does not exist, and
+it is the rail that stays green until WO-18 records the live `initialize'.
+Skipped once the binary is present, so the suite keeps its meaning either way
+(the same shape `test-agent-org-unbaked-body-fails-loud-not-silent' pins for
+`gemini')."
+  (skip-unless (not (executable-find "kilo")))
+  (should-error (agent-org--open-session (agent-org--provider-spec 'kilo))
                 :type 'user-error))
 
 (ert-deftest test-agent-org-unloadable-provider-starts-fresh-not-broken ()

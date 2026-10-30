@@ -73,7 +73,14 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   CognitionAI/devin-cli — the same subcommand Zed, JetBrains and Xcode
   spawn; its ACP server honors only the credentials stored by ~devin auth
   login~ --- ~WINDSURF_API_KEY~ serves Devin's cloud sessions, not local
-  ACP).
+  ACP).  And ~kilo acp~ (Kilo Code, Kilo-Org/kilocode, from ~npm install -g
+  @kilocode/cli~): its own CLI Command Reference names the ~acp~ SUBCOMMAND --- "start ACP (Agent Client Protocol) server" --- which is also
+  what Zed's ACP Registry spawns over stdio, so the ~--port~ / ~--hostname~
+  HTTP transport in that option list is not what Emacs drives.  The harness
+  image bakes the body (kit 260f1d2, FATAL ~kilo --version~); what is NOT yet
+  recorded is a live ~initialize~ answer, and neither a ~model~ config option
+  nor ~session/load~ support is documented for that surface --- so no model is
+  pinned and no resume is claimed for Kilo until WO-18 proves it.
   slave-agent keeps its keys in a ~.env~ inside its state dir and its model in
   ~config.yaml~, both read by the adapter itself, so Emacs exports nothing for
   it; set ~SLAVE_HOME~ in the environment Emacs was started with to bind a
@@ -104,7 +111,13 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   agent-org writes it to =$HOME/.local/share/devin/credentials.toml= (mode 600,
   its directory 700) just before ~devin acp~ spawns.  The value goes to that
   file and nowhere else: never into the child's environment, never into a
-  log.  Absent or blank leaves any existing store untouched.
+  log.  Absent or blank leaves any existing store untouched.  Kilo Code keeps
+  provider credentials in its own store too --- ~kilo auth login [url]~, or the
+  interactive ~/connect~ in the TUI --- so nothing has to be exported by
+  default; the four variables its docs name as config overrides pass through
+  when the environment carries them (~KILO_API_KEY~, ~KILO_PROVIDER~,
+  ~KILOCODE_MODEL~, ~KILO_ORG_ID~), and ~KILO_CONFIG_CONTENT~ deliberately does
+  not, because a whole config body can carry other providers' keys.
 
 * Install
 
