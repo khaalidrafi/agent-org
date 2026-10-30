@@ -83,6 +83,8 @@
    - IMAGE GAP CLOSED 2026-10-30 (kit 260f1d2, Lead): gemini-cli 0.66.0
      baked with FATAL --version. REMAINING here: live initialize/loadSession
      re-prove per 8ca27a8 discipline + provider drift test green.
+   - RE-PROVE GEMINI LIVE (implementer): verify loadSession exists and
+     session/list is absent, then run provider drift test. 2026-10-30 09:48 UTC.
    :END:
 ** TODO WO-17 devin credential restore — code + ERT now, live seal later
    Owner fiat 2026-10-30 #hq: "cred. NOT required for working" — NO task
