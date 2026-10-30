@@ -63,13 +63,21 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   delegation and does not forward MCP servers to pi), and
   ~dsh --profile acp~ (DeepSeek Harness, where ACP is a profile rather
   than a flag; its automation surface omits ~session/load~, so a DSH chat
-  opens fresh instead of replaying history).  One more is wired but not
-  baked in the harness image yet: ~gemini --acp~ (Gemini CLI --- the flag is
+  opens fresh instead of replaying history).  Two more, both baked by the
+  pinned harness kit (ci 260f1d2): ~gemini --acp~ (Gemini CLI --- the flag is
   spelled out in its own developer guide, geminicli.com/docs/cli/acp-mode).
   Its documented methods include ~loadSession~ and it proxies the filesystem
   through the client, but its model moves through ~unstable_setSessionModel~
-  rather than a ~model~ config option, so no model is pinned; open a Gemini
-  chat after ~npm install -g @google/gemini-cli~.  And ~devin acp~ (Devin,
+  rather than a ~model~ config option, so no model is pinned.  And
+  ~kilo acp~ (Kilo Code --- the subcommand is named in its own CLI reference,
+  and its handler bridges stdin/stdout as ndjson, so the ACP pipe really is
+  stdio even though the same command privately listens on a localhost port;
+  its ~initialize~ advertises ~loadSession~ plus close/fork/list/resume, so
+  resume-replay and the session pager both work, and the model arrives as a
+  ~model~ config option that ~C-c a m~ drives --- nothing pinned, since one
+  install fronts hundreds of models.  Its client delegation is one-way:
+  permissions and file /writes/ reach the editor, reads do not, so an
+  unsaved buffer is invisible to a kilo read).  And ~devin acp~ (Devin,
   CognitionAI/devin-cli — the same subcommand Zed, JetBrains and Xcode
   spawn; its ACP server honors only the credentials stored by ~devin auth
   login~ --- ~WINDSURF_API_KEY~ serves Devin's cloud sessions, not local
@@ -96,7 +104,11 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   once outside Emacs); the documented headless key passes through when
   present --- ~GEMINI_API_KEY~, or ~GOOGLE_API_KEY~ for the Vertex API-key
   route, and only one of them, because a set key disables Application
-  Default Credentials.  Devin authenticates via ~devin auth login~ once outside Emacs (the only
+  Default Credentials.  Kilo Code keeps its own credentials
+  (`kilo auth login', and ~kilo auth~ manages provider keys), so nothing is
+  required; its documented overrides pass through when set ---
+  ~KILO_PROVIDER~, ~KILO_CONFIG~, ~KILO_ORG_ID~ (the non-interactive/CI
+  organization selector) and ~KILO_API_KEY~ / ~KILOCODE_API_KEY~.  Devin authenticates via ~devin auth login~ once outside Emacs (the only
   credential local ACP honors; ~WINDSURF_API_KEY~ serves cloud sessions);
   ~DEVIN_MODEL~ optionally names its default model.  A machine with no
   browser --- CI --- can carry that login file instead: export
@@ -132,7 +144,8 @@ The checkout ships ~agent-org-autoloads.el~, so lazy loading via
              agent-org-codebuddy-start-agent
              agent-org-cline-start-agent
              agent-org-omp-start-agent agent-org-pi-start-agent
-             agent-org-dsh-start-agent agent-org-devin-start-agent))
+             agent-org-dsh-start-agent agent-org-gemini-start-agent
+             agent-org-kilo-start-agent agent-org-devin-start-agent))
 #+end_src
 
 ** As a ~package.el~ package (tarball)

@@ -3160,3 +3160,61 @@ unit-verified against a temp HOME, never proven against a real =devin acp=.
 After the Owner seals it: one turn with the variable set and HOME pointing at
 a scratch copy, then =devin models= should report a logged-in account and an
 =initialize= should answer (the 8ca27a8 discipline used for omp and dsh).
+
+* Kilo Code provider (WO-20 half b, added 2026-10-30)
+
+The harness image bakes =kilo= (ci kit 260f1d2) but Emacs could not open it:
+no =agent-org-providers= entry.  This adds =:id 'kilo= on
+=('kilo' "acp")=, =agent-org-kilo-environment=, the =agent-org-kilo-start-agent=
+entry point plus its autoload cookie, and four ERT tests; the parity roster now
+transcribes every body in the pinned Dockerfile (15 pairs).
+
+** TODO Judge the transport claim — it is read from source, not measured live
+
+=packages/opencode/src/cli/cmd/acp.ts= (Kilo-Org/kilocode, main, read
+2026-10-30) builds =ndJsonStream= over =process.stdin= /
+=process.stdout= and hands that to =AgentSideConnection=, so the ACP pipe is
+stdio and =("kilo" "acp")= with NO flags is the right spawn — even though the
+same command's help advertises =--port= / =--hostname= / =--mdns= /
+=--cors=, which belong to the private HTTP server it starts for its own SDK
+client (random port, 127.0.0.1).  Nothing here was smoke-tested: this
+container has no =kilo= on PATH (measured; only =qoder= and =goose=), so the
+one thing worth re-checking after a build from the pinned kit is an
+=initialize= answer, which should show =loadSession: true= and
+sessionCapabilities close/fork/list/resume exactly as
+=packages/opencode/src/acp/service.ts= writes them.
+
+** TODO Is forwarding a pattern-derived variable honest enough?
+
+The CLI doc names =KILO_PROVIDER=, =KILO_CONFIG=, =KILO_ORG_ID= and the
+=KILO_<FIELD_NAME>= / =KILOCODE_<FIELD_NAME>= override PATTERNS (its example is
+=KILOCODE_MODEL=).  =agent-org-kilo-environment= forwards =KILO_API_KEY=
+(a documented example of the first pattern) and =KILOCODE_API_KEY= (a
+straightforward instance of the second, never spelled out in the docs).  The
+docstring and the test docstring both say so rather than presenting it as
+documented.  If you would rather not forward an inferred name, deleting that
+one string cannot break a working lane — no variable here is required, and
+=kilo auth login= is the real credential path.
+
+** TODO Check the roster transcription against the Dockerfile you have
+
+=tests/test-agent-org.el= =…-every-harness-body-is-a-provider= is transcribed
+by hand from =ci/docker/harness/Dockerfile= at the pinned kit, because the
+submodule is optional in a checkout and the gate must not red over a missing
+=ci/=; the count assertion (=15=) exists only to fail when the list is carried
+along instead of re-read.  gemini, devin, cline and the =pi-acp= adapter were
+missing from it (the older ten predates those stages), =pi= and =pi-acp= map
+to the same provider, and the assertion is still one-directional — an entry
+the image does not bake (slave-agent, and gemini/kilo on an older image) is
+fine.
+
+** TODO Note the vendor gap that was reported rather than worked around
+
+Kilo's =terminal-auth= =_meta= (served only to a client that advertises that
+capability) names command =opencode= with args =["auth" "login"]= — a fork
+leftover that would tell an editor to run the wrong binary.  agent-org sends
+no =authenticate= request and reads no =_meta=, so nothing here depends on
+it; the entry comment records it so the next reader does not re-derive it.
+The asymmetry that DOES affect a chat: it delegates =requestPermission= and
+=writeTextFile= to the client but never calls =readTextFile=, so a kilo read
+sees the disk and not your unsaved buffer.
