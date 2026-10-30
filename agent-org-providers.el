@@ -224,6 +224,49 @@
          :name "Gemini"
          :command '("gemini" "--acp")
          :environment #'agent-org-gemini-environment)
+   ;; Kilo Code (`@kilocode/cli', Kilo-Org/kilocode) serves ACP as a
+   ;; SUBCOMMAND, verified in the CLI's own reference BEFORE wiring —
+   ;; kilo.ai/docs/code-with-ai/platforms/cli-reference: "kilo acp — start
+   ;; ACP (Agent Client Protocol) server", whose flags are --help, --version,
+   ;; --port (default 0), --hostname (default "127.0.0.1"), --mdns,
+   ;; --mdns-domain, --cors and --cwd.  NO port/hostname belongs in our
+   ;; command: those flags are for the HTTP API the CLI starts for ITSELF
+   ;; (packages/opencode/src/cli/cmd/acp.ts listens, then hands `sdk' a
+   ;; localhost baseUrl) while the ACP connection is ndJSON over
+   ;; process.stdin/process.stdout.  So `("kilo" "acp")' is the whole shape.
+   ;; WHY the path says opencode: Kilo's CLI is a fork of OpenCode, so its
+   ;; ACP surface mirrors the entry above — and it is the RICHEST one we
+   ;; have.  Capabilities read from that initialize response
+   ;; (packages/opencode/src/acp/service.ts): `loadSession' TRUE, MCP http +
+   ;; sse, prompt image + embeddedContext, and sessionCapabilities close,
+   ;; fork, LIST and resume.  So resume-replay AND the `C-c a v' pager both
+   ;; apply (unlike dsh, which omits load, and gemini, whose docs name no
+   ;; list).  It also implements `setSessionMode' and `setSessionModel'.
+   ;; NO MODEL PINNED, deliberately: kilo fronts hundreds of models and DOES
+   ;; advertise a `model' config option (packages/opencode/src/acp/config-
+   ;; option.ts builds id "model", name "Model"), so a pin would be SENDABLE
+   ;; — but choosing which model an Owner never named is inventing, so C-c a m
+   ;; stays the interactive path.  Worth reporting: third-party guides for
+   ;; driving Kilo over ACP warn a fresh session may default to a poor model,
+   ;; which is an argument for a per-project pin, not for a package default.
+   ;; AUTH is its own store (`kilo auth login [url]' / `kilo auth logout'),
+   ;; and the documented environment overrides are exactly three names, all
+   ;; quoted from the CLI docs: KILO_PROVIDER (which provider ID is active),
+   ;; KILO_<FIELD> for a non-kilocode provider's settings (their own example
+   ;; is KILO_API_KEY -> apiKey) and KILO_ORG_ID, recommended "for non-
+   ;; interactive and CI environments".  Only those cross — no invented
+   ;; KILOCODE_* key, since the docs' example for that prefix is a MODEL
+   ;; field, not a credential.
+   ;; BAKED by the harness (ci/docker/harness/Dockerfile `body-kilo', npm
+   ;; @kilocode/cli with a FATAL `kilo --version', kit 260f1d2) but NOT
+   ;; present in the container this segment ran in (measured 2026-10-30:
+   ;; `kilo' ABSENT from PATH, image lag), so everything above is
+   ;; docs-and-source verified, never smoke-tested — the gemini discipline,
+   ;; re-prove `initialize' once the running image catches up.
+   (list :id 'kilo
+         :name "Kilo Code"
+         :command '("kilo" "acp")
+         :environment #'agent-org-kilo-environment)
   ;; Devin (CognitionAI/devin-cli) serves ACP natively: `devin acp' speaks
   ;; JSON-RPC over stdio and is meant to be spawned by an ACP-aware client —
   ;; the same subcommand Zed, JetBrains and Xcode configure (docs.devin.ai/
@@ -277,6 +320,7 @@ live on that path from this package -- until then the claim is untested."
                  (const :tag "Pi" pi)
                  (const :tag "DSH" dsh)
                  (const :tag "Gemini" gemini)
+                 (const :tag "Kilo Code" kilo)
                  (const :tag "Devin" devin)
                  (symbol :tag "Other provider id"))
   :group 'agent-org)
@@ -399,6 +443,18 @@ yet, so this raises \"Command not found\" until `npm install -g
 @google/gemini-cli'."
   (interactive)
   (agent-org-start 'gemini))
+
+;;;###autoload
+(defun agent-org-kilo-start-agent ()
+  "Start an interactive Kilo Code agent-org chat.
+Kilo serves ACP on stdio with the `kilo acp' SUBCOMMAND (kilo.ai/docs/
+code-with-ai/platforms/cli-reference); it keeps its own credential store,
+so sign in once outside Emacs with `kilo auth login', or name the provider
+non-interactively with the documented KILO_PROVIDER / KILO_API_KEY /
+KILO_ORG_ID overrides.  It advertises loadSession and session/list, so
+resume and the session pager both work."
+  (interactive)
+  (agent-org-start 'kilo))
 
 ;;;###autoload
 (defun agent-org-devin-start-agent ()
@@ -559,6 +615,31 @@ route, so forwarding both would fight itself."
                    ((agent-org--env-value "GOOGLE_API_KEY") "GOOGLE_API_KEY"))))
     (when var
       (list (format "%s=%s" var (agent-org--env-value var))))))
+
+(defun agent-org-kilo-environment ()
+  "Return environment variables for the Kilo Code ACP client.
+Kilo keeps its own credential store (`kilo auth login'), so nothing is
+exported by default and Emacs never reads that store — a second source of
+truth for a secret.  The three documented environment overrides cross when
+the environment already names them (kilo.ai/docs CLI reference,
+\"Environment Variable Overrides\"): KILO_PROVIDER selects which provider ID
+is active for this session, KILO_API_KEY is the docs' own example of the
+`KILO_<FIELD_NAME>' mapping (-> `apiKey') for a non-kilocode provider, and
+KILO_ORG_ID routes a Team/Enterprise seat through its organization, which
+those docs recommend \"for non-interactive and CI environments\".  Nothing
+else crosses: no KILOCODE_* name is forwarded, because the only field the
+docs spell for that prefix is a MODEL, not a credential."
+  (let ((provider (agent-org--env-value "KILO_PROVIDER"))
+        (key (agent-org--env-value "KILO_API_KEY"))
+        (org (agent-org--env-value "KILO_ORG_ID"))
+        (out nil))
+    (when provider
+      (setq out (cons (format "KILO_PROVIDER=%s" provider) out)))
+    (when key
+      (setq out (cons (format "KILO_API_KEY=%s" key) out)))
+    (when org
+      (setq out (cons (format "KILO_ORG_ID=%s" org) out)))
+    (nreverse out)))
 
 (defun agent-org-devin--credentials-file ()
   "Path of the credentials file the `devin' CLI reads for local ACP.

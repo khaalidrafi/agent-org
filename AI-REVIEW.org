@@ -3160,3 +3160,54 @@ unit-verified against a temp HOME, never proven against a real =devin acp=.
 After the Owner seals it: one turn with the variable set and HOME pointing at
 a scratch copy, then =devin models= should report a logged-in account and an
 =initialize= should answer (the 8ca27a8 discipline used for omp and dsh).
+
+* Kilo Code provider entry (WO-20 half (b), added 2026-10-30)
+
+=agent-org-providers.el= gained the =kilo= entry (=("kilo" "acp")=, its own
+environment function, its =start-agent= command and its autoload cookie), and
+the parity roster test re-transcribed the harness Dockerfile at the pinned
+=ci/= checkout (fourteen bodies now, devin/cline/gemini/kilo included).  Every
+capability claim is quoted from the CLI's own reference or from the fork's
+source, NOT from a live =initialize= — =kilo= was absent from this container's
+=PATH= even though the kit bakes it, so the image the seat ran in lags the
+Dockerfile.
+
+** TODO Check the command shape: NO network flag
+
+The docs list =--port=, =--hostname=, =--mdns=, =--cors= for =kilo acp=, and our
+command carries none of them.  That is deliberate: =packages/opencode/src/cli/cmd/acp.ts=
+listens on a localhost port for the CLI's OWN HTTP API and then bridges the ACP
+connection over =process.stdin= / =process.stdout= (ndJSON).  Adding a port
+would not switch transports, it would only open that private API wider — so
+judge whether =("kilo" "acp")= alone is right, and note =--cwd= exists if a
+project-root mismatch ever shows up.
+
+** TODO Judge the no-pin decision
+
+Unlike gemini (whose model moves through =unstable_setSessionModel=), Kilo DOES
+advertise a =model= config option (=config-option.ts= builds id ="model"=,
+name ="Model"=), so =:model= here would actually be SENDABLE through
+=agent-org--apply-pinned-model=.  We pin nothing because choosing a model the
+user never named is inventing, and =C-c a m= is the interactive path — but a
+third-party guide for driving Kilo over ACP warns a fresh session may default
+to a poor model.  If you want a project default, the place is the provider
+plist, not a new variable.
+
+** TODO Confirm the environment allow-list is documentation, not a guess
+
+=agent-org-kilo-environment= forwards exactly three names, each quoted from
+"Environment Variable Overrides" in the CLI docs: =KILO_PROVIDER=,
+=KILO_API_KEY= (the docs' own example of =KILO_<FIELD_NAME>= → =apiKey=) and
+=KILO_ORG_ID=.  The =KILOCODE_<FIELD_NAME>= prefix was NOT forwarded because
+the only field the docs spell for it is a MODEL.  Verify against the docs page
+before adding a fourth name, and check the test
+=test-agent-org-kilo-environment-passes-only-documented-overrides= would fail
+if a =KILOCODE_MODEL= line were added to the function.
+
+** TODO Live re-prove when the image catches up with the kit
+
+Ask a real =kilo acp= for =initialize= and compare its answer with the source
+read above: =loadSession= true, =sessionCapabilities= list/resume/fork/close,
+MCP http+sse, prompt image+embeddedContext.  Then page =C-c a v= — a
+=list= capability in the advertisement is not the same as a useful history
+directory (the goose lesson).  The 8ca27a8 discipline used for omp and dsh.

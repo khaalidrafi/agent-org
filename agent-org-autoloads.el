@@ -425,6 +425,14 @@ sign in with a Google account once outside Emacs, or export GEMINI_API_KEY
 for the documented headless path.  The harness image does not bake `gemini'
 yet, so this raises \"Command not found\" until `npm install -g
 @google/gemini-cli'." t)
+(autoload 'agent-org-kilo-start-agent "agent-org-providers" "\
+Start an interactive Kilo Code agent-org chat.
+Kilo serves ACP on stdio with the `kilo acp' SUBCOMMAND (kilo.ai/docs/
+code-with-ai/platforms/cli-reference); it keeps its own credential store,
+so sign in once outside Emacs with `kilo auth login', or name the provider
+non-interactively with the documented KILO_PROVIDER / KILO_API_KEY /
+KILO_ORG_ID overrides.  It advertises loadSession and session/list, so
+resume and the session pager both work." t)
 (autoload 'agent-org-devin-start-agent "agent-org-providers" "\
 Start an interactive Devin agent-org chat.
 Devin serves ACP natively on stdio (`devin acp' — the subcommand Zed,
