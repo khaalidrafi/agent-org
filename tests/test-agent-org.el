@@ -12526,5 +12526,88 @@ it upstream keeps this green — an anchored pattern matches no identifier."
                    (= 0 (call-process "grep" nil nil nil
                                       "-q" "-E" "-e" pattern "--" path)))
           (push f bad))))
-    (when bad (message "secret-guard would redact: %S" (nreverse bad)))
+    (ert-deftest test-agent-org-devin-credentials-restore-set ()
+  "DEVIN_CREDENTIALS_TOML env var -> credentials.toml with mode 600."
+  (ert-with-temp-directory tmpdir
+    (let ((original-home (getenv "HOME"))
+          (env-val "token=abc123\nendpoint=https://example.com"))
+      (unwind-protect
+          (progn
+            ;; Set temp HOME and env var
+            (setenv "HOME" tmpdir)
+            (setenv "DEVIN_CREDENTIALS_TOML" env-val)
+            ;; Call the restore function
+            (agent-org--restore-devin-credentials)
+            ;; Check file was created
+            (let ((file (expand-file-name ".local/share/devin/credentials.toml" tmpdir)))
+              (should (file-exists-p file))
+              ;; Check content
+              (should (equal (with-temp-buffer
+                               (insert-file-contents file)
+                               (buffer-string))
+                             env-val))
+              ;; Check mode is 600 (owner read/write only)
+              (should (equal (file-modes file) #o600))))
+        ;; Cleanup
+        (setenv "HOME" original-home)
+        (setenv "DEVIN_CREDENTIALS_TOML" nil)
+        (when (file-exists-p (expand-file-name ".local/share/devin/credentials.toml" tmpdir))
+          (delete-file (expand-file-name ".local/share/devin/credentials.toml" tmpdir)))))))
+
+(ert-deftest test-agent-org-devin-credentials-restore-unset ()
+  "Absent DEVIN_CREDENTIALS_TOML env var -> no credentials.toml created."
+  (ert-with-temp-directory tmpdir
+    (let ((original-home (getenv "HOME")))
+      (unwind-protect
+          (progn
+            ;; Set temp HOME without env var
+            (setenv "HOME" tmpdir)
+            (setenv "DEVIN_CREDENTIALS_TOML" nil)
+            ;; Call the restore function
+            (agent-org--restore-devin-credentials)
+            ;; Check file was NOT created
+            (should-not (file-exists-p
+                         (expand-file-name ".local/share/devin/credentials.toml" tmpdir))))
+        ;; Cleanup
+        (setenv "HOME" original-home)
+        (setenv "DEVIN_CREDENTIALS_TOML" nil)))))
+
+(ert-deftest test-agent-org-devin-credentials-restore-blank ()
+  "Blank DEVIN_CREDENTIALS_TOML env var -> no credentials.toml created."
+  (ert-with-temp-directory tmpdir
+    (let ((original-home (getenv "HOME"))
+          (env-val ""))
+      (unwind-protect
+          (progn
+            ;; Set temp HOME and blank env var
+            (setenv "HOME" tmpdir)
+            (setenv "DEVIN_CREDENTIALS_TOML" env-val)
+            ;; Call the restore function
+            (agent-org--restore-devin-credentials)
+            ;; Check file was NOT created
+            (should-not (file-exists-p
+                         (expand-file-name ".local/share/devin/credentials.toml" tmpdir))))
+        ;; Cleanup
+        (setenv "HOME" original-home)
+        (setenv "DEVIN_CREDENTIALS_TOML" nil)))))
+
+(ert-deftest test-agent-org-devin-environment-calls-restore ()
+  "agent-org-devin-environment calls agent-org--restore-devin-credentials."
+  (ert-with-temp-directory tmpdir
+    (let ((original-home (getenv "HOME")))
+      (unwind-protect
+          (progn
+            ;; Set temp HOME
+            (setenv "HOME" tmpdir)
+            ;; Call the environment function (which calls restore)
+            (agent-org-devin-environment)
+            ;; Check file was created (restore was called)
+            (should (file-exists-p
+                     (expand-file-name ".local/share/devin/credentials.toml" tmpdir))))
+        ;; Cleanup
+        (setenv "HOME" original-home)
+        (when (file-exists-p (expand-file-name ".local/share/devin/credentials.toml" tmpdir))
+          (delete-file (expand-file-name ".local/share/devin/credentials.toml" tmpdir)))))))
+
+(when bad (message "secret-guard would redact: %S" (nreverse bad)))
     (should (null bad))))
