@@ -2087,6 +2087,335 @@ below are the whole plan, with the measurements already taken so nobody re-takes
   org-check every edited =.org=, full suite, hot-load buffer file first then
   agent-org.el, and ONE small commit per unit.
 
+** TODO Agentic scripting --- an Org file that runs its own prompt queue (WO-19)
+Owner order (2026-10-29 #hq, recorded in =agent-team/CONTROL.org= OBJECTIVE): "WO-19
+agentic scripting --- org-file script runner: user writes a prompt queue + per-step
+model/provider/options in an org file, agent-org executes the steps sequentially on
+the batch lane and writes results back into the org file; design (file format + API
++ abort/continue semantics) BEFORE code, lands behind ERT."
+
+/This item is the design./  Units #187--#190 below are the build order it produces;
+nothing is written yet, and the acceptance criteria are the bullets.
+
+*** The shape in one paragraph
+A script file is a list of level-1 headings.  Each heading is one step: its title is
+what the user reads, its =:PROPERTIES:= drawer is the per-step /options/, its body is
+the prompt.  The runner walks the headings in file order, spawns the batch lane
+(=agent-org-batch.el=) once per step as a subprocess, waits, and writes that step's
+answer back under its own heading before the next step starts.  The file is therefore
+both the queue /and/ the report --- which is the whole point of putting it in an Org
+file rather than a shell loop: a run you interrupt is a document you can read, and a
+run you resume skips the steps already answered.
+
+*** The file format
+#+begin_src org
+#+AGENT_ORG_SCRIPT_PROVIDER: qoder
+#+AGENT_ORG_SCRIPT_MODEL: qwen3.8-flash
+#+AGENT_ORG_SCRIPT_TIMEOUT: 600
+#+AGENT_ORG_SCRIPT_SESSION: keep
+
+* TODO Step 1 --- summarise this file
+:PROPERTIES:
+:MODEL: deepseek-v4.1-flash
+:END:
+Read the CONVENTIONS.md §17 section and list every rule it pins about the queue
+region.  Answer in five bullets or fewer.
+
+* TODO Step 2 --- rewrite as a checklist
+:PROPERTIES:
+:PROVIDER: goose
+:SESSION: new
+:END:
+Turn the previous answer into a checklist.
+#+end_src
+
+- /File defaults/ are =#+AGENT_ORG_SCRIPT_<KEY>: value= lines above the first step.
+  Unknown =#+KEY:= lines are inert to Org, which is why this, and not a drawer, is
+  the file-level config: a drawer needs a heading to own it, and a =* config= heading
+  would be /parsed as a step/ (=org-element.el= treats any =#+KEY:= as a keyword line;
+  the package already leans on that in the chat's metadata block, §1/§2).
+- /One level-1 heading = one step./  Level 2+ inside a step is prompt text, not a
+  step --- so a step's own outline is allowed and the runner must never descend
+  (the same one-level rule the queue region uses, §17, and the reason the clock
+  totals sum level-1 headings only, §22.1).
+- /The prompt/ is the body: everything from after the drawers to the next level-1
+  heading, taken VERBATIM (no reflowing, no markdown conversion — §15 is a /render/
+  rule for the chat, and a script's bytes go on the wire as written), with the one
+  exception of the §3.2 single-space indent, which is dedented because the package
+  put it there.  A step with an empty body records =STATUS: skipped=; it never sends
+  a blank prompt, because a blank prompt against a paid model is a bill for nothing.
+- /Per-step keys/ (drawer, upper-case like every other property the package writes):
+  =PROVIDER=, =MODEL=, =TIMEOUT=, =DIR=, =SESSION= (=keep= | =new=), =OUT= (an extra
+  file to also write the answer to), =NAME= (a stable handle for the plan listing and
+  — deferred, see the open points below — a later step's =FROM:= reference).  Unknown
+  keys are a
+  =user-error= at parse time, never ignored --- a typo'd =MODLE:= silently running on
+  the default model is the kind of bug that costs credits and reads as the agent
+  being stupid.
+- /Parsed by regex scan, not =org-element=: one pass over the buffer's bytes from one
+  column-0 star heading to the next.  Two reasons, both already measured elsewhere in
+  the package:
+  the live 9.8 =org-element= cache goes stale in a big buffer that our own renders
+  edit (§ "LIVE-CACHE TRAP" in AGENTS.md), and built-in-vs-ELPA Org skew (9.7.11
+  batch / 9.8.10 live) makes a structure answer version-dependent --- the same
+  argument =agent-org-buffer--queue-parse-text= (buffer.el:2346) makes for the queue.
+- /Never execute the file./  A script is data: no source block is run, no Lisp is
+  read from it.  The only thing taken from a step body is bytes into a temp prompt
+  file (below), so a step whose text says =#+begin_src sh ...= cannot run anything.
+
+*** Per-step options resolve onto the wire, not onto new machinery
+- =PROVIDER= → =agent-org--provider-spec= (agent-org.el:719), which already
+  =user-error=s on an unknown id; the runner validates the /whole plan/ before it
+  spawns anything, so step 12 of 12 with a typo'd provider never costs a partial run.
+- =MODEL= → =AGENT_ORG_MODEL=, which the batch lane applies to the spec's =:model=
+  /before/ =agent-org--open-session= copies it into =:want-model=
+  (agent-org-batch.el:305-306, agent-org.el:759) → one
+  =session/set_config_option= per session via =agent-org--apply-pinned-model=
+  (:573).  Consequence the user must see in the results: a pin the agent does not
+  advertise is /reported, never sent/ --- the answered model, read back from the
+  status, is what lands in =:ANSWERED:=, so a silent fallback is visible.
+- =TIMEOUT= → =AGENT_ORG_TIMEOUT= (default from
+  =agent-org-script-step-timeout=, seeded from the batch default 900 s).
+- =DIR= → the runner binds =default-directory= around the spawn, so the child's
+  transcript lands in /that/ project's =.agent-org/= and the provider sees that tree.
+  Resolved against the /script file's/ directory, never the Emacs-current one ---
+  the mistake =#184= calls out for the cross-agent store.
+- =PROMPT= is never quoted into argv: the runner writes it with
+  =write-region ... nil :quiet= into a fresh =temporary-file-directory= file and
+  passes =AGENT_ORG_PROMPT=.  That is what lets a step carry a 200 KB prompt and
+  keeps shell/argv quoting out of the design entirely.
+- /NOT in v1, stated rather than invented: a per-step permission MODE./  Nothing in
+  the package SENDS a mode today --- =agent-org--session-modes= (:524) and
+  =--mode-name= (:501) only /read/ =current_mode_update=, and no =agent-org-*-mode=
+  setter exists (measured: the only send-path config request the package makes is
+  the model one, =agent-org--set-model-request= :549).  So =MODE:= is rejected at
+  parse time with a message that says what would be needed (a
+  =session/set_mode= send plus a drift test), the way WO-16 reports an absent ACP
+  surface instead of guessing a command.  =C-c a= interactive users still get the
+  mode they set in the chat.
+
+*** Execution: one batch process per step
+- Step /n/ spawns =emacs --batch -l agent-org-batch.el --eval
+  '(agent-org-batch-send)'= with the step's env.  The runner does not reimplement
+  the handshake, the waiting or the collect: =agent-org-batch.el= already owns
+  initialize → =session/new= (or =session/load=) → send → raw-chunk collection →
+  =AGENT_ORG_OUT=, and its exit codes are the contract (0 = the out file holds the
+  answer, 42 = every failure, agent-org-batch.el:336-340).
+- /Continuity is the batch lane's existing resume pair/, not new code: the runner
+  feeds =AGENT_ORG_SESSION_OUT= for step /n/ and =AGENT_ORG_SESSION_ID= into step
+  /n+1/ when the resolved session mode is =keep=.  The e2e resume case
+  (=tests/e2e-agent-org-batch.sh=) already proves that pair end-to-end.
+- /MEASURED honesty about that chain/: a load that fails DEGRADES to a fresh
+  session on a new process (agent-org-batch.el:222-254) --- the batch lane cannot
+  tell the caller it lost context.  So the runner compares the id it got out with
+  the id it put in and records =:CONTEXT: broken= on the step when they differ.  A
+  script whose step 5 silently restarted is then a script that /says/ so, instead of
+  the user believing the agent remembered step 2.
+- Why one process per step, when one warm session would be cheaper: (a) a hung or
+  crashing agent costs one step, not the run --- exit 42 is a step verdict; (b) the
+  per-step env is what makes provider/model/dir vary per step without a second
+  session-management path inside the batch lane; (c) process cost is noise next to a
+  turn: measured 0.09 s for =emacs --batch= to start in this container, against
+  turns that run in seconds-to-minutes, and the target Celeron pays the same shape.
+  A future =SESSION: warm= value could hold one process for the whole file; that is
+  /not/ v1, and nothing in the format prevents adding it.
+- The wait in live Emacs is the batch lane's own idiom --- poll with
+  =accept-process-output= --- and =C-g= is honoured because the loop is /ours/, not an
+  =acp= response callback (§11's swallowed-quit trap does not apply to a driver that
+  never sits inside a callback).  A quit must still reap the child
+  (=delete-process=, =condition-case=): the stray-agent measurement behind §12 is
+  16 live =qoder --acp= children at ~100 MB each, and the batch child's own agent is
+  a grandchild --- hence the child gets a hard kill after a grace period and the
+  runner never assumes the child cleaned up.
+- One run per file, locked by a buffer-local variable, with a =user-error= on the
+  second invocation.  Two drivers writing one file is how results get lost, and Org
+  gives no protection.
+
+*** Abort / continue semantics
+- A step's record is written =IMMEDIATELY= after that step, before the next spawn.
+  That single ordering rule is what makes every other abort case cheap: a killed run
+  loses at most the one in-flight step, and its file shows exactly where.
+- =agent-org-script-stop-on-error= (default t): the run halts at the first step whose
+  exit is not 0, after recording that step =FAILED=.  With nil the run continues and
+  every failure is recorded, which is what a nightly CI script wants (one bad step
+  must not eat the other eleven).
+- /Resume is by file state, never by memory/: a step whose last record is =DONE= is
+  skipped.  =C-u= on =agent-org-script-run= re-runs /every/ step; =C-u C-u= clears
+  the results and runs from the first non-=DONE= one.  A step that was never run
+  counts as non-=DONE=, so plain re-invocation after an abort continues exactly where
+  it stopped --- with no state file.
+- A run refuses to start when the script buffer has unsaved changes (=user-error=:
+  the run is driven by the /file/'s text, and answering an edited-but-unsaved version
+  of a step is the kind of lie that reads as a bug).  In =--batch/CI use there is no
+  buffer and this case cannot happen.
+- The write-back re-reads the file's mtime (and the buffer's =buffer-chars-modified-tick=
+  when one exists) before each save; a change since the previous write stops the run
+  =before= writing and says which step was next.  Never =write-region= a stale
+  render over a person's edit; and =VISIT= stays nil (§14's =C-x s= trap).
+- /Fuel guard/: every step spends credits, and the Owner's fuel law is the reason a
+  script must not be able to run away.  =agent-org-script-max-steps= (default 25)
+  caps a run; =agent-org-script-plan= prints the resolved plan --- step, provider,
+  model, session mode, timeout --- without spawning anything, and CI is expected to
+  call it before a long run.  The cap is checked on the /plan/, not step by step, so
+  a 200-step file is refused in one message instead of after 25 paid answers.
+- Per-step wall clock is the batch lane's =AGENT_ORG_TIMEOUT=; there is no separate
+  whole-run deadline in v1 (a run with no deadline is still bounded by
+  =max-steps × step-timeout=, and the user can always =C-g=).
+
+*** Results write-back
+Under each step, after its =:PROPERTIES:= drawer, the runner owns one
+=:RESULTS:= drawer and one example block:
+#+begin_src org
+* DONE Step 1 --- summarise this file
+:PROPERTIES:
+:MODEL: deepseek-v4.1-flash
+:END:
+:RESULTS:
+:STATUS: ok
+:EXIT: 0
+:SESSION: 3f2a…
+:CONTEXT: kept
+:ANSWERED: deepseek-v4.1-flash
+:ELAPSED: 0:01:12
+:WHEN: [2026-10-30 Fri 18:40 UTC]
+:END:
+#+begin_example
+<the agent's raw answer text, one space of indent where §3.2 requires it>
+#+end_example
+:LOGBOOK:
+- Result taken on 2026-10-30 18:40 UTC "exit 0, 1182 chars (agent-org-script)"
+:END:
+#+end_src
+- The =RESULTS:= drawer and the example block are /the runner's own region/ (located
+  by markers the same way the chat locates its quote and its queue, §17): a re-run
+  replaces them in place, it never appends a second copy, and the step's /prompt/
+  text --- which is the user's --- is untouched by any write.
+- =STATUS:= is =ok= | =failed= | =timeout= | =skipped=; the heading keyword
+  (=TODO=/=DONE=) is the coarse state and is /also/ the skip switch the user can
+  pull by hand (= =DONE= before running = "already answered, don't bill it again").
+  No custom =#+TODO:= set: the file is the user's, and inventing keywords in it is
+  exactly the structure-shift §15 avoids.
+- /Every answer line goes through =agent-org-buffer--drawer-safe-lines=
+  (buffer.el:4483)/, which exists for this exact hazard and is already the law for
+  drawer bodies (§3.3): an agent that quotes a transcript can emit =:END:= --- which
+  closes the drawer early and swallows the rest of the block --- or a column-0
+  =* headline=, which ends the step's subtree and silently re-shapes the script.
+  The example block additionally survives =--response-safe-lines= for the bare
+  =#+end_quote=/=#+end_example= case: an answer that /contains/ a closer would
+  otherwise close its own block.
+- =ELAPSED:= is the wall time of the /child/ (two =float-time= reads around the wait,
+  minute-truncated in the drawer text and exact in =:SECONDS:=) --- the same
+  two-field shape §22 settled on, so =org-clock-sum= and our own display agree.  No
+  =CLOCK:= lines are written here: this file is not a chat, and the package's own
+  clock lines are for exchange headings (§22).
+- Transcripts stay the batch lane's business: =AGENT_ORG_TRANSCRIPT_DIR= is passed
+  through when set, and unset keeps the old law (no stray =sid-*.org= litter in the
+  user's project).
+
+*** The API
+- =agent-org-script-plan= --- resolve and report; spawns nothing.
+- =agent-org-script-run= (interactive; region or prefix arg selects steps) --- the
+  loop, with the abort semantics above.
+- =agent-org-script-run-step= --- one step, the same code path with one element.
+- =agent-org-script-continue= --- run from the first non-=DONE= step.
+- =agent-org-script-clear= --- drop the runner's regions (results + example blocks),
+  leave the user's text alone.
+- =agent-org-script-run-file= / =agent-org-script-run-batch= --- the non-interactive
+  entry for CI: takes the file, no prompts, no echo-area reporting, exit status the
+  caller can test.  Env: =AGENT_ORG_SCRIPT= names the file, so team CI never quotes
+  Lisp (same law as every =AGENT_ORG_*= knob).
+- Keys under the one =C-c a= prefix (the KEYS law in AGENTS.md), added to
+  =--build-mode-map= so the map object is re-FILLED in place --- the hot-reload law
+  that silently leaves live buffers on the old keys otherwise.
+- /Where the code lands matters to CI/: =agent-org-batch.el= and
+  =tests/test-agent-org-batch.el=, because the gate in
+  =.github/workflows/agent-team.yml:328-336= hard-codes the six compiled files and
+  the /two/ test files it runs.  A new =agent-org-script.el= + its own test file
+  would compile and test green locally and then /not run in CI at all/ until the
+  Lead extends those lists --- so v1 rides files the gate already covers, and
+  splitting to a new file is a Lead-owned workflow change to request when the feature
+  is big enough to be worth it.  (Interactive verbs that need autoloads still touch
+  =agent-org.el=, which is in the gate.)
+
+*** Unit #187 --- the parser (agent-org-batch.el)
+- =agent-org-script--parse-text (file-or-buffer)= → a list of step plists
+  ='((:pos … :title … :keyword … :properties (:provider … :model …) :prompt …))=,
+  plus the resolved file defaults.  Pure, no process, no buffer modification ---
+  testable like =--status-kb= and friends (§21's "pure functions hold the /proc
+  parsing" argument applies exactly the same way here).
+- Unknown drawer key → =user-error=.  Empty body → =:prompt nil= and the step marked
+  skippable.  A =#+AGENT_ORG_SCRIPT_= line after the first step → =user-error= (it
+  would be sent as prompt text and silently do nothing).
+- Five tests: defaults-only file; per-step override wins; unknown key refused; a
+  multi-line prompt with a blank line inside survives byte-for-byte; a level-2
+  heading inside a step does NOT open a second step.
+
+*** Unit #188 --- the resolved plan and the env build (agent-org-batch.el)
+- =agent-org-script--plan (steps)= → each step with provider/model/timeout/session
+  mode /resolved/ (file default → step override → package default) and validated
+  against =agent-org-providers=; =agent-org-script--env (step)= → the
+  =AGENT_ORG_*= list, including the temp prompt path and the session in/out pair.
+- The =max-steps= cap is checked on the /plan/, so a bad script is refused before
+  /any/ spawn.  A =MODE:= key needs no separate check here: it is simply not in the
+  accepted-key list, so #187's unknown-key refusal covers it — the message for that
+  one key names the wire call it would need (=session/set_mode=), because "unknown
+  key" alone would send the user to look for a typo.  Tests: cap exceeded refuses;
+  =MODE:= refuses with that message; =SESSION: new= puts no =AGENT_ORG_SESSION_ID=;
+  =keep= chains the previous step's =AGENT_ORG_SESSION_OUT= path; =DIR= resolves
+  against the script file, not =default-directory=.
+
+*** Unit #189 --- the driver: spawn, wait, record (agent-org-batch.el)
+- The spawn is a seam: =agent-org-script--spawn= (a =defvar= holding the real
+  =make-process= call), so ERT drives the loop against a fake that writes the out
+  file and returns an exit code --- the acp-mock law applies to the batch lane too:
+  /a stub must mirror the dependency's data shape/ (AGENTS.md "Sessions and the
+  wire"), so the fake writes a real file with real bytes and reports a real code,
+  never a canned string in place of the process.
+- =agent-org-script--run (plan)= → the sequential loop with the write-back at every
+  boundary, the mtime guard, the lock, the quit handling and the child reap.
+- Tests, one per semantics claim above: ok step records =DONE=+=STATUS: ok=; a
+  failing step halts the run when =stop-on-error= is t and continues when nil;
+  =DONE= is skipped, =C-u= re-runs it; context mismatch records =:CONTEXT: broken=;
+  a quit mid-step reaps the child and leaves the file consistent (no half drawer,
+  no orphan =#+begin_example=); a second =run= while one lives =user-error=s.
+
+*** Unit #190 --- write-back, verbs, keys, docs, e2e
+- The renderer: replace-one's-own-region, sanitize the answer through the two
+  safe-lines functions, then the drawer fields.  Pins: an agent answer containing
+  =:END:= or a column-0 =* item= leaves the step's structure intact (assert with
+  =org-element-parse-buffer=, the way §3.2/§3.3's rules were measured --- the only
+  place a structural break can be seen at all).
+- The interactive verbs + =C-c a= keys + autoload cookies (the drift test pins
+  provider ids ↔ start commands; autoloads are generated by the same scrape the
+  chat path uses --- remember it bit three times in WO-16).
+- README.org (the user-facing shape: write a file, =C-c a =, read the results),
+  AGENTS.md/CONVENTIONS.md (a new § for the script format and its safety rails),
+  AI-REVIEW.org (what to review = the parser, the append/replace region logic, the
+  fuel guard).
+- E2E: extend =tests/e2e-agent-org-batch.sh='s pattern into
+  =tests/e2e-agent-org-script.sh= --- two steps against
+  =tests/fake-acp-agent.py --load=, no model, no network beyond the pinned acp
+  fetch, asserting step 2 saw step 1's session id and the file holds both results.
+  The unit suite alone cannot prove the chain; the batch lane's own happy path
+  needed an e2e for the same reason.
+- Then: full gate (six files byte-compile error-on-warn + both suites), org-check
+  every edited =.org=, hot-load buffer file first then =agent-org=, one small commit
+  per unit.
+
+*** Open points to settle with the Owner before #188
+- Should a step be able to read an /earlier/ step's answer into its prompt
+  (=FROM: <name>=)?  The format slot is trivial (a substitution at plan time), the
+  question is whether a script is a /pipeline/ or just a /sequence/ --- Owner's
+  wording ("prompt queue … executes the steps sequentially") reads as sequence, and
+  =keep= chaining already gives the agent-side memory.  /v1 = sequence only/,
+  =FROM:= is an explicitly deferred slot, not an absent one.
+- Whether the runner should reuse one chat buffer per provider so a human can watch
+  the turns, or stay headless (v1 stays headless: the file is the UI, and a live
+  buffer per step is a §12 kill-your-children problem in a loop).
+- Per-step =MODE:= (needs a =session/set_mode= send + the drift discipline) and
+  per-step permission answers (§ WO-4/WO-5 overlap) --- both are named, both are
+  out of v1.
+
 ** TODO Clock seconds --- the fix is /designed/, measured, and NOT written
 User report: "Seconds no longer showing up in clock timestamps."  The on-screen
 =agent-org-clock-display= overlay /does/ print seconds (=0:00:09=); the =CLOCK:= text
