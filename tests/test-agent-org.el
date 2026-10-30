@@ -261,6 +261,141 @@ present, and nothing — not even a blank — crosses when absent."
     (should (equal (agent-org-devin-environment)
                    '("WINDSURF_API_KEY=dvsk_headless")))))
 
+;;;; WO-17 — devin CI credential restore
+
+(ert-deftest test-agent-org-devin-credentials-land-at-the-cli-path ()
+  "A sealed DEVIN_CREDENTIALS_TOML becomes the file the CLI reads.
+`devin auth login' is a browser PKCE flow that cannot run in CI, while
+the local ACP server honors ONLY its output file (measured 2026-10-29:
+WINDSURF_API_KEY alone leaves `devin models' reporting \"Not logged
+in\"), so the CI lane carries the whole file in the environment and
+agent-org places it at the vendor path $HOME/.local/share/devin/
+credentials.toml before the spawn.  HOME is honoured from
+`process-environment', which is what makes a temp-HOME test possible.
+The MODES are the point, not decoration: the file must be 0600 and its
+directory 0700 BEFORE the bytes exist, because `write-region' ignores
+`default-file-modes' (measured 2026-10-30: a fresh write lands 0644) and
+a 0644 secret in a 0755 directory is readable by the whole machine for
+as long as it takes to chmod."
+  (ert-with-temp-directory home
+    (let ((process-environment
+           (list (concat "HOME=" home)
+                 "DEVIN_CREDENTIALS_TOML=[auth]\ntoken = \"sekret\"\n")))
+      (let ((written (agent-org-devin--restore-credentials)))
+        (should written)
+        (should (equal written
+                       (expand-file-name ".local/share/devin/credentials.toml"
+                                         home)))
+        (should (file-exists-p written))
+        ;; verbatim, so a token the vendor formats is not mangled here
+        (should (equal (with-temp-buffer
+                         (insert-file-contents written)
+                         (buffer-string))
+                       "[auth]\ntoken = \"sekret\"\n"))
+        (should (= #o600 (file-modes written)))
+        (should (= #o700 (file-modes (file-name-directory written))))
+        ;; nothing group- or other-accessible anywhere on the path
+        (should (zerop (logand (file-modes written) #o077)))
+        (should (zerop (logand (file-modes (file-name-directory written))
+                               #o077)))))))
+
+(ert-deftest test-agent-org-devin-credential-restore-is-no-op-unless-sealed ()
+  "Absent OR blank means touch nothing — the env-value law, enforced.
+Two distinct disasters this rail prevents: a lane whose secret was never
+sealed must not spawn with an empty credentials file (a blank write would
+erase a real `devin auth login' store on a developer's own machine), and
+a blank must not even reach the child as `VAR=' (see
+`agent-org--env-value').  Asserted against a temp HOME that already
+holds a login file, so the test fails if the file is opened at all."
+  (ert-with-temp-directory home
+    (let ((file (expand-file-name ".local/share/devin/credentials.toml" home)))
+      (make-directory (file-name-directory file) t)
+      (write-region "HUMAN-LOGIN" nil file nil 'nomessage)
+      ;; UNSET: no answer, no write, no chmod
+      (let ((process-environment (list (concat "HOME=" home))))
+        (should-not (agent-org-devin--restore-credentials))
+        (should (equal (with-temp-buffer (insert-file-contents file)
+                                         (buffer-string))
+                       "HUMAN-LOGIN"))
+        (should-not (agent-org-devin-environment)))
+      ;; BLANK: the same, and a blank never crosses into the environment
+      (let ((process-environment (list (concat "HOME=" home)
+                                       "DEVIN_CREDENTIALS_TOML=")))
+        (should-not (agent-org-devin--restore-credentials))
+        (should (equal (with-temp-buffer (insert-file-contents file)
+                                         (buffer-string))
+                       "HUMAN-LOGIN"))
+        (should-not (agent-org-devin-environment))))))
+
+(ert-deftest test-agent-org-devin-secret-never-rides-env-or-echo ()
+  "The credential goes to the file and NOWHERE else (SECRET LAW).
+Forwarding DEVIN_CREDENTIALS_TOML to the child would expose it in `ps'
+and /proc/PID/environ; a `message' of the content would put it in the
+echo area and any log of it.  So the sealed value must appear in neither
+the returned environment list nor any echo-area message the start path
+emits — only the NAME may be mentioned."
+  (ert-with-temp-directory home
+    (let ((process-environment
+           (list (concat "HOME=" home)
+                 "DEVIN_CREDENTIALS_TOML=sekret-value-42"
+                 "DEVIN_MODEL=opus"))
+          (file (expand-file-name ".local/share/devin/credentials.toml" home)))
+      (ao--capture-messages
+        (let ((env (agent-org-devin-environment)))
+          ;; DEVIN_MODEL still crosses; the credential does not
+          (should (equal env '("DEVIN_MODEL=opus")))
+          (should-not (seq-some (lambda (s) (string-match-p "sekret-value-42" s))
+                                env))
+          (should-not (seq-some (lambda (s) (and s (string-match-p "sekret-value-42" s)))
+                                ao--messages))
+          ;; and it IS in the file, which is the only place it may live
+          (should (file-exists-p file))
+          (should (equal (with-temp-buffer (insert-file-contents file)
+                                           (buffer-string))
+                         "sekret-value-42")))))))
+
+(ert-deftest test-agent-org-devin-credential-write-failure-is-loud ()
+  "A HOME that cannot hold the file must stop the spawn, not mute it.
+Measured 2026-10-29: a `devin acp' with no credential answers nothing
+and exits 0 — a silent dead process that looks like an agent bug.  A
+lane that sealed a credential and cannot place it is the same dead
+spawn, so it raises a `user-error` naming the directory and the reason
+but NEVER the value.  The message is the leak surface this tests."
+  (let ((process-environment '("HOME=/proc/no-such-home"
+                               "DEVIN_CREDENTIALS_TOML=sekret-value-42")))
+    (should-error (agent-org-devin--restore-credentials)
+                  :type 'user-error)
+    (let ((msg (condition-case err
+                   (agent-org-devin--restore-credentials)
+                 (error (error-message-string err)))))
+      (should (stringp msg))
+      (should (string-match-p "Devin credentials" msg))
+      (should-not (string-match-p "sekret-value-42" msg)))))
+
+(ert-deftest test-agent-org-devin-start-places-credentials-before-spawn ()
+  "The :environment function IS the choke point, so test it there.
+WO-17's rule is \"before ANY devin spawn\": `agent-org--open-session'
+funcalls the provider's `:environment' while building the acp client and
+starts no process until it returns, so every path — interactive start,
+resume, the batch/CI lane — funnels through this one call.  Driving the
+real start command under the mock therefore proves the ordering without
+a live agent."
+  (ert-with-temp-directory home
+    (ao--capture-wire
+      (let ((process-environment
+             (list (concat "HOME=" home)
+                   "DEVIN_CREDENTIALS_TOML=sekret-value-42"))
+            (agent-org-transcribe nil))
+        (let ((buf (agent-org-devin-start-agent)))
+          (unwind-protect
+              (progn
+                (should (eq 'devin
+                            (plist-get (agent-org--session-for-buffer buf) :name)))
+                (should (file-exists-p
+                         (expand-file-name ".local/share/devin/credentials.toml"
+                                           home))))
+            (kill-buffer buf)))))))
+
 (ert-deftest test-agent-org-copilot-cursor-codebuddy-start-open-themselves ()
   "Each new per-provider command is the same thin call with its id baked in.
 The drift test already proves one `agent-org-<id>-start-agent' exists for

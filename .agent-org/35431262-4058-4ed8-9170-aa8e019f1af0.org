@@ -1,0 +1,51 @@
+:PROPERTIES:
+:Provider: qoder
+:ID: 35431262-4058-4ed8-9170-aa8e019f1af0
+:Mode: Default
+:Model: Qwen3.8-Flash (default)
+:Context: unknown
+:Cost: $0.00
+:END:
+
+#+TITLE: qoder
+
+:COMMANDS:
+/goal — Set or manage a persistent goal for the current session
+/rewind — Rewind conversation and checkpointed files to before a user message by id
+/rename — Rename the current conversation
+/simplify — Review the changed code for reuse, simplification, efficiency, and altitude cleanups, then apply the fixes. Quality only — it does not hunt for bugs.
+/debug — Enable debug logging for this session and help diagnose issues.
+/quest — Guides feature development through a two-phase workflow: create an implementation plan, get user approval, then implement it directly.
+/batch — Apply a batch change across the codebase by spawning parallel worker agents in isolated worktrees.
+/mcp-config — Interactively add, update, or remove MCP (Model Context Protocol) servers in CLI configuration files.
+/run — Launch and drive this project's app to see a change working. Use when asked to run, start, or screenshot the app, or to confirm a change works in the real app (not just tests).
+/verify — Verify that a code change actually does what it's supposed to by running the app and observing behavior. Use when asked to verify a PR, confirm a fix works, test a change manually, check that a feature works, or validate local changes before pushing.
+/run-skill-generator — Author or improve the run-<unit> skill — a per-project skill that tells agents how to build, launch, and drive this project's app. Use when the user asks to set up the project, get it running, write run instructions, or verify build/run steps work from a clean environment.
+/workflow-authoring — Reference for writing a Workflow tool script (script API and gotchas, resume, quality patterns, worked examples). Load before authoring a script for a workflow the user already opted into; it does not itself authorize running one.
+/agent-creator — Guide for creating custom agents. Use when users want to create a new agent that runs in an isolated context with custom system prompts and specific tool access.
+/hook-config — Guide for creating and configuring hooks. Use when users want to add automated behaviors triggered by tool execution, session lifecycle, or other events in the CLI hook system.
+/skill-creator — Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends the CLI's capabilities with specialized knowledge, workflows, or tool integrations.
+/security-scan — Qoder security scanning. Use when the user invokes /security-scan, explicitly requests a full repository or named-path cloud scan, asks whether a previously submitted cloud scan has finished or supplies a project name plus task/scan ID to fetch its result, asks for an L2 lightweight or L3 deep security review, or asks to push, git push, push it, publish commits, open a PR/MR, merge, release, deploy, configure a remote for push, or otherwise hand off committed code where an enabled L3 deep review must be offered first. Respect the Qoder L2 lightweight/L3 deep product switches. Never infer remediation approval from an earlier scan or handoff request.
+/imagegen — Prompt-writing guidance for generating or editing raster images (photos, illustrations, textures, mockups) with the ImageGen tool.
+/sites:sites-build-agent-app — Add Qoder Cloud Agents to Qoder Sites for AI assistants, persistent chat, agent execution and realtime voice. Includes SSE and WebSocket text/binary demos. This capability skill extends sites-building; use sites-hosting for hosted delivery.
+/sites:sites-management — Manage existing Qoder Sites: restore access, sharing and visitors, names and addresses, deletion, backend capabilities, database schema and records, Storage files, Secret metadata/removal, Function diagnostics and analytics. Use sites-building for application code and sites-hosting for publication.
+/sites:sites-building — Build a complete website with Qoder Sites or modify an existing Qoder Site. A .站点名称.qoder.site descriptor identifies the site, not unrelated code or standalone asset work. Use for other web projects only when the user requests Qoder Sites; respect another chosen hosting provider. Use sites-hosting for deployment and sites-build-agent-app for Cloud Agents features.
+/sites:sites-hosting — Deploy, publish, take live or recover a Qoder Site from its original local project. Use for website requests such as 部署、上线、发布. Use after sites-building for hosted delivery, for an existing prepared draft, or for publication status and previews. Publish validated work by default unless the user requests local-only work or defers publication.
+/sdk — Guide users building apps, scripts, CI pipelines, or automations on top of this CLI's companion TypeScript agent SDK. Use when the user mentions the companion SDK; asks to integrate, install, or write code against the SDK; says `query()`, `createSdkMcpServer`, `tool()`, `accessTokenFromEnv`, or `canUseTool`; asks to run agents programmatically from a script, CI/CD pipeline, backend service, or other code outside this CLI; wants to configure MCP servers for an SDK agent, handle streaming, permissions, hooks, session management, or sub-agents; or is wiring agents into an automation or bot. Use eagerly rather than answering from memory; the SDK surface evolves and this skill is the source of truth for the external package.
+/deep-research — Deep research harness — fan-out web searches, fetch sources, adversarially verify claims, synthesize a cited report. (dynamic workflow)
+:END:
+
+:MODES:
+Default (id: default) — Prompts for approval
+Accept Edits (id: acceptEdits) — Auto-approves edit tools
+Auto (id: auto) — Auto-approves via the safety classifier
+Don't Ask (id: dontAsk) — Refuses instead of prompting
+Bypass Permissions (id: yolo) — Auto-approves all tools
+:END:
+
+:CONFIG:
+Mode — Default
+Model — Qwen3.8-Flash (default)
+Reasoning Effort — Extra High
+:END:
+
