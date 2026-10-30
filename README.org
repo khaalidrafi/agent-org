@@ -73,16 +73,22 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   CognitionAI/devin-cli — the same subcommand Zed, JetBrains and Xcode
   spawn; its ACP server honors only the credentials stored by ~devin auth
   login~ --- ~WINDSURF_API_KEY~ serves Devin's cloud sessions, not local
-  ACP).
+  ACP --- and ~kilo acp~ (Kilo Code, ~@kilocode/cli~; ~acp~ is a SUBCOMMAND
+  there, listed in its own CLI docs and the shape Zed spawns, with
+  ~--port~/~--hostname~ as the only options, so stdio needs neither).  Its
+  user docs carry no capability matrix, so the support is read from the
+  server's own source: ~loadSession~ plus session capabilities
+  close/fork/list/resume, which is why a Kilo chat can resume and list like
+  an OpenCode one.
   slave-agent keeps its keys in a ~.env~ inside its state dir and its model in
   ~config.yaml~, both read by the adapter itself, so Emacs exports nothing for
   it; set ~SLAVE_HOME~ in the environment Emacs was started with to bind a
   specific profile's state dir.
   Qoder reads its credential from ~QODER_PERSONAL_ACCESS_TOKEN~ in the
   environment Emacs was started with, so export it before launching Emacs or
-  the daemon.  OpenCode, MiniMax Code, Copilot, CodeBuddy, Cline, OMP and Pi
-  keep their own credential stores, so ~opencode auth login~ / ~mcode login~ /
-  a signed-in
+  the daemon.  OpenCode, MiniMax Code, Copilot, CodeBuddy, Cline, OMP, Pi and Kilo
+  Code keep their own credential stores, so ~opencode auth login~ /
+  ~mcode login~ / a signed-in
   ~copilot~, ~codebuddy~ or ~cline~ once is enough, ~omp~ takes
   ~/login <provider>~ and pi reads its own config; no environment variable is
   required.  Cursor authenticates via ~agent login~ (or export
@@ -90,8 +96,12 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   ~COPILOT_GITHUB_TOKEN~ for headless use.  DSH keeps credentials in
   ~$DSH_HOME/.credentials.yaml~ (its official DeepSeek route falls back to
   ~DEEPSEEK_API_KEY~), and ~DSH_HOME~ plus OMP's ~OMP_PROFILE~ /
-  ~PI_CONFIG_DIR~ pass through when set, which is how an Emacs chat binds
-  one profile's state rather than the launch default.  Gemini CLI keeps its
+  ~PI_CONFIG_DIR~ and Kilo's ~KILO_ORG_ID~ / ~KILO_PROVIDER~ pass through when
+  set, which is how an Emacs chat binds one profile's state rather than the
+  launch default.  Kilo Code signs in through the browser — ~kilo auth
+  login~ — and its CLI docs name NO single Kilo token variable, so Emacs
+  forwards nothing credential-shaped for it; a key in its own config stays
+  the only source of truth.  Gemini CLI keeps its
   own login in its ~.gemini~ home directory (sign in with a Google account
   once outside Emacs); the documented headless key passes through when
   present --- ~GEMINI_API_KEY~, or ~GOOGLE_API_KEY~ for the Vertex API-key

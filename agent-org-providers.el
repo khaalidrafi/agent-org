@@ -250,7 +250,63 @@
   (list :id 'devin
         :name "Devin"
         :command '("devin" "acp")
-        :environment #'agent-org-devin-environment))
+        :environment #'agent-org-devin-environment)
+  ;; Kilo Code (`@kilocode/cli', binary `kilo') serves ACP as a SUBCOMMAND:
+  ;; `kilo acp'.  Verified in the vendor's own CLI docs BEFORE wiring (read
+  ;; 2026-10-30, kilo.ai/docs/code-with-ai/platforms/cli, "Top-Level CLI
+  ;; Commands" table): "kilo acp — start ACP (Agent Client Protocol) server",
+  ;; same wording on the cli-reference page, where the only options are
+  ;; `--port' (default 0) and `--hostname' (default 127.0.0.1) — stdio is the
+  ;; transport, so an editor spawn needs neither.  Independently confirmed by
+  ;; the Zed ACP registry (zed.dev/acp/agent/kilo: "Start Kilo with:
+  ;; npx @kilocode/cli@7.8.18 acp"), which means the shape is the vendor's and
+  ;; an editor's, not invented.  Note `kilo run --auto' is a DIFFERENT thing —
+  ;; the documented one-shot autonomous mode, not the ACP server — so this
+  ;; entry never uses it, and agent-org's batch lane (which drives an ACP
+  ;; session, not a vendor CLI flag) does not either.
+  ;; Capabilities are READ FROM THE SERVER'S OWN SOURCE, not from a live
+  ;; `initialize', because the docs carry no capability matrix at all:
+  ;; Kilo-Org/kilocode issue #6766 ("docs: Add ACP integration
+  ;; documentation…", opened 2026-03-08, CLOSED) admits "Zero mention in
+  ;; user-facing documentation" and points at packages/opencode/src/acp.  In
+  ;; that source on `main' (service.ts, fetched 2026-10-30) the initialize
+  ;; answer is agentInfo name "Kilo", `loadSession: true' and
+  ;; `sessionCapabilities' {close, fork, list, resume} — so BOTH resume-replay
+  ;; (§9) and the §10 session pager apply to a Kilo chat, unlike DSH.
+  ;; A model set arrives through `unstable_setSessionModel', but a `model'
+  ;; config option IS advertised (config-option.ts: id "model" select, plus
+  ;; "effort" and "mode"), so `C-c a m' works.  NOTHING is PINNED: Kilo is a
+  ;; gateway ("powered by 500+ AI models", 30+ providers) whose own config
+  ;; names `provider_id/model_id', exactly the OpenCode case — a pin would
+  ;; fight the account's default.
+  ;; Its server calls only two client-side methods, `requestPermission' and
+  ;; `fs/write_text_file' (service.ts:53, the `Partial<Pick
+  ;; AgentSideConnection…>' it implements): it does NOT ask for
+  ;; `fs/read_text_file' or any `terminal/*', so reads happen on its own
+  ;; filesystem and a permission prompt is mandatory — it yields nothing
+  ;; without one.  Both shapes we do have are compatible: the read/write
+  ;; handlers at agent-org.el:1996 and :2014 and the permission dialog at
+  ;; :2034.
+  ;; AUTH: no single Kilo access-token env var is documented anywhere (searched
+  ;; the CLI and authentication pages 2026-10-30).  The documented route is the
+  ;; browser sign-in `kilo auth login', with config-field overrides named
+  ;; `KILO_PROVIDER' ("Override the active provider ID"), `KILOCODE_<FIELD>'
+  ;; and `KILO_<FIELD>' (e.g. KILO_API_KEY -> apiKey).  So Emacs forwards
+  ;; NOTHING credential-shaped — a key read from the CLI's own store would make
+  ;; it a second source of truth (Secret Law).  Only the two documented
+  ;; SELECTORS cross: `KILO_ORG_ID' ("Best for non-interactive and CI
+  ;; environments") and `KILO_PROVIDER', which say WHICH org and provider this
+  ;; chat binds — the same steer `OMP_PROFILE' is for OMP.
+  ;; NOT SMOKE-TESTED HERE: measured 2026-10-30 in this turn container, `kilo'
+  ;; is ABSENT from PATH (only `qoder' and `goose' are present), even though the
+  ;; harness bakes the body (`kilo' stage at ci/docker/harness/Dockerfile:292,
+  ;; FATAL `kilo --version') — this seat's image predates that bake.  Every
+  ;; claim above is therefore doc/source-verified; the live `initialize' re-prove
+  ;; (the 8ca27a8 discipline used for omp and dsh) is WO-18 work, not this entry.
+  (list :id 'kilo
+        :name "Kilo"
+        :command '("kilo" "acp")
+        :environment #'agent-org-kilo-environment))
   "List of supported ACP providers.
 Each entry is a plist; see `agent-org-providers.el' commentary."
   :type '(repeat sexp)
@@ -278,6 +334,7 @@ live on that path from this package -- until then the claim is untested."
                  (const :tag "DSH" dsh)
                  (const :tag "Gemini" gemini)
                  (const :tag "Devin" devin)
+                 (const :tag "Kilo" kilo)
                  (symbol :tag "Other provider id"))
   :group 'agent-org)
 
@@ -411,6 +468,19 @@ A machine with no browser can carry that login file instead: export
 DEVIN_CREDENTIALS_TOML and it is placed before the spawn."
   (interactive)
   (agent-org-start 'devin))
+
+;;;###autoload
+(defun agent-org-kilo-start-agent ()
+  "Start an interactive Kilo Code agent-org chat.
+Kilo Code serves ACP as a subcommand (`kilo acp' — spelled out in its own
+CLI docs and what Zed spawns); authenticate once outside Emacs with
+`kilo auth login', which is the documented route — no single Kilo token
+env var exists.  It fronts 500+ models through its own config, so the
+chat opens on the account's default and `C-c a m' moves it (a `model'
+config option is advertised).  Export `KILO_ORG_ID' / `KILO_PROVIDER' to
+bind one organization or provider rather than the launch default."
+  (interactive)
+  (agent-org-start 'kilo))
 
 (defun agent-org--env-value (var)
   "The value of environment VAR, or nil when unset OR empty.
@@ -629,6 +699,28 @@ starts the process only after it returns."
       (setq out (cons (format "WINDSURF_API_KEY=%s" key) out)))
     (when model
       (setq out (cons (format "DEVIN_MODEL=%s" model) out)))
+    (nreverse out)))
+
+(defun agent-org-kilo-environment ()
+  "Return environment variables for the Kilo Code ACP client.
+Two documented SELECTORS only, never a credential.  Kilo's login is the
+browser flow `kilo auth login' and its keys live in its own config, which
+the CLI reads itself — the CLI docs name no single Kilo access-token
+variable (verified 2026-10-30), and forwarding a `KILO_<FIELD>' key would
+make Emacs a second source of truth for a secret the store already holds.
+`KILO_ORG_ID' selects which organization serves the request — the docs
+call it \"Best for non-interactive and CI environments\" — and
+`KILO_PROVIDER' the active provider id; an Emacs chat legitimately
+chooses both, the same steer `OMP_PROFILE' is for OMP and `DSH_HOME' for
+DSH.  Per `agent-org--env-value' a blank counts as absent, so a blank
+never overrides the CLI's own resolution with nothing."
+  (let ((org-id (agent-org--env-value "KILO_ORG_ID"))
+        (provider (agent-org--env-value "KILO_PROVIDER"))
+        (out nil))
+    (when org-id
+      (setq out (cons (format "KILO_ORG_ID=%s" org-id) out)))
+    (when provider
+      (setq out (cons (format "KILO_PROVIDER=%s" provider) out)))
     (nreverse out)))
 
 (provide 'agent-org-providers)

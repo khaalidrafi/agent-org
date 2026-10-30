@@ -3160,3 +3160,53 @@ unit-verified against a temp HOME, never proven against a real =devin acp=.
 After the Owner seals it: one turn with the variable set and HOME pointing at
 a scratch copy, then =devin models= should report a logged-in account and an
 =initialize= should answer (the 8ca27a8 discipline used for omp and dsh).
+
+* Kilo Code provider entry (WO-20 half (b), added 2026-10-30)
+
+Owner order 2026-10-29 #hq "add Kilo Code"; half (a) (the =kilo= body in the
+harness image) landed earlier, this unit is the =agent-org= side:
+=agent-org-providers.el= gains the =kilo= plist, =agent-org-kilo-environment=
+and =agent-org-kilo-start-agent=, and the parity roster test grows.  Review it
+before a Kilo chat is trusted on a lane.
+
+** TODO Judge the provenance of every capability claim
+
+The command shape is the easy half: =kilo acp= is quoted from the vendor's own
+CLI docs ("kilo acp — start ACP (Agent Client Protocol) server") and
+independently confirmed by Zed's registry.  The CAPABILITIES are not in those
+docs at all — the vendor issue #6766 admits "Zero mention in user-facing
+documentation" — so =loadSession= and the close/fork/list/resume set are read
+from =packages/opencode/src/acp/service.ts= on =main=, and are recorded that way
+in the provider comment and the test docstring.  Is source-read good enough to
+turn on resume-replay (§9) and the session pager (§10) for a body we have never
+handshaked?  The alternative was to advertise nothing, which is the DSH story
+with the opposite sign.
+
+** TODO Confirm the env decision against the gemini/devin precedent
+
+Kilo forwards ONLY =KILO_ORG_ID= and =KILO_PROVIDER=, both documented selectors,
+and NO key — because the CLI docs name no single Kilo token variable and its
+=KILO_<FIELD>= / =KILOCODE_<FIELD>= overrides are an open-ended family (a
+forwarded =KILO_API_KEY= would make Emacs a second source of truth).  Gemini and
+Devin DO forward their documented headless keys.  Decide whether that asymmetry
+is principled or just conservative, because the test pins it.
+
+** TODO Check the roster transcription (10 -> 14 bodies)
+
+=test-agent-org-every-harness-body-is-a-provider= now lists =devin=, =cline=,
+=gemini= and =kilo= next to the original ten.  Verify against
+=ci/docker/harness/Dockerfile= (the body stages, each with a FATAL
+=--version=) that the image really does install them, and that treating the
+=pi-acp= stage as the =pi= provider's own spawn rather than a fifteenth row is
+right.  The assertion is still one-directional: a baked body without an entry
+fails, an entry the image does not bake does not.
+
+** TODO Live check, once the seat image carries =kilo=
+
+Measured 2026-10-30 in this turn container: =kilo= is ABSENT from PATH (only
+=qoder= and =goose= are present), so =kilo= joins =gemini= in
+=…-unbaked-body-fails-loud-not-silent= — wired on docs, never smoke-tested.
+After the image with the bake reaches a lane: one =initialize= over stdin should
+answer =agentInfo= name "Kilo" with =loadSession: true= and the
+=sessionCapabilities= map, exactly the 8ca27a8 discipline used for omp and dsh
+(that is WO-18 work, not this entry).
