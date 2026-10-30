@@ -35,6 +35,7 @@ concurrency:
 
 permissions:
   contents: write
+  packages: write
   actions: write   # self-chain: finalize re-dispatches the next turn
   # NO `workflows: write` — GitHub rejects the KEY at workflow-creation
   # time (agent-team.el runs 39455051426 / 39455277702 evidence; the
@@ -130,6 +131,14 @@ jobs:
           esac
           echo "$MSG" >> "$SUMMARY"
 
+      - name: Log in to GHCR (prebuilt image reuse)
+        if: steps.control.outputs.mode == 'work'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
       - name: Build harness image (MODULAR — only this run's agent bodies)
         if: steps.control.outputs.mode == 'work'
         env:
@@ -149,6 +158,7 @@ jobs:
           bash ci/bin/harness_run_build.sh \
             -b agent-org-kit-base:local \
             -o agent-org-base:local \
+            -r ghcr.io/khaalidrafi/agent-org-harness \
             -- $BODIES
           docker buildx build --load \
             --cache-from type=gha \
