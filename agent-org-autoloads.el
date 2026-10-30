@@ -429,7 +429,10 @@ yet, so this raises \"Command not found\" until `npm install -g
 Start an interactive Devin agent-org chat.
 Devin serves ACP natively on stdio (`devin acp' — the subcommand Zed,
 JetBrains and Xcode spawn); authenticate once outside Emacs with
-`devin auth login', or export WINDSURF_API_KEY for headless use." t)
+`devin auth login' — the only credential the local ACP server honors
+(WINDSURF_API_KEY serves Devin's cloud sessions, not local ACP).
+A machine with no browser can carry that login file instead: export
+DEVIN_CREDENTIALS_TOML and it is placed before the spawn." t)
 (register-definition-prefixes "agent-org-providers" '("agent-org-"))
 
 
