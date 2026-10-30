@@ -3,11 +3,7 @@
 * Board
 ** DONE DISPATCH #2 staffing — ai/staffing
    members carry duties + rank + evidence; Founder share sent
-* Org cheat sheet
-  - ONGOING + CLOCK start; notes in :LOGBOOK:
-  - BLOCKED + reason; :OWN: = owner ruling
-  - REVIEW + completion note (invalid without)
-  - BLOCKED never terminal; only the EM flips DONE
+
 ** BLOCKED WO-1 cross-agent sessions — Qoder <-> Codebuddy (design DONE, code NOT started) — TODOs.org §Cross-agent
    BLOCKED by CI, not by design: the secret guard's unanchored `pt-` pattern
    rewrites every seat's source before the push (`.github/scripts/secret-guard.sh:20`,
@@ -115,3 +111,9 @@
 ** ONGOING CI-kit adoption (teamify, Lead) — ci/ submodule bumped to 479480b
    2026-10-29 (deduped prompt laws + Cursor env law): dual-law harness baked,
    per-seat session reuse ON, .agent-org transcripts committed
+
+* Org cheat sheet
+  - ONGOING + CLOCK start; notes in :LOGBOOK:
+  - BLOCKED + reason; :OWN: = owner ruling
+  - REVIEW + completion note (invalid without)
+  - BLOCKED never terminal; only the EM flips DONE
