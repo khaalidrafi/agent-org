@@ -138,7 +138,7 @@
    Spec: CONTROL.org OBJECTIVE (Owner 2026-10-29 #hq). Design (file
    format + API + abort/continue semantics) BEFORE code; sequential
    batch-lane execution; results written back into the org file; ERT.
-** TODO WO-20 kilo provider entry — half (b) of the kilo add
+** REVIEW WO-20 kilo provider entry — half (b) of the kilo add
    Half (a) DONE 2026-10-30 (kit 260f1d2: @kilocode/cli baked, command
    kilo, FATAL version check, no creds). Remaining seat half: ACP
    provider entry in agent-org-providers.el on the native server
@@ -146,6 +146,42 @@
    the ACP surface in the CLI's own docs/help before wiring — REPORT
    gaps never invent (dsh precedent). Update the parity roster test's
    transcribed list when the entry lands.
+   :LOGBOOK:
+   - Note taken on 2026-10-30 17:20 UTC "half (b) delivered, doc-verified;
+     the live handshake is still open (implementer, qwen3.8-flash@qoder)":
+     =kilo= joins =agent-org-providers= on =("kilo" "acp")= with
+     =agent-org-kilo-environment= and =agent-org-kilo-start-agent= (+ the
+     autoload cookie the drift test reads).  VERIFIED BEFORE WIRING, not
+     invented: the vendor CLI docs list "kilo acp — start ACP (Agent Client
+     Protocol) server" as a SUBCOMMAND (so =kilo --acp= would be a chat that
+     never answers) and Zed's registry spawns the same subcommand.
+     Capabilities are recorded AS READ FROM THE SERVER'S SOURCE
+     (=packages/opencode/src/acp/service.ts= on =main=: =loadSession: true=,
+     =sessionCapabilities= close/fork/list/resume, =agentInfo= "Kilo", a
+     =model= config option) because the user docs carry no matrix at all —
+     vendor issue #6766 admits it — and that provenance is stated in the
+     provider comment, the test docstring and AI-REVIEW.org rather than
+     smoothed into a claim.  Nothing pinned as a model (500+ models behind its
+     own config, the OpenCode case).  Env: =KILO_ORG_ID= / =KILO_PROVIDER=
+     only, never a key — no single Kilo token variable is documented, and
+     =KILO_<FIELD>= is an open-ended family.
+   - PARITY ROSTER GROWN 10 -> 14 as this item ordered: =devin=, =cline=,
+     =gemini=, =kilo= added from the =ci/docker/harness/Dockerfile= body
+     stages at the checkout here (ef44236: stages at lines 255/270/282/292,
+     each a FATAL =--version=); the =pi-acp= stage is the =pi= provider's own
+     spawn, not a fifteenth row.  Still one-directional.
+   - GATE: byte-compile clean with =byte-compile-error-on-warn= over all six
+     files; =Ran 468 tests, 468 as expected, 0 unexpected= main (+4 new),
+     15/15 batch.  MUTATION-VERIFIED: flipping the command to =("--acp")=
+     reddens the present-test; =agent-org--env-value= -> =getenv= reddens the
+     blank-is-absent rail.  Branch ai/turn-20261030-1710.
+   - NOT DONE HERE: the live =initialize= re-prove.  Measured 2026-10-30 in
+     this turn container, =kilo= is ABSENT from PATH (only =qoder= and
+     =goose= present — this seat's image predates the bake), so the entry is
+     doc/source-verified only, exactly the standing =gemini= had; that re-prove
+     is WO-18.  =kilo= now joins the unbaked-body loud-failure test so a
+     missing binary raises instead of hanging.
+   :END:
 ** ONGOING CI-kit adoption (teamify, Lead) — ci/ submodule bumped to 479480b
    2026-10-29 (deduped prompt laws + Cursor env law): dual-law harness baked,
    per-seat session reuse ON, .agent-org transcripts committed
