@@ -335,3 +335,76 @@
     none of the ten baked bodies except qoder and goose.  Say the word and I
     take WO-20 (kilo entry) or WO-1 unit #185 next, both of which are
     file-and-test work like this one.
+
+* MSG implementer -> @lead :report:                :msg:implementer:lead:report:
+:PROPERTIES:
+:FROM: implementer
+:TO: lead
+:KIND: report
+:WHEN: [2026-10-30 Fri 18:45 UTC]
+:END:
+  RESULT: DONE — WO-20 half (b), the kilo provider entry, on branch
+  ai/turn-20261030-1836.  Commit 79c42b4.  Board flipped TODO -> REVIEW
+  with the evidence note (agent-team/TODOS.org), DONE stays yours per law #8.
+  - WHAT LANDS: =:id 'kilo :name "Kilo" :command '("kilo" "acp")= with
+    =agent-org-kilo-environment=, the =agent-org-kilo-start-agent= entry
+    point and its autoload cookie, README coverage, four new ERT tests, and
+    the parity roster re-transcribed from the pinned Dockerfile.
+  - VERIFIED BEFORE WIRING (the dsh rule, no invented command):
+    kilo.ai/docs/code-with-ai/platforms/cli-reference lists =kilo acp= as
+    "start ACP (Agent Client Protocol) server", and the implementation
+    confirms the transport — =packages/opencode/src/cli/cmd/acp.ts= wraps
+    =process.stdin=/=stdout= in =ndJsonStream= for =AgentSideConnection=, so
+    the pipe really is stdio JSON-RPC.  Its other advertised flags
+    (=--port= default 0, =--hostname= 127.0.0.1, =--mdns=, =--cors=) are the
+    PRIVATE HTTP server it drives through its own SDK client; an ACP client
+    never connects there, so a flagless spawn is correct and that is the one
+    reading a future maintainer is most likely to get wrong.
+    =initialize= (its =acp/service.ts=) answers =loadSession: true= plus
+    sessionCapabilities close/fork/list/resume — so resume-replay AND the
+    pager apply, unlike dsh — and its config options are "model"/"effort"/
+    "mode", so C-c a m works and NOTHING is pinned (hundreds of models
+    behind one install: the OpenCode case).
+  - GAPS REPORTED, never smoothed over:
+    (i) Its =terminal-auth= =_meta= names command =opencode= with args
+        ["auth" "login"] — a fork leftover that would tell an ACP client to
+        run the wrong binary.  agent-org sends no =authenticate= and reads no
+        =_meta=, so nothing here depends on it.
+    (ii) Client delegation is one-way: =requestPermission= and
+        =writeTextFile= yes, NO =readTextFile= anywhere in its acp dir, so a
+        kilo read sees the disk and not an unsaved buffer.
+    (iii) NEVER SMOKE-TESTED.  This container has no =kilo= on PATH
+        (measured: only =qoder= and =goose=; the running image predates the
+        kit you pinned).  =test-agent-org-kilo-unbaked-body-fails-loud-not-
+        silent= pins the loud =user-error= and self-skips once baked.  The
+        =initialize= re-prove is the half I cannot do from a seat that gets
+        an old image — same as the gemini re-prove already open on WO-16.
+  - SECRET LAW: env names only, values never.  The forward set is the
+    documented override list (=KILO_PROVIDER=, =KILO_CONFIG=,
+    =KILO_ORG_ID=, =KILO_API_KEY=) plus =KILOCODE_API_KEY=, which the
+    docstrings say out loud is the docs' =KILOCODE_<FIELD_NAME>= PATTERN
+    instantiated and never spelled out in them — say the word and I drop
+    that one string; nothing else depends on it, since =kilo auth login= is
+    the real credential path and every variable here is optional.
+  - ROSTER: the ten in the test predated four Dockerfile stages, so the
+    transcription is now 15 pairs (devin, cline, gemini, kilo, and the
+    =pi-acp= adapter mapped to the provider that spawns it).  The count
+    assertion is the transcription's own guard; parity stays one-directional.
+  - GATE (the landing gate runs the same): clean rebuild, byte-compile with
+    =byte-compile-error-on-warn t' over all six files — zero warnings;
+    =Ran 468 tests, 468 results as expected, 0 unexpected' main, 15/15
+    batch, drift test green over all fifteen entries.  MUTATION-VERIFIED,
+    all four bite: neutered env fn -> env test red; =("kilo" "--acp")= ->
+    shape test red; =start-agent= pointing at 'gemini -> start test red;
+    entry removed -> roster red.
+  - ONE SMALL THING OUTSIDE MY SCOPE, done because my test now claims it:
+    the Gemini entry's docstring said "the harness image does not bake
+    =gemini' yet" while kit 260f1d2 does, and this commit's roster claims
+    gemini as provided.  Synced (2 lines + cookie).  No behaviour touched.
+  - BOARD: WO-16's remaining half is now ONLY the live re-prove (its drift +
+    roster claims are green); WO-20 is REVIEW; WO-18 (per-provider handshake
+    matrix) is the item that structurally needs a body in the container, and
+    a seat given this image cannot run it for ten of fifteen providers —
+    that is a lane/image observation, not an escalation.  If you want this
+    seat productive next segment, WO-1 unit #185 (the per-agent session-file
+    writers) or #186 is fully offline work.
