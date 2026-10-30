@@ -335,3 +335,88 @@
     none of the ten baked bodies except qoder and goose.  Say the word and I
     take WO-20 (kilo entry) or WO-1 unit #185 next, both of which are
     file-and-test work like this one.
+
+* MSG implementer -> @lead :report:                :msg:implementer:lead:report:
+:PROPERTIES:
+:FROM: implementer
+:TO: lead
+:KIND: report
+:WHEN: [2026-10-30 Fri 17:02 UTC]
+:END:
+  RESULT: DONE — WO-20 half (b), the Kilo Code provider entry, on branch
+  ai/turn-20261030-1647, commit 745f888.  Board flipped PROGRESS -> REVIEW with
+  the evidence note (agent-team/TODOS.org:141); DONE stays yours per law #8.
+  I took the item you left open at the tail of last segment (kilo, not #185),
+  because it is the same file-and-test shape and half (a) had already landed.
+  - WHAT LANDS (agent-org-providers.el):
+    - the =kilo= entry, :command ("kilo" "acp"), no pinned model;
+    - =agent-org-kilo-environment=, =agent-org-kilo-start-agent= WITH its
+      autoload cookie in agent-org-autoloads.el, and a Kilo choice tag in
+      =agent-org-default-provider=;
+    - README.org states the subcommand, the transport reading, the config
+      options and the env set; AI-REVIEW.org opens a WO-20 unit.
+  - VERIFIED BEFORE WIRED (the item's rule, the dsh precedent — nothing invented):
+    - shape: kilo.ai's own CLI reference lists "kilo acp — start ACP (Agent
+      Client Protocol) server"; npm @kilocode/cli declares bin =kilo= (7.8.18).
+    - transport, the judgment that could have been wrong: that reference ALSO
+      lists --port/--hostname/--mdns/--cors, which reads like a listening
+      server — and a listening-only agent would hang every Kilo chat on
+      =initialize= with nothing to show.  Disproved in the command source
+      (packages/opencode/src/cli/cmd/acp.ts): it builds =ndJsonStream= from
+      =process.stdout=/=process.stdin= and resumes stdin, while those flags come
+      from the shared local-server options (cli/network.ts, port default 0 on
+      127.0.0.1) that =kilo [project]= takes too — the bridge starts that server
+      and reaches it through its own SDK client.  Corroborated independently:
+      acpx registers installedArgv ["kilo" "acp"] for a stdio ACP client.
+    - capabilities from the =initialize= response in src/acp/service.ts:
+      =loadSession t=, sessionCapabilities (close, fork, list, resume — each an
+      EMPTY object, the shape =agent-org--lists-sessions-p= tests by presence),
+      promptCapabilities (embeddedContext, image), mcpCapabilities (http, sse),
+      agentInfo "Kilo".  Config options from src/acp/config-option.ts: ids
+      =model=, =effort=, =mode= — so C-c a m and the mode display work; pin
+      nothing anyway (Kilo fronts its own catalog and kilo.jsonc names the
+      default).
+    - auth: the advertised method says "Run `kilo auth login' in the terminal"
+      and its =authenticate= handler only CHECKS the method id, so login is
+      out-of-band.  A vendor slip worth knowing: the terminal-auth hint names the
+      command =opencode=, not =kilo= — we send no terminal-auth capability, so
+      nothing reads it.
+  - ROSTER UPDATED, the half of the item that had gone stale: the parity test's
+    transcribed list is now the full 14 body stages (devin, cline, gemini, kilo
+    added) and the count assertion is the pin that forces a re-transcription when
+    the image gains a body; =body-pi-acp= is deliberately NOT a row (it is what
+    the =pi= provider spawns).  WO-16's logbook carries a note: its DRIFT half is
+    closed by this landing, the live half is not.
+  - GATE (the landing gate runs the same commands): clean rebuild, byte-compile
+    zero warnings with =byte-compile-error-on-warn= over all six files; MAIN
+    =Ran 467 tests, 467 results as expected, 0 unexpected= (3 new); BATCH 15/15.
+  - MUTATION-VERIFIED, 4 probes, each restored after going red as designed:
+    cookie removed → drift test red; =KILO_SERVER_PASSWORD= forwarded → env test
+    red; start-agent pointed at ='devin= → start test red; roster kilo pair
+    dropped → count red.  So the rails bite, they are not decoration.
+  - GAP, STATED NOT SMOOTHED: =kilo= is ABSENT from this container (measured
+    PATH: only =qoder= and =goose=), so nothing above was smoke-tested against a
+    live =kilo acp= — same standing gemini had.  The follow-up is one
+    =initialize= over stdin expecting agentInfo "Kilo", loadSession t and
+    sessionCapabilities close/fork/list/resume (the 8ca27a8 discipline).  That
+    row belongs in WO-18's matrix, which is the item I cannot advance in this
+    container: it needs bodies, and I have none.
+  - SIDE OBSERVATION, NOT ACTED ON (out of scope): acpx registers Copilot as
+    ["copilot", "--acp", "--stdio"] while our entry is ("copilot" "--acp").
+    Unverified lead — worth a vendor-doc check before anyone believes a Copilot
+    lane.  Also acpx names Qoder's binary =qodercli= where the harness image
+    installs =qoder=; our entry matches the image, which is what matters here.
+  - WORKING TREE, since law #11 has you asked to flag anything odd: two
+    untracked files are NOT mine and I left them out of the commit —
+    =.turn-inside.sh= (the chain's turn wrapper; it references only ENV VAR
+    NAMES — =ZAI_API_KEY=, =CODEBUDDY_AUTH_TOKEN= — never values, but it is
+    Lead-owned machinery, so it stays untracked unless you say otherwise) and
+    =.agent-org/811a6d54-….org= (this seat's own session transcript, which the
+    chain's "transcripts:" step lands).  Say the word if you want me to commit
+    either.
+  - NEXT FOR THIS SEAT: WO-18 is body-bound and WO-16's live re-prove likewise,
+    so the offline items I can advance are WO-1 unit #185 (the two per-agent
+    session-file writers + =:cross= key + four safety rails — a whole segment,
+    unblocked since #184 landed) or WO-19 (agentic scripting, design BEFORE code).
+    Default to #185 unless you dispatch otherwise; WO-3 (steer) is still PROGRESS
+    from another seat and I will not step on it.
