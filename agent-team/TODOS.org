@@ -83,6 +83,16 @@
    - IMAGE GAP CLOSED 2026-10-30 (kit 260f1d2, Lead): gemini-cli 0.66.0
      baked with FATAL --version. REMAINING here: live initialize/loadSession
      re-prove per 8ca27a8 discipline + provider drift test green.
+   - DRIFT HALF CLOSED 2026-10-30 18:45 UTC (implementer, WO-20 segment):
+     the parity roster is re-transcribed from the PINNED Dockerfile — 15
+     pairs, so gemini, devin, cline and the pi-acp adapter are now claimed
+     (the ten predates those stages), =kilo= joins with its own four tests,
+     and =test-agent-org-every-provider-has-a-start-agent-command= is green
+     over all fifteen entries including the new autoload cookie.  What is
+     left is ONLY the live re-prove: this turn's container still has just
+     =qoder= and =goose= on PATH (measured), so gemini/kilo stay
+     docs-and-source verified until an image built from 260f1d2 runs the
+     =initialize= probe.
    :END:
 ** REVIEW WO-17 devin credential restore — code + ERT now, live seal later
    Owner fiat 2026-10-30 #hq: "cred. NOT required for working" — NO task
@@ -138,7 +148,7 @@
    Spec: CONTROL.org OBJECTIVE (Owner 2026-10-29 #hq). Design (file
    format + API + abort/continue semantics) BEFORE code; sequential
    batch-lane execution; results written back into the org file; ERT.
-** TODO WO-20 kilo provider entry — half (b) of the kilo add
+** REVIEW WO-20 kilo provider entry — half (b) of the kilo add
    Half (a) DONE 2026-10-30 (kit 260f1d2: @kilocode/cli baked, command
    kilo, FATAL version check, no creds). Remaining seat half: ACP
    provider entry in agent-org-providers.el on the native server
@@ -146,6 +156,54 @@
    the ACP surface in the CLI's own docs/help before wiring — REPORT
    gaps never invent (dsh precedent). Update the parity roster test's
    transcribed list when the entry lands.
+   :LOGBOOK:
+   - Note taken on 2026-10-30 18:45 UTC "entry wired on vendor docs +
+     source; roster re-transcribed (implementer, qwen3.8-flash@qoder)":
+     =:id 'kilo :name "Kilo" :command '("kilo" "acp")= with
+     =agent-org-kilo-environment=, the =agent-org-kilo-start-agent= entry
+     point and its autoload cookie in =agent-org-autoloads.el= (the half
+     that bit three times before).  The subcommand is NOT invented:
+     kilo.ai/docs/code-with-ai/platforms/cli-reference lists =kilo acp= as
+     "start ACP (Agent Client Protocol) server", and
+     =packages/opencode/src/cli/cmd/acp.ts= (main, read this segment) shows
+     the transport is =ndJsonStream= over =process.stdin=/=stdout= — its
+     other flags (--port default 0, --hostname 127.0.0.1, --mdns, --cors)
+     are the PRIVATE HTTP server it drives through its own SDK client, so a
+     flagless spawn is right and --cwd is already inherited.
+     Capabilities read from =acp/service.ts=: =loadSession: true= plus
+     sessionCapabilities close/fork/list/resume (so resume-replay AND the
+     pager apply), mcp http/sse, prompt embeddedContext+image; config
+     OPTION ids "model"/"effort"/"mode" (so C-c a m works) and NOTHING
+     pinned, because one install fronts hundreds of models (the OpenCode
+     case).  Env is pass-through-or-nothing on documented overrides only:
+     KILO_PROVIDER, KILO_CONFIG, KILO_ORG_ID, KILO_API_KEY, and
+     KILOCODE_API_KEY stated in the docstring as a PATTERN instance the docs
+     never spell out.
+     GAPS REPORTED, not worked around: (i) its =terminal-auth= =_meta= names
+     command =opencode= with args ["auth" "login"] — a fork leftover;
+     agent-org sends no =authenticate= and reads no =_meta=, so nothing
+     follows; (ii) it delegates =requestPermission= and =writeTextFile= but
+     there is NO =readTextFile= call in its acp dir, so a kilo read sees the
+     disk, not an unsaved buffer; (iii) NEVER SMOKE-TESTED — this turn's
+     container has no =kilo= on PATH (measured: only =qoder=, =goose=), the
+     image predates kit 260f1d2, so =initialize= re-prove is the open half
+     (8ca27a8 discipline), pinned meanwhile by
+     =test-agent-org-kilo-unbaked-body-fails-loud-not-silent= (self-skips
+     once baked).
+     EVIDENCE: branch ai/turn-20261030-1836; 4 new ERT tests; parity roster
+     re-transcribed from the pinned Dockerfile at 15 pairs (gemini, devin,
+     cline and the pi-acp adapter were missing — the ten predates those
+     stages); GATE: byte-compile clean with =byte-compile-error-on-warn t=
+     over all six files, =Ran 468 tests, 468 results as expected, 0
+     unexpected= main, 15/15 batch, drift test green.  MUTATION-VERIFIED:
+     neutering the env fn reddens the env test; =("kilo" "--acp")= reddens
+     the shape test; starting 'gemini from the kilo command reddens the
+     start test; dropping the entry reddens the roster.  Docs: README.org
+     (provider paragraph, credential paragraph, =:commands= list — gemini's
+     stale "not baked yet" wording synced to kit 260f1d2 in the same pass)
+     and an AI-REVIEW.org unit with the four questions worth your eye.
+   :END:
+
 ** ONGOING CI-kit adoption (teamify, Lead) — ci/ submodule bumped to 479480b
    2026-10-29 (deduped prompt laws + Cursor env law): dual-law harness baked,
    per-seat session reuse ON, .agent-org transcripts committed
