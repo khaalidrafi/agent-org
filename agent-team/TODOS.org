@@ -138,7 +138,7 @@
    Spec: CONTROL.org OBJECTIVE (Owner 2026-10-29 #hq). Design (file
    format + API + abort/continue semantics) BEFORE code; sequential
    batch-lane execution; results written back into the org file; ERT.
-** PROGRESS WO-20 kilo provider entry — half (b) of the kilo add
+** REVIEW WO-20 kilo provider entry — half (b) of the kilo add
    Half (a) DONE 2026-10-30 (kit 260f1d2: @kilocode/cli baked, command
    kilo, FATAL version check, no creds). Remaining seat half: ACP
    provider entry in agent-org-providers.el on the native server
@@ -162,6 +162,32 @@
      `session/list`/`loadSession` capability (gemini precedent: doc-verified
      only). This container has no `kilo` on PATH (measured: qoder + goose
      only), so the live initialize re-prove stays WO-18.
+   - Note taken on 2026-10-30 16:41 UTC "entry landed, drift test green; LIVE PROOF still open (implementer, qwen3.8-flash@qoder)":
+     branch ai/turn-20261030-1631, sha 38be335.  DELIVERED:
+     =agent-org-providers.el= — `kilo' plist (`:command ("kilo" "acp")', NO
+     `:model'), `agent-org-kilo-environment' (KILO_API_KEY / KILO_PROVIDER /
+     KILOCODE_MODEL / KILO_ORG_ID only; KILO_CONFIG_CONTENT excluded — a config
+     BODY is not Emacs to carry), `agent-org-kilo-start-agent' + its GENERATED
+     autoload cookie, and the Kilo choice on `agent-org-default-provider'.
+     tests/: 4 new ERT (shape+no-pin, start-opens-kilo under ao--capture-wire,
+     env allow-list with blank==absent and the content/config-path refusals,
+     `test-agent-org-unbaked-kilo-body-fails-loud-not-silent' which skips once
+     `kilo' is on PATH).  GATE: byte-compile clean with
+     `byte-compile-error-on-warn t' over all six files, main =Ran 468 tests,
+     468 results as expected, 0 unexpected', batch 15/15 — the drift test
+     (`test-agent-org-every-provider-has-a-start-agent-command', the item's own
+     acceptance rail) is inside that green run.
+     ALSO HERE — roster re-transcribed 10 -> 14: ci/ ef44236 builds fourteen
+     bodies (devin, cline, gemini, kilo since 2026-10-28; first three already
+     had entries), and `body-pi-acp' folds into the `pi' pair it serves.  The
+     stale list was the exact hazard that test exists for.  README.org carries
+     the user-facing shape; AI-REVIEW.org opens the WO-20 unit.
+     REMAINS (never claimable from a container without the body): the live
+     `initialize'/'loadSession' re-prove per 8ca27a8 — i.e. WO-18's matrix row
+     for Kilo — and with it the two open questions this entry deliberately does
+     NOT answer: whether kilo advertises a `model' config option (its docs hint
+     via the OpenCode lineage, the `kilo acp' option block says nothing) and
+     whether it pages `session/list'.  Nothing here is asserted beyond the docs.
    :END:
 ** ONGOING CI-kit adoption (teamify, Lead) — ci/ submodule bumped to 479480b
    2026-10-29 (deduped prompt laws + Cursor env law): dual-law harness baked,

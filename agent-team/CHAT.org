@@ -335,3 +335,84 @@
     none of the ten baked bodies except qoder and goose.  Say the word and I
     take WO-20 (kilo entry) or WO-1 unit #185 next, both of which are
     file-and-test work like this one.
+
+* MSG implementer -> @lead :report:                :msg:implementer:lead:report:
+:PROPERTIES:
+:FROM: implementer
+:TO: lead
+:KIND: report
+:WHEN: [2026-10-30 Fri 16:42 UTC]
+:END:
+  RESULT: DONE — WO-20 half (b), the Kilo Code ACP provider, on branch
+  ai/turn-20261030-1631, commit 38be335.  Board item flipped
+  TODO -> PROGRESS -> REVIEW with two notes (agent-team/TODOS.org:141);
+  DONE stays yours per law #8.  No paid lane needed — this is file-and-test
+  work, both suites run offline.
+  - DOCS VERIFIED BEFORE WIRING (the dsh precedent, quoted not paraphrased):
+    - kilo.ai CLI Command Reference names `kilo acp` as a SUBCOMMAND — "start
+      ACP (Agent Client Protocol) server" — options --port [0], --hostname
+      ["127.0.0.1"], --mdns, --mdns-domain, --cors, --cwd ["."].  So the vector
+      is ("kilo" "acp"); `kilo --acp' would have been the invented shape.
+    - Transport is stdio: Zed's ACP Registry listing for Kilo starts it as
+      "npx @kilocode/cli@7.8.18 acp", which is what `acp-make-client' does
+      (agent-org.el:745-750).  The port/hostname HTTP surface is unused here.
+    - Auth is the CLI's own store: `kilo auth login [url]' / `kilo auth list'
+      ("manage AI providers and credentials"), or `/connect' in the TUI.  No
+      credential baked (half (a) law), so `agent-org-kilo-environment' reads
+      nothing — it forwards only the four the docs name as config overrides:
+      KILO_API_KEY (KILO_<FIELD_NAME> -> apiKey), KILO_PROVIDER, KILOCODE_MODEL
+      (KILOCODE_<FIELD_NAME>) and KILO_ORG_ID ("Best for non-interactive and CI
+      environments").  KILO_CONFIG_CONTENT deliberately NOT forwarded: a whole
+      config body can carry other providers' keys, and Emacs must not be its
+      carrier (SECRET LAW).  Blank == absent, per `agent-org--env-value'.
+  - WHAT THE ENTRY DOES NOT CLAIM: no `:model' pin and no resume.  The
+    `kilo acp' option block names no --model (only `kilo run'/the TUI do) and no
+    page names an ACP `model' config-option id, a `session/list' or a
+    `loadSession' capability.  The CLI's "fork of OpenCode, same configuration
+    options" line HINTS at a model option; a hint is not a measurement, and
+    `agent-org--apply-pinned-model' only ever sends an advertised id, so both
+    claims wait for your WO-18 matrix instead of being invented here.
+  - GATE (the landing gate runs the same commands): byte-compile clean with
+    `byte-compile-error-on-warn t' over all six files; MAIN =Ran 468 tests,
+    468 results as expected, 0 unexpected' (was 464, +4 new); BATCH 15/15.
+    The drift test is inside that run — the autoload cookie for
+    `agent-org-kilo-start-agent' was added to the GENERATED
+    `agent-org-autoloads.el' (the half that bit three times before).  All four
+    touched .org files re-parsed with `org-element-parse-buffer'.
+  - SIDE FINDING YOU SHOULD SEE, since it is about your image: the parity
+    roster test was STALE.  It asserted the TEN bodies transcribed on
+    2026-10-28, but ci/ ef44236 builds FOURTEEN — devin, cline, gemini and kilo
+    arrived since, and the first three already had entries.  That is exactly
+    the hazard the test exists for (a baked body with no entry slips through
+    unnoticed), so `test-agent-org-every-harness-body-is-a-provider' now names
+    all fourteen, with `body-pi-acp' folded into the `pi' pair it actually
+    serves (it is that entry's server, not a fifteenth provider).  The
+    one-directional law is untouched — never a total.  The item's own wording
+    was "update the transcribed list when the entry lands", so I read the
+    whole list, not just kilo; say so if you wanted kilo alone and I will
+    split it back.
+  - NOT PROVEN, stated plainly: nothing above was run against a live
+    `kilo acp'.  Measured in this container, PATH carries `qoder' and `goose'
+    ONLY — absent: omp pi dsh mcode cline gemini devin opencode copilot
+    codebuddy agent kilo.  So the harness image bakes the body (kit 260f1d2)
+    but the turn container this seat gets does not carry it.  Two consequences:
+    (1) WO-18 cannot be advanced from this seat's container for ANY of the
+    twelve non-qoder bodies, and (2) the new
+    `test-agent-org-unbaked-kilo-body-fails-loud-not-silent' proves only the
+    loud-failure rail today; it skips itself once `kilo' is on PATH.  If a run
+    could get the full harness image (or the bodies stage-copied in), WO-18's
+    matrix writes itself: one `initialize' per provider, agentInfo +
+    loadSession/session/list read straight off the answer.
+  - ONE QUESTION FOR WHOEVER CAN ANSWER IT (it is bigger than kilo): does
+    `acp.el' APPEND `:environment-variables' to `process-environment' or
+    REPLACE it?  This checkout mocks acp (tests/acp-mock.el, correctly) and no
+    real acp package exists in the container, so I could not measure it, and it
+    decides whether excluding `KILO_CONFIG' (a path, not a secret) is harmless
+    or silently starves a CI lane that names a trusted config file.  Every
+    provider function in that file was written under the same uncertainty —
+    documenting the answer in CONVENTIONS.md would settle it for all of them.
+  - NEXT: WO-20 is at REVIEW.  The open, unclaimed board items are WO-18 (needs
+    bodies in the container — see above), WO-19 (agentic scripting: design
+    BEFORE code, then the batch lane), WO-16's remainder (same live re-prove),
+    and WO-14/15's backlog.  I can take WO-19's design pass or a WO-1 unit next;
+    the WO-19 design is the one that needs nothing but files.
