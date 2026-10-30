@@ -335,3 +335,77 @@
     none of the ten baked bodies except qoder and goose.  Say the word and I
     take WO-20 (kilo entry) or WO-1 unit #185 next, both of which are
     file-and-test work like this one.
+
+* MSG implementer -> @lead :report:                :msg:implementer:lead:report:
+:PROPERTIES:
+:FROM: implementer
+:TO: lead
+:KIND: report
+:WHEN: [2026-10-30 Fri 17:22 UTC]
+:END:
+  RESULT: DONE — WO-20 half (b), the agent-org side of "add Kilo Code", on
+  branch ai/turn-20261030-1710.  Commit 2814824.  Board flipped TODO ->
+  REVIEW with the evidence note (agent-team/TODOS.org:141); DONE stays
+  yours per law #8.
+  - WHAT LANDS: a =kilo= entry in =agent-org-providers= on
+    =:command ("kilo" "acp")=, =agent-org-kilo-environment=,
+    =agent-org-kilo-start-agent= (+ the autoload cookie, because the drift
+    test reads the GENERATED file), and the =agent-org-default-provider=
+    choice.  4 new ERT tests, mock ACP only.
+  - VERIFIED BEFORE WIRING (the item's rule, dsh precedent): the vendor's
+    own CLI docs list "kilo acp — start ACP (Agent Client Protocol)
+    server" in the Top-Level CLI Commands table — a SUBCOMMAND, so
+    =kilo --acp= would have been an invented shape — and Zed's registry
+    spawns the same thing (zed.dev/acp/agent/kilo: "npx
+    @kilocode/cli@7.8.18 acp").  Options are only =--port=/=--hostname=;
+    stdio needs neither.  =kilo run --auto= is the one-shot mode, a
+    different thing this entry never uses.
+  - THE GAP I FOUND, REPORTED RATHER THAN PAINTED OVER: the user docs
+    carry NO capability matrix — vendor issue #6766 (opened 2026-03-08,
+    CLOSED) says it plainly, "Zero mention in user-facing documentation",
+    and points at =packages/opencode/src/acp=.  So =loadSession: true=,
+    =sessionCapabilities= {close, fork, list, resume}, =agentInfo= "Kilo"
+    and the =model=/=effort=/=mode= config options are READ FROM THAT
+    SOURCE (service.ts / config-option.ts on main, fetched 2026-10-30), and
+    the provenance is written into the provider comment AND the test
+    docstring.  Two consequences for your gate: a Kilo chat gets
+    resume-replay and the §10 pager (unlike DSH), and =C-c a m= works
+    because =model= is advertised — but no pin, since Kilo fronts 500+
+    models through its own config, exactly the OpenCode case.
+  - SECRET LAW: =KILO_ORG_ID= and =KILO_PROVIDER= only — both documented
+    selectors ("Best for non-interactive and CI environments" / "Override
+    the active provider ID").  No key forwards: the docs name NO single
+    Kilo token variable, the login is browser =kilo auth login=, and the
+    =KILO_<FIELD>= / =KILOCODE_<FIELD>= family is open-ended, so
+    forwarding one would make Emacs a second source of truth.  A test
+    asserts a present =KILO_API_KEY= stays out of the returned list.
+  - ROSTER UPDATED AS ORDERED: =test-agent-org-every-harness-body-is-a-
+    provider= grows 10 -> 14 (devin, cline, gemini, kilo), transcribed from
+    the ci submodule at this checkout — ef44236, body stages at
+    ci/docker/harness/Dockerfile:255/270/282/292, each a FATAL
+    =--version=.  The =pi-acp= stage is the =pi= provider's own spawn, not
+    a fifteenth row; the assertion stays one-directional.
+  - GATE (landing gate ran the same): byte-compile clean with
+    =byte-compile-error-on-warn= over all six files; =Ran 468 tests, 468
+    results as expected, 0 unexpected= main; batch 15/15.  MUTATION-
+    VERIFIED: command flipped to =("kilo" "--acp")= → the shape test fails;
+    =agent-org--env-value= → =getenv= → the blank-is-absent rail fails.
+  - EVIDENCE GAP, NOT AN ESCALATION: no live handshake happened.  Measured
+    in this turn container, PATH holds ONLY =qoder= and =goose= — =kilo=,
+    =gemini=, =devin=, =cline=, =omp=, =pi=, =dsh=, =mcode=, =copilot=,
+    =agent=, =opencode= are ALL ABSENT — so this seat's image predates the
+    kit 260f1d2 bake.  =kilo= therefore joins gemini's standing
+    (doc/source-verified, never smoke-tested), and I added a kilo analogue
+    of the loud-failure test so a missing binary raises instead of hanging.
+    THE LIVE =initialize= RE-PROVE — the whole provider matrix, plus the
+    glm-5.3@chat.z.ai lane — is WO-18, and it cannot be done from a
+    container without the bodies.  That is your call on the image, not a
+    seat failure.
+  - NOT ATTEMPTED THIS SEGMENT, deliberately: WO-1 unit #185 (the
+    per-agent session-file writers).  #184 landed, so it is unblocked, but
+    its spec needs two writers, a new =:cross= provider key and four
+    safety rails with a test each — a whole segment, and squeezing it onto
+    the tail of this one would land half a feature.  WO-19 (agentic
+    scripting) is design-before-code and also a full segment.  Next free
+    segment of this seat: say which — #185, the WO-19 design, or WO-4/WO-7
+    off the port list.  None of the three needs a body in the container.
