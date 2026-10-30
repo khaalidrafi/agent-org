@@ -98,7 +98,13 @@ top-level exchange with the sum of its parts, ~0:00:45~ rather than ~0:00~
   route, and only one of them, because a set key disables Application
   Default Credentials.  Devin authenticates via ~devin auth login~ once outside Emacs (the only
   credential local ACP honors; ~WINDSURF_API_KEY~ serves cloud sessions);
-  ~DEVIN_MODEL~ optionally names its default model.
+  ~DEVIN_MODEL~ optionally names its default model.  A machine with no
+  browser --- CI --- can carry that login file instead: export
+  ~DEVIN_CREDENTIALS_TOML~ with the whole ~credentials.toml~ as its value and
+  agent-org writes it to =$HOME/.local/share/devin/credentials.toml= (mode 600,
+  its directory 700) just before ~devin acp~ spawns.  The value goes to that
+  file and nowhere else: never into the child's environment, never into a
+  log.  Absent or blank leaves any existing store untouched.
 
 * Install
 
