@@ -244,6 +244,9 @@
   ;; is its documented default-model selector, so pin nothing — the
   ;; account's own default is already right; DEVIN_MODEL passes through
   ;; when the environment names it.
+  ;; CI HAS NO BROWSER: a lane that must authenticate non-interactively
+  ;; carries the whole login file in DEVIN_CREDENTIALS_TOML, and
+  ;; `agent-org-devin-environment' materialises it before the spawn (WO-17).
   (list :id 'devin
         :name "Devin"
         :command '("devin" "acp")
@@ -403,7 +406,9 @@ yet, so this raises \"Command not found\" until `npm install -g
 Devin serves ACP natively on stdio (`devin acp' — the subcommand Zed,
 JetBrains and Xcode spawn); authenticate once outside Emacs with
 `devin auth login' — the only credential the local ACP server honors
-(WINDSURF_API_KEY serves Devin's cloud sessions, not local ACP)."
+(WINDSURF_API_KEY serves Devin's cloud sessions, not local ACP).
+A machine with no browser can carry that login file instead: export
+DEVIN_CREDENTIALS_TOML and it is placed before the spawn."
   (interactive)
   (agent-org-start 'devin))
 
@@ -555,6 +560,51 @@ route, so forwarding both would fight itself."
     (when var
       (list (format "%s=%s" var (agent-org--env-value var))))))
 
+(defun agent-org-devin--credentials-file ()
+  "Path of the credentials file the `devin' CLI reads for local ACP.
+The vendor location is $HOME/.local/share/devin/credentials.toml; HOME is
+read from `process-environment' (the same place every other env lookup
+here reads) and `~' is the fallback when a machine has no HOME.  XDG_DATA_HOME
+is NOT consulted: the spec names $HOME/.local/share, and a lane that set
+XDG_DATA_HOME without the CLI agreeing with us would get a file the CLI
+never reads — a silent failure instead of a loud one."
+  (expand-file-name ".local/share/devin/credentials.toml"
+                    (or (getenv "HOME") (expand-file-name "~"))))
+
+(defun agent-org-devin--restore-credentials ()
+  "Write the DEVIN_CREDENTIALS_TOML environment value as the CLI's file.
+Returns the file name written, or nil when the variable is absent or
+blank (per `agent-org--env-value', a blank is the same as absent so a
+lane that never sealed a credential can never blank out a working
+`devin auth login' store).  This is the non-interactive half of the
+login the local ACP server insists on: `devin auth login' is a browser
+PKCE flow that cannot run in CI, so the sealed value carries the whole
+file (WO-17, Owner fiat 2026-10-30 #hq: the code lands now, the live
+seal when the Owner uploads).
+The VALUE is never logged, never echoed and never handed to the child's
+environment — it rides only into the file, so it cannot surface in the
+*acp* traffic log, `ps', or /proc/PID/environ.  Modes are the point: the
+directory goes 700 BEFORE the write (a 644 file under a 755 directory is
+readable by the machine, and `write-region' does not honour
+`default-file-modes' — measured 2026-10-30: 644 anyway) and the file
+goes 600 after it.  A failure to place the file is a `user-error', not a
+warning: a spawn without credentials dies silently on `initialize'
+(measured 2026-10-29), so continuing would hide the real cause."
+  (let ((value (agent-org--env-value "DEVIN_CREDENTIALS_TOML")))
+    (when value
+      (let* ((file (agent-org-devin--credentials-file))
+             (dir (file-name-directory file)))
+        (condition-case err
+            (progn
+              (make-directory dir t)
+              (set-file-modes dir #o700)
+              (write-region value nil file nil 'nomessage)
+              (set-file-modes file #o600)
+              file)
+          ((file-error error)
+           (user-error "Cannot write Devin credentials into %s: %s"
+                       dir (error-message-string err))))))))
+
 (defun agent-org-devin-environment ()
   "Return environment variables for the Devin ACP client.
 WINDSURF_API_KEY is the vendor-documented non-interactive credential for
@@ -563,7 +613,15 @@ server does not accept it — its only local credential is the
 credentials.toml from `devin auth login'); DEVIN_MODEL is its documented
 default-model selector.  Both pass through when present; per
 `agent-org--env-value' a blank is the same as absent, so a blank
-WINDSURF_API_KEY can never override the CLI's own stored login."
+WINDSURF_API_KEY can never override the CLI's own stored login.
+DEVIN_CREDENTIALS_TOML is the one variable that is NOT forwarded: it is
+the login file itself, materialised by
+`agent-org-devin--restore-credentials' before the spawn.  This function
+is that \"before\" — `agent-org--open-session' funcalls every provider's
+`:environment' while building the client, so every lane (interactive
+start, resume, batch/CI) passes here, and `agent-org--open-session'
+starts the process only after it returns."
+  (agent-org-devin--restore-credentials)
   (let ((key (agent-org--env-value "WINDSURF_API_KEY"))
         (model (agent-org--env-value "DEVIN_MODEL"))
         (out nil))
