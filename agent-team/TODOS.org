@@ -211,6 +211,11 @@
    handshake per provider, evidence matrix provider->verdict, gaps
    REPORTED never invented; includes proving/wiring the glm-5.3@chat.z.ai
    lane (ZAI_API_KEY on file) for the Senior EL seat.
+   2026-10-31: antling matrix row FILLED — GET /v1/models = 13 ids live;
+   6 text models probed; 5 graded 19/19 on hidden-ERT ELisp trials
+   (Ling-3.0-flash · Ling-3.1-flash · Ling-3.0-tiny · Ling-2.6-1T ·
+   Ring-2.6-1T); Ling-2.6-flash 11/19 (INTERN). Harness:
+   scripts/intern_elisp.py (real Emacs 30.1 user-space, key in-memory).
 ** PROGRESS WO-19 agentic scripting — org-file prompt-queue script runner
    :PROPERTIES:
    :EFFORT: 2:00
@@ -290,11 +295,7 @@
    2026-10-29 (deduped prompt laws + Cursor env law): dual-law harness baked,
    per-seat session reuse ON, .agent-org transcripts committed
 
-* Org cheat sheet
-  - ONGOING + CLOCK start; notes in :LOGBOOK:
-  - BLOCKED + reason; :OWN: = owner ruling
-  - REVIEW + completion note (invalid without)
-  - BLOCKED never terminal; only the EM flips DONE
+
 ** PROGRESS WO-21 openbot.run port — agent-team.el, clean-room (Owner 2026-10-31 #hq)
    SPEC LANDED 2026-10-31: agent-team.el docs/OPENBOT-PORT.org @ 45d4931.
    - Law: openbot.run source = nightly-labs/openbot, PolyForm Noncommercial
@@ -337,3 +338,33 @@
      general local control surface, no admin-specific code in-tree.
    - Design ref: agent-team.el docs/INTEGRATION-ADMINEVERYWHERE.org (v2).
    - Evidence: ERT first + curl smoke against a live Emacs.
+** TODO WO-23 antling provider entry — agent-org-providers.el + drift test
+   :PROPERTIES:
+   :EFFORT: 1:00
+   :OWNER: qwen3.8-flash (Platform/CI Engineer)
+   :END:
+   Owner 2026-10-31 19:31 #hq: Ant Ling free models via API. Add the
+   antling provider (https://api.ant-ling.com/v1, ANTLING_API_KEY on
+   file in the vault) to agent-org-providers.el + tests/ provider drift
+   test (WO-16 discipline, one provider per segment). Ids in scope:
+   Ling-3.1-flash · Ring-2.6-1T · Ling-3.0-tiny (interned 19/19) with
+   Ling-3.0-flash · Ling-2.6-1T as bench; Ling-2.6-flash stays INTERN.
+   Evidence: drift test green + one live handshake logged in WO-18.
+
+** TODO WO-24 ELisp API lane first real landing — Ling-3.1-flash writes
+   :PROPERTIES:
+   :EFFORT: 1:00
+   :OWNER: Ling-3.1-flash@antling (Senior EL API lane); review Ring-2.6-1T
+   :END:
+   Route ONE real board item (smallest open WO step) through the new
+   antling lane end-to-end: dispatch -> Ling-3.1-flash@antling -> code
+   lands -> ERT green -> Ring-2.6-1T second review (author≠reviewer
+   law). Proves the fuel fix the BLOCKED seats need (qoder + zai failed
+   tonight; zai 429 confirmed by the Lead baseline probe 19:5xZ).
+   Evidence: merged segment + transcript in .agent-org/.
+
+* Org cheat sheet
+  - ONGOING + CLOCK start; notes in :LOGBOOK:
+  - BLOCKED + reason; :OWN: = owner ruling
+  - REVIEW + completion note (invalid without)
+  - BLOCKED never terminal; only the EM flips DONE
