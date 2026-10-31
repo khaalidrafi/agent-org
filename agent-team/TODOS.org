@@ -36,7 +36,15 @@
 ** DONE WO-2 model selection menu — labels + cleaned-id fallback; ERT 432/432 (agent-org.el:1679)
 ** PROGRESS WO-3 steer — inject into the live turn — TODOs.org §Steer
 ** TODO WO-4 hooks on the response boundary + automation — TODOs.org §Hooks
+   :PROPERTIES:
+   :EFFORT: 2:00
+   :OWNER: poolside (review glm-5.3)
+   :END:
 ** TODO WO-5 permission prompts without blocking — TODOs.org §Permission prompts
+   :PROPERTIES:
+   :EFFORT: 4:00
+   :OWNER: poolside (review glm-5.3)
+   :END:
 ** DONE WO-6 tool-call grouping — consecutive same-title/status fold w/ count; ERT 432/432 (agent-org-buffer.el:4932)
 ** DONE WO-7 input history ring — TODOs.org §Input history ring
    Landed 2026-10-31 (contract lane GPT-5.6-Luna@copilot, Copilot CLI
@@ -49,11 +57,31 @@
    history has no past-newest state, then one extra close + unescaped
    docstring quotes; GREEN 471/471 at ef6e70f.
 ** TODO WO-8 fork session — TODOs.org §Fork session
+   :PROPERTIES:
+   :EFFORT: 1:00
+   :OWNER: poolside (review glm-5.3)
+   :END:
 ** DONE WO-9 copy session id command — pre-existing impl verified w/ tests (agent-org.el:1115)
 ** TODO WO-10 clock display survives stale org-element cache — TODOs.org §clock display
+   :PROPERTIES:
+   :EFFORT: 0:50
+   :OWNER: poolside
+   :END:
 ** TODO WO-11 separate interactive response-clocking commands — TODOs.org §Separate interactive
+   :PROPERTIES:
+   :EFFORT: 0:50
+   :OWNER: poolside
+   :END:
 ** TODO WO-12 idle time shown while streaming — TODOs.org §Idle time
+   :PROPERTIES:
+   :EFFORT: 0:50
+   :OWNER: poolside
+   :END:
 ** TODO WO-13 clock seconds fix (designed, not written) — TODOs.org §Clock seconds
+   :PROPERTIES:
+   :EFFORT: 0:50
+   :OWNER: poolside
+   :END:
 ** DEFERRED WO-14 "later" porting bucket — TODOs.org §Later
    DEFERRED by Lead 2026-10-31 #hq: the portable items are absorbed by
    WO-21 (openbot port list); revisit after WO-21 lands.
@@ -70,6 +98,10 @@
    - DEFERRED: WO-14 · REVIEW (Owner verdict): hiring/01 rounds, lead/02
    - DONE since last audit: WO-17, WO-20, CI-kit adoption bump
 ** PROGRESS WO-16 CLI support parity — every agent-team-ci harness body supported
+   :PROPERTIES:
+   :EFFORT: 2:00
+   :OWNER: qwen3.8-flash
+   :END:
    in agent-org (Owner order 2026-10-28 #agent-org; RE-SPECCED 2026-10-29
    #hq "Add all missing ACP clients to agent-org" — umbrella/01 objective).
    Harness bakes 10 bodies; agent-org supports 7 — MISSING: omp (native ACP,
@@ -171,11 +203,19 @@
      the Owner's vault upload, re-prove per 8ca27a8 discipline then.
 :END:
 ** PROGRESS WO-18 provider works-test — live handshake per provider, evidence matrix
+   :PROPERTIES:
+   :EFFORT: 1:00
+   :OWNER: qwen3.8-flash
+   :END:
    Spec: CONTROL.org OBJECTIVE (Owner 2026-10-29 #hq). initialize
    handshake per provider, evidence matrix provider->verdict, gaps
    REPORTED never invented; includes proving/wiring the glm-5.3@chat.z.ai
    lane (ZAI_API_KEY on file) for the Senior EL seat.
 ** PROGRESS WO-19 agentic scripting — org-file prompt-queue script runner
+   :PROPERTIES:
+   :EFFORT: 2:00
+   :OWNER: poolside code; design done (docs/AGENTIC-SCRIPTING.org)
+   :END:
    DESIGN LANDED 2026-10-31: docs/AGENTIC-SCRIPTING.org (file format,
    three-command API, abort/continue semantics, ERT plan); code lane:
    Software Engineer (poolside).
@@ -278,3 +318,20 @@
      Platform/CI Engineer qwen3.8-flash (failover surface), QA+Docs
      nemotron (docs + license note in README).
    - Evidence: ERT per feature; README carries a clean-room provenance note.
+
+** TODO WO-22 OpenAI-compatible serving gateway — agent-team behind any admin panel (Owner 2026-10-31 17:30 #hq)
+   :PROPERTIES:
+   :EFFORT: 2:00
+   :OWNER: poolside (code); design review glm-5.3
+   :END:
+   - Purpose: THE integration surface for khaalidrafi/admineverywhere admin
+     apps — their ChatPanel + mock_openai already speak OpenAI-shaped chat;
+     the gateway replaces the mock with the real team.
+   - Scope: one small HTTP process, config-only deployment. POST
+     /v1/chat/completions (+ GET /v1/models) → one agent-org session per
+     admin user (user→seat map from config) → SSE stream back. Bearer auth
+     from env. Transcripts land in the project's .agent-org/ = audit trail.
+     No admin-specific code in-tree (purity law) — admin auth/RBAC stays in
+     the panel.
+   - Design ref: agent-team.el docs/INTEGRATION-ADMINEVERYWHERE.org.
+   - Evidence: ERT first + curl smoke; mock→gateway swap test.
