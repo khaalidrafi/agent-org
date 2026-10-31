@@ -4421,7 +4421,9 @@ nothing under it is deleted rather than left as a heading claiming an answer."
         (agent-org-buffer--set-exchange-keyword
          buffer
          (agent-org-buffer--keyword-set-word agent-org-prompt-todo-keywords
-                                             nil 0))))
+                                             nil 0))
+        ;; Run the completion hook after the exchange is settled.
+        (agent-org--run-response-complete-hook buffer session))))
     ;; The seconds the boundary just filed go on screen HERE, not in a hook on
     ;; each clock write: one pass over the headings per turn, after every drawer
     ;; of the turn exists, is the whole cost.  Lite mode (§19) is the first gate

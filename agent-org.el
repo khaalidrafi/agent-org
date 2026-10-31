@@ -1647,6 +1647,8 @@ back, and a later turn ending successfully drains FIFO as always."
     ;; that outlives the message): "Ready (turn cancelled)".
     (agent-org-buffer-set-status buffer :state 'ready
                                  :note agent-org-buffer--cancel-note)
+    ;; Run the cancel hook after the status is set.
+    (agent-org--run-response-cancel-hook buffer session)
     ;; The box comes back by hand, because draining used to do it: with an
     ;; empty queue `agent-org--drain-queue' opens the prompt, and nothing
     ;; else on this path does.
@@ -3921,6 +3923,70 @@ is non-nil and a response ends with an error."
   :type 'string
   :group 'agent-org)
 
+(defcustom agent-org-response-automation nil
+  "Automation to run on response boundaries. Can be:
+- nil (no automation)
+- a string (fixed prompt to send on boundary)
+- a function that returns a string (generated prompt)
+- a list of these (try each in order until one returns non-nil)
+- t (use `agent-org-auto-continue-mode' as default)"
+
+  :type '(choice
+          (const :tag "No automation" nil)
+          (const :tag "Continue on error" t)
+          (string :tag "Fixed prompt")
+          (function :tag "Generated prompt function")
+          (list :tag "Try in order"
+                (repeat (choice
+                         (const :tag "Continue on error" t)
+                         (string :tag "Fixed prompt")
+                         (function :tag "Generated prompt function")))))
+  :group 'agent-org)
+
+(defcustom agent-org-response-auto-max 3
+  "Maximum number of automatic follow-ups per human prompt.
+Prevents infinite loops when an agent always errors or the automation
+keeps triggering. Reset to 0 on each human prompt."
+  :type 'integer
+  :group 'agent-org)
+
+(defun agent-org--run-response-automation (buffer session)
+  "Run automation on the response boundary for BUFFER and SESSION.
+Returns non-nil if automation was triggered, nil otherwise.
+Automations are run in order, and the first non-nil result is used."
+  (let ((auto-config agent-org-response-automation)
+        (auto-count (or (plist-get session :response-auto-count) 0))
+        (max-auto agent-org-response-auto-max)
+        result)
+    (unless (or (not auto-config) (<= auto-count max-auto))
+      (setq auto-count (1+ auto-count))
+      (setq session (plist-put session :response-auto-count auto-count))
+      ;; Try each automation in order
+      (while (and auto-config (not result))
+        (let ((item (car auto-config)))
+          (cond
+           ((stringp item)
+            ;; Fixed prompt
+            (setq result item))
+           ((functionp item)
+            ;; Generated prompt
+            (setq result (funcall item buffer session)))
+           ((eq item t)
+            ;; Continue on error
+            (when (eq (plist-get session :state) 'error)
+              (setq result agent-org-auto-continue-prompt)))
+           ((listp item)
+            ;; Try recursively
+            (let ((rest (cdr item)))
+              (when rest
+                (setq auto-config rest
+                      result (agent-org--run-response-automation buffer session)))))))
+          (setq auto-config (cdr auto-config)))
+      ;; If we found a result, send it
+      (when result
+        (let ((prompt-text result))
+          (agent-org-send prompt-text session))))))
+
 (defun agent-org--run-response-error-hook (buffer session message)
   "Run `agent-org-response-error-hook' with BUFFER, SESSION, MESSAGE."
   (run-hook-with-args 'agent-org-response-error-hook buffer session message))
@@ -3928,6 +3994,34 @@ is non-nil and a response ends with an error."
 (defun agent-org--run-response-finished-hook (buffer session)
   "Run `agent-org-response-finished-hook' with BUFFER, SESSION."
   (run-hook-with-args 'agent-org-response-finished-hook buffer session))
+
+(defcustom agent-org-response-complete-hook nil
+  "Hook run when a response from the agent finishes successfully.
+Each function is called with two arguments: BUFFER and SESSION.  This is
+run after the buffer state is updated to ready, the queue is drained, and
+the transcript is written.
+This is separate from `agent-org-response-finished-hook' to allow for
+different timing needs: the finished hook runs at the end of the turn
+while the complete hook can be used for post-processing after the turn
+has fully settled."
+  :type 'hook
+  :group 'agent-org)
+
+(defun agent-org--run-response-complete-hook (buffer session)
+  "Run `agent-org-response-complete-hook' with BUFFER, SESSION."
+  (run-hook-with-args 'agent-org-response-complete-hook buffer session))
+
+(defcustom agent-org-response-cancel-hook nil
+  "Hook run when a user cancels a running turn.
+Each function is called with two arguments: BUFFER and SESSION.  This is
+run after the buffer state is updated to ready with a cancel note, but
+before the transcript is written."
+  :type 'hook
+  :group 'agent-org)
+
+(defun agent-org--run-response-cancel-hook (buffer session)
+  "Run `agent-org-response-cancel-hook' with BUFFER, SESSION."
+  (run-hook-with-args 'agent-org-response-cancel-hook buffer session))
 
 (defcustom agent-org-prompt-send-hook nil
   "Hook run immediately before a prompt goes on the wire to an agent.
@@ -3970,10 +4064,10 @@ as a new turn.  Returns the turn number if sent, nil if queued."
       (when (string-empty-p text)
         (user-error "Empty prompt"))
       (if (plist-get session :streaming)
-          (progn
-            (unless agent-org-queue-when-busy
-              (user-error "Agent is still responding"))
+          ;; Reset automation count on each human prompt.
             (agent-org--queue-enqueue session buffer text)
+          ;; Reset automation count on each human prompt.
+          (setf (plist-get session :response-auto-count) 0)
             nil)
         (let* ((turn (progn
                        (setf (plist-get session :turn)
@@ -4016,6 +4110,8 @@ as a new turn.  Returns the turn number if sent, nil if queued."
                            (agent-org-buffer-insert-prompt buffer)
                            (agent-org-buffer-transcribe buffer)
                            (agent-org--run-response-error-hook buffer session msg)
+                           ;; Run automation after the error hook.
+                           (agent-org--run-response-automation buffer session)
                            (when (and (buffer-local-value 'agent-org-auto-continue-mode buffer)
                                       (not (string-blank-p agent-org-auto-continue-prompt)))
                              (agent-org-send-prompt-with-session
