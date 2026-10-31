@@ -35,7 +35,16 @@
 ** TODO WO-4 hooks on the response boundary + automation — TODOs.org §Hooks
 ** TODO WO-5 permission prompts without blocking — TODOs.org §Permission prompts
 ** DONE WO-6 tool-call grouping — consecutive same-title/status fold w/ count; ERT 432/432 (agent-org-buffer.el:4932)
-** TODO WO-7 input history ring — TODOs.org §Input history ring
+** DONE WO-7 input history ring — TODOs.org §Input history ring
+   Landed 2026-10-31 (contract lane GPT-5.6-Luna@copilot, Copilot CLI
+   --allow-all-tools; Owner order: burn this month's CR): buffer-local
+   per-session ring, blank/repeat filtering, read-string HISTORY arg =
+   standard M-p/M-n; wired into queue / queue-first / send. Author
+   GPT-5.6-Luna <gpt-5.6-luna@github.com> (2e8fd40). Gate: three red
+   attempts were review repairs on MY test, not the code — minibuffer
+   kbd-macro replay dies under -batch (no stdin), then a plain-list
+   history has no past-newest state, then one extra close + unescaped
+   docstring quotes; GREEN 471/471 at ef6e70f.
 ** TODO WO-8 fork session — TODOs.org §Fork session
 ** DONE WO-9 copy session id command — pre-existing impl verified w/ tests (agent-org.el:1115)
 ** TODO WO-10 clock display survives stale org-element cache — TODOs.org §clock display
