@@ -2307,6 +2307,28 @@ repeated enqueue/remove passes cannot stack suffixes on one message."
         (format "%s (%d queued)" base depth)
       base)))
 
+(defvar-local agent-org--input-history nil
+  "Previously submitted prompts for this chat, newest first.
+The list is buffer-local so prompt history cannot leak between sessions.")
+
+(defun agent-org--record-input (buffer text)
+  "Record non-blank TEXT as a submission in BUFFER's input history.
+Consecutive duplicate entries are collapsed, while older duplicates remain
+available as distinct earlier submissions."
+  (when (and text (not (string-blank-p text)))
+    (with-current-buffer buffer
+      (let ((text (string-trim text)))
+        (unless (equal text (car agent-org--input-history))
+          (push text agent-org--input-history))))))
+
+(defun agent-org--read-input (buffer prompt)
+  "Read a prompt for BUFFER with its per-session history.
+The HISTORY argument to `read-string' supplies the standard M-p/M-n
+minibuffer navigation; passing the list rather than its variable lets this
+function update the ring itself and reject blank or repeated submissions."
+  (with-current-buffer buffer
+    (read-string prompt nil agent-org--input-history)))
+
 (defun agent-org--queue-refresh (session buffer)
   "Re-render BUFFER for SESSION's queue: entries, header count, transcript.
 Two projections of ONE list, and they cannot disagree because both are rendered
@@ -2540,8 +2562,9 @@ turn and preparing the next message happen in the same window."
         (progn
           (unless agent-org-queue-when-busy
             (user-error "Agent is still responding"))
-          (agent-org--queue-enqueue session buffer
-            (agent-org-buffer-take-draft buffer)))
+          (let ((text (agent-org-buffer-take-draft buffer)))
+            (agent-org--record-input buffer text)
+            (agent-org--queue-enqueue session buffer text)))
       ;; a replayed session_info_update already fills :session-id, so the
       ;; check below cannot cover an in-flight load
       (when (plist-get session :loading)
@@ -2551,6 +2574,7 @@ turn and preparing the next message happen in the same window."
       ;; take-draft first: a user-error from an empty box leaves the
       ;; buffer untouched, and the checks above ran before anything moved
       (let ((text (agent-org-buffer-take-draft buffer)))
+        (agent-org--record-input buffer text)
         (agent-org-buffer-begin-exchange buffer text)
         (agent-org--send-turn session buffer text)))))
 
@@ -2857,14 +2881,18 @@ mood, and the same reason is stronger here -- `agent-org-send' is the verb that
 asks for an answer now, and a second one that sometimes sends and sometimes
 waits would be a coin toss in muscle memory.  Send it now with
 `agent-org-queue-resume' (C-c a r)."
-  (interactive "sQueue prompt for this session: ")
+  (interactive
+   (list (agent-org--read-input (current-buffer)
+                                "Queue prompt for this session: ")))
   (let* ((buffer (current-buffer))
          (session (agent-org--session-for-buffer buffer)))
     (unless session
       (user-error "Not an agent-org chat buffer"))
     (if (string-blank-p text)
         (user-error "Nothing to queue")
-      (agent-org--queue-enqueue session buffer (string-trim text)))))
+    (let ((text (string-trim text)))
+      (agent-org--record-input buffer text)
+      (agent-org--queue-enqueue session buffer text)))))
 
 ;;;###autoload
 (defun agent-org-queue-remove (&optional which)
@@ -3099,16 +3127,20 @@ order\", and `agent-org-queue-resume' (C-c a r) is the verb that means
 now.  Everything still goes through `agent-org-queue--set', the one writer
 of the list, so the entries, the header count and the transcript move
 together."
-  (interactive "sQueue prompt for this session, first: ")
+  (interactive
+   (list (agent-org--read-input (current-buffer)
+                                "Queue prompt for this session, first: ")))
   (let* ((buffer (current-buffer))
          (session (agent-org--session-for-buffer buffer)))
     (unless session
       (user-error "Not an agent-org chat buffer"))
     (when (string-blank-p text)
       (user-error "Nothing to queue"))
-    (agent-org-queue--set session buffer
-                          (cons (string-trim text)
-                                (plist-get session :pending-prompts)))
+    (let ((text (string-trim text)))
+      (agent-org--record-input buffer text)
+      (agent-org-queue--set session buffer
+                            (cons text
+                                  (plist-get session :pending-prompts))))
     (message "[agent-org] queued first (%d waiting)"
              (length (plist-get session :pending-prompts)))))
 
