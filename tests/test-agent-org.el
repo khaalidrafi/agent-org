@@ -92,8 +92,8 @@
 history argument, which is what drives M-p/M-n in interactive use.
 The stub stands in for the minibuffer: batch Emacs has no stdin, so a
 keyboard-macro replay dies with end-of-file (gate evidence 2026-10-31).
-With a plain list as HISTORY, M-p/M-n navigate the list; "past the
-newest returns to fresh input" is cons-cell (HIST . POS) semantics, so
+With a plain list as HISTORY, M-p/M-n navigate the list; \"past the
+newest returns to fresh input\" is cons-cell (HIST . POS) semantics, so
 it is deliberately not asserted here."
   (with-temp-buffer
     (agent-org--record-input (current-buffer) "one")
