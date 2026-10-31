@@ -216,6 +216,12 @@
    (Ling-3.0-flash · Ling-3.1-flash · Ling-3.0-tiny · Ling-2.6-1T ·
    Ring-2.6-1T); Ling-2.6-flash 11/19 (INTERN). Harness:
    scripts/intern_elisp.py (real Emacs 30.1 user-space, key in-memory).
+   2026-10-31 20:0xZ lane census: poolside/laguna family DELISTED from
+   OpenRouter (live catalog = zero poolside ids; the :free id 404s "no
+   longer available") — Port Engineer body dead, code queue reassigned
+   per dispatch. nemotron-3.5-lightning:free listed but daily-capped
+   (429 free-models-per-day). zai 429. qoder fuel dead. The only lane
+   that answered AND wrote ELisp at the bar tonight: antling.
 ** PROGRESS WO-19 agentic scripting — org-file prompt-queue script runner
    :PROPERTIES:
    :EFFORT: 2:00
