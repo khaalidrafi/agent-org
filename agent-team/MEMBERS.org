@@ -15,14 +15,16 @@
 
 * Live lanes in THIS repo (rotation order)
 
-1. deepseek-v4.1-flash@codebuddy — Implementer (hired per Owner fuel
-   correction 2026-10-28; re-authored + landed Unit #183; wired on
-   CODEBUDDY_AUTH_TOKEN). Current #+TURN.
+1. deepseek-v4.1-flash@codebuddy — Software Engineer (re-titled
+   from "Implementer" per Owner 2026-10-31 #hq; hired per Owner
+   fuel correction 2026-10-28; re-authored + landed Unit #183;
+   wired on CODEBUDDY_AUTH_TOKEN). Current #+TURN.
 2. qwen3.8-flash@qoder — Platform / CI Engineer (umbrella re-hire
    2026-10-29; the brain is BUILT-IN FREE at Qoder per the Owner's
    fuel correction — paid qoder ids stay dead until refuel).
-3. openrouter/poolside/laguna-s-2.1:free@opencode — Implementer
-   (umbrella hire 2026-10-29; OpenRouter :free lane — probe on turn).
+3. openrouter/poolside/laguna-s-2.1:free@opencode — Port Engineer
+   (re-titled per Owner 2026-10-31 #hq; umbrella hire 2026-10-29;
+   OpenRouter :free lane — probe on turn).
 4. nvidia/nemotron-3.5-lightning:free@cline — QA + Docs Engineer
    (umbrella hire 2026-10-29; enters rotation after the cline-on-CI
    body proof).
