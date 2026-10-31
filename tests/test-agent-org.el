@@ -104,7 +104,7 @@ it is deliberately not asserted here."
                   (setq captured history)
                   (if (cdr history) (cadr history) ""))))
       (should (equal "one" (agent-org--read-input (current-buffer) "Prompt: ")))
-      (should (equal '("two" "one") captured))))))
+      (should (equal '("two" "one") captured)))))
 
 ;;;; Provider registry
 
