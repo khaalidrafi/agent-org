@@ -1,0 +1,80 @@
+#+TITLE: AGENTIC-SCRIPTING.org — WO-19 design (file format + API + semantics)
+#+STARTUP: overview
+
+Owner order 2026-10-29 #hq: design BEFORE code; lands behind ERT. This file is
+that design. Code lane: Software Engineer (poolside), review: Senior Emacs
+Lisp Engineer glm-5.3.
+
+* File format — the script IS an Org file
+
+A script is any Org file whose first level-1 heading is =* Script=. The user
+writes it; agent-org executes it top to bottom and writes results back into
+the same file, so the file is both the program and the log.
+
+#+begin_example
+#+TITLE: nightly triage
+* Script
+:PROPERTIES:
+:LANE:     batch
+:ON-ERROR: stop            ; stop | continue
+:END:
+** TODO step 1 — pull the repo state
+:PROPERTIES:
+:MODEL:    glm-5.3-flash
+:PROVIDER: chat.z.ai
+:END:
+Summarize the last 24h of commits on origin.
+** TODO step 2 — file issues
+:PROPERTIES:
+:MODEL:    qwen3.8-flash
+:PROVIDER: qoder
+:END:
+From the summary, list anything that looks like a regression.
+#+end_example
+
+- Level-2 headings are STEPS, in file order. Only =TODO=/=ONGOING= steps run;
+  =DONE= steps are skipped (that is how =continue= resumes).
+- Per-step =:MODEL:= and =:PROVIDER:= override the file-level defaults in the
+  =* Script= drawer; a step with neither inherits the current session default.
+- Step results are written back as a =:RESULTS:= drawer under the step (plus
+  an =Outcome:= line: ok | error | skipped), and the step flips to =DONE=.
+  The transcript stays the single source of chat truth; the script file
+  records only step state.
+
+* API — three interactive commands, one runner
+
+- =agent-org-script-run= — read the file, validate, execute steps
+  sequentially on the batch lane (one agent-org session per step, provider
+  from properties), writing back after each step.
+- =agent-org-script-abort= — stop AFTER the step in flight (never kill a
+  model call mid-write); the running step finishes, later steps stay TODO,
+  the file records =Outcome: aborted= on the =* Script= heading drawer.
+- =agent-org-script-continue= — re-run from the first non-DONE step;
+  results drawers from earlier steps are left untouched.
+
+Validation (before anything executes, one error per problem, never a
+partial run): file has exactly one =* Script= heading; every step has a
+non-empty prompt body; every =:PROVIDER:= value resolves in
+=agent-org-providers.el=; =:LANE:= is =batch= (interactive lanes are out of
+scope by design — a script is fire-and-forget, not a chat).
+
+* Semantics — the three rules that matter
+
+1. Sequential, never parallel: step N+1 does not start until step N's
+   write-back completes. A script is a queue, not a mesh.
+2. =ON-ERROR: stop= (default) ends the run at the first error step;
+   =continue= records the error outcome and moves on. Either way the error
+   text goes into the step's =:RESULTS:= drawer verbatim.
+3. Crash-safety reuses the prompt-queue persistence: the in-flight step is
+   recoverable from the transcript, and a re-opened unfinished script
+   offers =continue=, never a silent re-run from the top.
+
+* ERT plan (written first, seen failing)
+
+- one happy-path script runs two steps in order, write-backs present,
+  both steps =DONE=
+- abort after step 1 leaves step 2 =TODO= and stamps =aborted=
+- continue on that file runs only step 2
+- unknown provider → validation error, zero model calls made
+- =ON-ERROR: continue= records =error= and proceeds
+- a =DONE= step is skipped by =continue= (resume proof)
