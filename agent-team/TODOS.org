@@ -4,7 +4,10 @@
 ** DONE DISPATCH #2 staffing — ai/staffing
    members carry duties + rank + evidence; Founder share sent
 
-** BLOCKED WO-1 cross-agent sessions — Qoder <-> Codebuddy (design DONE, code NOT started) — TODOs.org §Cross-agent
+** PROGRESS WO-1 cross-agent sessions — Qoder <-> Codebuddy — TODOs.org §Cross-agent
+   STATE 2026-10-31 17:20Z: machinery green (secret-guard anchored, batch
+   lane loads acp), unit #183 landed; remaining = seat execution on live
+   lanes (fuel-gated).
    BLOCKED by CI, not by design: the secret guard's unanchored `pt-` pattern
    rewrites every seat's source before the push (`.github/scripts/secret-guard.sh:20`,
    applied at `.github/workflows/agent-team.yml:531`), so the landing gate reds and
@@ -51,8 +54,21 @@
 ** TODO WO-11 separate interactive response-clocking commands — TODOs.org §Separate interactive
 ** TODO WO-12 idle time shown while streaming — TODOs.org §Idle time
 ** TODO WO-13 clock seconds fix (designed, not written) — TODOs.org §Clock seconds
-** TODO WO-14 "later" porting bucket — TODOs.org §Later
-** TODO WO-15 tracker: everything else still open — TODOs.org §Everything else
+** DEFERRED WO-14 "later" porting bucket — TODOs.org §Later
+   DEFERRED by Lead 2026-10-31 #hq: the portable items are absorbed by
+   WO-21 (openbot port list); revisit after WO-21 lands.
+** REVIEW WO-15 tracker: everything else still open — TODOs.org §Everything else
+   TRACKER LANDED 2026-10-31 (review pends — author != reviewer):
+   - code queue, board order: WO-4 hooks, WO-5 permission prompts, WO-8
+     fork session, WO-10 cache-safe clock display, WO-11 separate
+     clocking commands, WO-12 idle time, WO-13 clock seconds — Software
+     Engineer (poolside), Senior EL glm-5.3 reviews
+   - #178/#130 AGENTS-TODOs.org sync FIRST per Owner URGENT, then the
+     #164/#165 gate, then the #170-#182 tail (TODOs.org)
+   - PROGRESS: WO-1 (machinery green, seats execute), WO-3, WO-16/18
+     (qwen), WO-19 (design landed), WO-21 (spec landed)
+   - DEFERRED: WO-14 · REVIEW (Owner verdict): hiring/01 rounds, lead/02
+   - DONE since last audit: WO-17, WO-20, CI-kit adoption bump
 ** PROGRESS WO-16 CLI support parity — every agent-team-ci harness body supported
    in agent-org (Owner order 2026-10-28 #agent-org; RE-SPECCED 2026-10-29
    #hq "Add all missing ACP clients to agent-org" — umbrella/01 objective).
@@ -159,7 +175,10 @@
    handshake per provider, evidence matrix provider->verdict, gaps
    REPORTED never invented; includes proving/wiring the glm-5.3@chat.z.ai
    lane (ZAI_API_KEY on file) for the Senior EL seat.
-** TODO WO-19 agentic scripting — org-file prompt-queue script runner
+** PROGRESS WO-19 agentic scripting — org-file prompt-queue script runner
+   DESIGN LANDED 2026-10-31: docs/AGENTIC-SCRIPTING.org (file format,
+   three-command API, abort/continue semantics, ERT plan); code lane:
+   Software Engineer (poolside).
    Spec: CONTROL.org OBJECTIVE (Owner 2026-10-29 #hq). Design (file
    format + API + abort/continue semantics) BEFORE code; sequential
    batch-lane execution; results written back into the org file; ERT.
@@ -225,7 +244,9 @@
      the segment chain (byte-compile + ERT, landing gate enforced).
 :END:
 
-** ONGOING CI-kit adoption (teamify, Lead) — ci/ submodule bumped to 479480b
+** REVIEW CI-kit adoption (teamify, Lead) — ci/ submodule bumped to ab00319
+   2026-10-31: submodule a4d6eb4 → ab00319 (kit tip: guard law + GHCR
+   reuse); evidence = ci pointer diff + agent-team-ci log.
    2026-10-29 (deduped prompt laws + Cursor env law): dual-law harness baked,
    per-seat session reuse ON, .agent-org transcripts committed
 
@@ -234,7 +255,8 @@
   - BLOCKED + reason; :OWN: = owner ruling
   - REVIEW + completion note (invalid without)
   - BLOCKED never terminal; only the EM flips DONE
-** TODO WO-21 openbot.run port — agent-team.el, clean-room (Owner 2026-10-31 #hq)
+** PROGRESS WO-21 openbot.run port — agent-team.el, clean-room (Owner 2026-10-31 #hq)
+   SPEC LANDED 2026-10-31: agent-team.el docs/OPENBOT-PORT.org @ 45d4931.
    - Law: openbot.run source = nightly-labs/openbot, PolyForm Noncommercial
      1.0.0 — zero commercial rights. Specs are derived from PUBLIC SITE DOCS
      only (openbot.run pages + README prose). No source reading, no code
