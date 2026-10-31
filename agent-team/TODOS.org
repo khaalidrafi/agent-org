@@ -234,3 +234,25 @@
   - BLOCKED + reason; :OWN: = owner ruling
   - REVIEW + completion note (invalid without)
   - BLOCKED never terminal; only the EM flips DONE
+** TODO WO-21 openbot.run port — agent-team.el, clean-room (Owner 2026-10-31 #hq)
+   - Law: openbot.run source = nightly-labs/openbot, PolyForm Noncommercial
+     1.0.0 — zero commercial rights. Specs are derived from PUBLIC SITE DOCS
+     only (openbot.run pages + README prose). No source reading, no code
+     copying, no names/logos. Feature ideas are not copyrightable; code is.
+     Do not confuse CopilotKit/OpenBot (server product) or MIT "OpenBot"
+     projects with openbot.run.
+   - Port list (full spec: agent-team.el docs/OPENBOT-PORT.org):
+     shared channel with one task owner + delegation + stop/resume/reassign;
+     agent-to-agent messages with replies and managed file transfers;
+     queue pause/resume controls (queue + crash-safe persistence already
+     DONE in agent-org); per-agent context monitor with auto-compaction;
+     provider failover on rate-limit with a chat note; ACP as universal
+     client surface (WO-16 covers it); prompt-driven agent creation with
+     review-before-save (MEMBERS.org profiles).
+   - NOT ported: embedded browser, computer-use driver, mobile apps (the
+     Discord relay IS the mobile surface), Cloudflare accounts.
+   - Lanes: Software Architect glm-5.3 (channel + delegation design),
+     Software Engineer poolside (queue controls + context monitor),
+     Platform/CI Engineer qwen3.8-flash (failover surface), QA+Docs
+     nemotron (docs + license note in README).
+   - Evidence: ERT per feature; README carries a clean-room provenance note.
