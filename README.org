@@ -224,7 +224,9 @@ NonGNU ELPA.
    render /above/ the box, so chat history can't be mangled by accident
    and a streaming reply never scribbles over what you are typing.  The
    cursor still travels freely over history — you can browse and copy
-   it; typing into frozen text is refused.
+   it; typing into frozen text is refused.  Prompts entered through the
+   queue minibuffer (~C-c a e~ / ~C-c a n~) keep per-session history, with
+   ~M-p~ / ~M-n~ moving backward / forward through prior submissions.
 3. Watch the reply stream into the exchange's quote block — under a
    ~#+ATTR_TEXINFO: :author~ line naming the model that answered it
    (~#+ATTR_TEXINFO: :author MiniMax M3~), so the pair reads
