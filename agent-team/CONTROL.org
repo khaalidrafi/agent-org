@@ -18,5 +18,5 @@
 # reuse); spec = agent-team.el docs/OPENBOT-PORT.org; beware name collisions
 # (CopilotKit/OpenBot and other MIT OpenBot projects are NOT openbot.run).
 #+TURN: qwen3.8-flash@qoder (Implementer)
-#+STALL-COUNT: 40
+#+STALL-COUNT: 41
 #+LAST-VERDICT: a41f9f1dc3bb
