@@ -61,6 +61,45 @@
 ;; same line above them would be silently thrown away.
 (setq agent-org-activity-style 'drawers)
 
+;;;; Input history
+
+(ert-deftest test-agent-org-input-history-records-submissions ()
+  "History keeps non-blank submissions and collapses adjacent duplicates."
+  (with-temp-buffer
+    (agent-org--record-input (current-buffer) "one")
+    (agent-org--record-input (current-buffer) "one")
+    (agent-org--record-input (current-buffer) " ")
+    (agent-org--record-input (current-buffer) "two")
+    (should (equal '("two" "one") agent-org--input-history))))
+
+(ert-deftest test-agent-org-input-history-is-per-session ()
+  "Two chat buffers never share prompt history."
+  (let ((first (generate-new-buffer " *agent-org-history-one*"))
+        (second (generate-new-buffer " *agent-org-history-two*")))
+    (unwind-protect
+        (progn
+          (agent-org--record-input first "one")
+          (agent-org--record-input second "two")
+          (should (equal '("one")
+                         (buffer-local-value 'agent-org--input-history first)))
+          (should (equal '("two")
+                         (buffer-local-value 'agent-org--input-history second))))
+      (kill-buffer first)
+      (kill-buffer second))))
+
+(ert-deftest test-agent-org-input-history-cycles-with-minibuffer-keys ()
+  "M-p visits history and M-n past the newest entry returns to fresh input."
+  (with-temp-buffer
+    (agent-org--record-input (current-buffer) "one")
+    (agent-org--record-input (current-buffer) "two")
+    (let ((buffer (current-buffer)))
+      (minibuffer-with-setup-hook
+          (lambda () (execute-kbd-macro (kbd "M-p M-p RET")))
+        (should (equal "one" (agent-org--read-input buffer "Prompt: "))))
+      (minibuffer-with-setup-hook
+          (lambda () (execute-kbd-macro (kbd "M-p M-n RET")))
+        (should (equal "" (agent-org--read-input buffer "Prompt: ")))))))
+
 ;;;; Provider registry
 
 (ert-deftest test-agent-org-slave-agent-provider-present ()
