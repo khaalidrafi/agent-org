@@ -94,7 +94,7 @@
      docs-and-source verified until an image built from 260f1d2 runs the
      =initialize= probe.
    :END:
-** REVIEW WO-17 devin credential restore — code + ERT now, live seal later
+** DONE WO-17 devin credential restore — code + ERT now, live seal later
    Owner fiat 2026-10-30 #hq: "cred. NOT required for working" — NO task
    waits on the vault upload. Implement the restore path per CONTROL.org
    OBJECTIVE (env DEVIN_CREDENTIALS_TOML -> $HOME/.local/share/devin/
@@ -138,7 +138,13 @@
    - Docs: README.org states the variable, the path and the modes;
      AI-REVIEW.org opens a WO-17 unit with the four review questions (the
      directory-0700 line is the one that touches a CLI-owned path).
-   :END:
+      - REVIEW PASS (Lead glm-5.3-flash@chat.z.ai, 2026-10-31 #hq): verdict
+     APPROVED. Choke point verified (agent-org--open-session funcalls
+     :environment before any spawn), ERT mutation-verified, gate green
+     464/464 + 15/15 batch on ai/turn-20261030-1605; byte-compile clean
+     with error-on-warn. No invention: live seal explicitly deferred to
+     the Owner's vault upload, re-prove per 8ca27a8 discipline then.
+:END:
 ** PROGRESS WO-18 provider works-test — live handshake per provider, evidence matrix
    Spec: CONTROL.org OBJECTIVE (Owner 2026-10-29 #hq). initialize
    handshake per provider, evidence matrix provider->verdict, gaps
@@ -148,7 +154,7 @@
    Spec: CONTROL.org OBJECTIVE (Owner 2026-10-29 #hq). Design (file
    format + API + abort/continue semantics) BEFORE code; sequential
    batch-lane execution; results written back into the org file; ERT.
-** REVIEW WO-20 kilo provider entry — half (b) of the kilo add
+** DONE WO-20 kilo provider entry — half (b) of the kilo add
    Half (a) DONE 2026-10-30 (kit 260f1d2: @kilocode/cli baked, command
    kilo, FATAL version check, no creds). Remaining seat half: ACP
    provider entry in agent-org-providers.el on the native server
@@ -202,7 +208,13 @@
      (provider paragraph, credential paragraph, =:commands= list — gemini's
      stale "not baked yet" wording synced to kit 260f1d2 in the same pass)
      and an AI-REVIEW.org unit with the four questions worth your eye.
-   :END:
+      - REVIEW PASS (Lead glm-5.3-flash@chat.z.ai, 2026-10-31 #hq): verdict
+     APPROVED. Subcommand sourced from vendor docs + upstream acp.ts
+     (not invented), transport = stdio ndJsonStream, flagless spawn
+     correct; autoload cookie + start entry point present; provider
+     drift test updated with the roster re-transcription. Gate green on
+     the segment chain (byte-compile + ERT, landing gate enforced).
+:END:
 
 ** ONGOING CI-kit adoption (teamify, Lead) — ci/ submodule bumped to 479480b
    2026-10-29 (deduped prompt laws + Cursor env law): dual-law harness baked,
