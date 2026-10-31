@@ -645,7 +645,7 @@ jobs:
           git reset --hard origin/ai/quickstart
           sed -i "s|^\#+TURN:.*|\#+TURN: ${NEXT}|" "$CTL"
           git add "$CTL"
-          git commit -m "control: rotate #+TURN to ${NEXT%% *} after ${TURN_AGENT:-${TURN_SEAT:-unknown}} segment" \
+          git commit -m "control: rotate #+TURN to ${NEXT%% *} after ${TURN_AGENT:-${TURN_SEAT:-previous seat}} segment" \
             -m "next seat: ${NEXT}" \
             -m "segment result: ${TURN_RESULT:-unknown}" \
             -m "Co-authored-by: z.ai-agent <z.ai-agent@z.ai>" \
@@ -657,7 +657,7 @@ jobs:
             git fetch origin ai/quickstart && git reset --hard origin/ai/quickstart
             sed -i "s|^\#+TURN:.*|\#+TURN: ${NEXT}|" "$CTL"
             git add "$CTL"
-            git commit -m "control: rotate #+TURN to ${NEXT%% *} after ${TURN_AGENT:-${TURN_SEAT:-unknown}} segment" \
+            git commit -m "control: rotate #+TURN to ${NEXT%% *} after ${TURN_AGENT:-${TURN_SEAT:-previous seat}} segment" \
               -m "segment result: ${TURN_RESULT:-unknown}" || true
           done
           [ "$CPUSH" = "yes" ] || echo "::warning::control push failed after 3 attempts"
