@@ -88,17 +88,21 @@
       (kill-buffer second))))
 
 (ert-deftest test-agent-org-input-history-cycles-with-minibuffer-keys ()
-  "M-p visits history and M-n past the newest entry returns to fresh input."
+  "The prompt reader hands the session ring to `read-string' as its
+history argument, which is what drives M-p/M-n in interactive use.
+The stub stands in for the minibuffer: batch Emacs has no stdin, so a
+keyboard-macro replay dies with end-of-file (gate evidence 2026-10-31)."
   (with-temp-buffer
     (agent-org--record-input (current-buffer) "one")
     (agent-org--record-input (current-buffer) "two")
-    (let ((buffer (current-buffer)))
-      (minibuffer-with-setup-hook
-          (lambda () (execute-kbd-macro (kbd "M-p M-p RET")))
-        (should (equal "one" (agent-org--read-input buffer "Prompt: "))))
-      (minibuffer-with-setup-hook
-          (lambda () (execute-kbd-macro (kbd "M-p M-n RET")))
-        (should (equal "" (agent-org--read-input buffer "Prompt: ")))))))
+    (cl-letf* ((captured nil)
+               ((symbol-function 'read-string)
+                (lambda (_prompt _initial history &rest _)
+                  (setq captured history)
+                  (if (cdr history) (cadr history) ""))))
+      (should (equal "one" (agent-org--read-input (current-buffer) "Prompt: ")))
+      (should (equal '("two" "one") captured))
+      (should (equal "" (agent-org--read-input (current-buffer) "Prompt: "))))))
 
 ;;;; Provider registry
 
