@@ -1,0 +1,74 @@
+* WO-4: Hooks on the response boundary, and automation that answers the agent
+
+** User order (2026-10-07)
+"add hooks for response completion, response exit with error/warning etc. and
+automation features to send a prompt on each exit or error of the agent's
+response."
+
+** UPDATE 2026-10-07: LLM/agent integration
+"The automation should also have optional LLM/agent integration where it will
+look at the last response and send an appropriate prompt."
+
+** Not built yet. The shape: run-hook variables at the turn-boundary callbacks —
+completion, error (and the cancel path, which is its own exit) — each hook
+receiving the buffer and what happened. Automation is then just a hook (or an
+option holding a prompt string) that calls the normal send path, so a drained
+prompt and an automated one go through the same `agent-org--send-turn' and the
+same exchange rendering. Care needed so an auto-prompt on error cannot loop
+forever against an agent that always errors — the first cut may leave that to
+the user's own hook function.
+
+** Automation has two shapes:
+1. FIXED prompt string
+2. OPTIONAL generated one — on the response boundary a chooser (another agent
+   call, or the same session asked in a side channel) reads the last response
+   and returns the follow-up prompt to send. That keeps the boundary hook as
+   the single trigger and makes the chooser a pluggable function, so the agent
+   integration is a value of an option, not a second mechanism.
+
+** Open design points to settle before building:
+1. Which agent answers the chooser (a separate cheap session avoids polluting
+   the chat transcript)
+2. Where the generated prompt is shown before it goes out (it must be visible —
+   an unexplained prompt appearing in the exchange reads as the agent talking
+   to itself)
+3. The loop guard (N automatic follow-ups max per human prompt)
+
+** Implementation plan
+1. Add three run-hook variables:
+   - `agent-org-response-complete-hook' — runs on successful completion
+   - `agent-org-response-error-hook' — runs on error
+   - `agent-org-response-cancel-hook' — runs on cancellation
+
+2. Add automation option:
+   - `agent-org-response-automation' — can be:
+     * nil (no automation)
+     * a string (fixed prompt)
+     * a function that returns a string (generated prompt)
+     * a list of these (try each in order)
+
+3. Add loop guard:
+   - `agent-org-response-auto-count' — counter incremented on each automation
+   - `agent-org-response-auto-max' — max per human prompt (default 3)
+   - Reset on human prompt
+
+4. Integration points:
+   - `agent-org-buffer-end-agent-turn' — calls completion hook
+   - Error paths in `agent-org--on-notification' — call error hook
+   - Cancel path in `agent-org-cancel-turn' — call cancel hook
+
+5. Safety rails:
+   - Prevent infinite loops (max auto-count)
+   - Make automation visible (show prompt before sending)
+   - Allow user to disable automation
+
+** Tests
+1. Hook runs on successful completion
+2. Hook runs on error
+3. Hook runs on cancel
+4. Fixed prompt automation sends the right text
+5. Generated prompt automation calls the chooser function
+6. Loop guard prevents infinite automation
+7. Automation respects the max-count limit
+8. Automation can be disabled
+9. Automation doesn't interfere with manual sends
