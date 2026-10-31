@@ -319,19 +319,21 @@
      nemotron (docs + license note in README).
    - Evidence: ERT per feature; README carries a clean-room provenance note.
 
-** TODO WO-22 OpenAI-compatible serving gateway — agent-team behind any admin panel (Owner 2026-10-31 17:30 #hq)
+** TODO WO-22 Emacs-local bridge — admin apps drive agent-team in the user's Emacs (respec 2026-10-31 19:31 #hq)
    :PROPERTIES:
    :EFFORT: 2:00
    :OWNER: poolside (code); design review glm-5.3
    :END:
-   - Purpose: THE integration surface for khaalidrafi/admineverywhere admin
-     apps — their ChatPanel + mock_openai already speak OpenAI-shaped chat;
-     the gateway replaces the mock with the real team.
-   - Scope: one small HTTP process, config-only deployment. POST
-     /v1/chat/completions (+ GET /v1/models) → one agent-org session per
-     admin user (user→seat map from config) → SSE stream back. Bearer auth
-     from env. Transcripts land in the project's .agent-org/ = audit trail.
-     No admin-specific code in-tree (purity law) — admin auth/RBAC stays in
-     the panel.
-   - Design ref: agent-team.el docs/INTEGRATION-ADMINEVERYWHERE.org.
-   - Evidence: ERT first + curl smoke; mock→gateway swap test.
+   - Purpose (Owner 19:31 #hq): the admin app VIEWs and performs SIMPLE
+     agent-team tasks by leveraging the user's OWN Emacs installation
+     running agent-team.el — the bridge lives INSIDE Emacs, not server-side.
+   - Scope: an Elisp HTTP surface (loopback-only bind, bearer token, first-
+     run consent) inside the running Emacs: GET /status + /tasks (boards
+     parsed from TODOS.org/CONTROL.org), POST /dispatch (queue a simple task
+     to a seat via the existing prompt-queue machinery), GET /transcripts.
+     The panel connects to the user's machine (localhost or a user-opted
+     tunnel). Simple tasks only; heavy work stays in the seats.
+   - Purity law holds: admin auth/RBAC stays in the panel; the bridge is a
+     general local control surface, no admin-specific code in-tree.
+   - Design ref: agent-team.el docs/INTEGRATION-ADMINEVERYWHERE.org (v2).
+   - Evidence: ERT first + curl smoke against a live Emacs.
