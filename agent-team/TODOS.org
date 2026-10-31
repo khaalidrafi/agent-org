@@ -139,7 +139,7 @@
      AI-REVIEW.org opens a WO-17 unit with the four review questions (the
      directory-0700 line is the one that touches a CLI-owned path).
    :END:
-** TODO WO-18 provider works-test — live handshake per provider, evidence matrix
+** PROGRESS WO-18 provider works-test — live handshake per provider, evidence matrix
    Spec: CONTROL.org OBJECTIVE (Owner 2026-10-29 #hq). initialize
    handshake per provider, evidence matrix provider->verdict, gaps
    REPORTED never invented; includes proving/wiring the glm-5.3@chat.z.ai
