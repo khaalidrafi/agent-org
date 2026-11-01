@@ -349,7 +349,7 @@
      general local control surface, no admin-specific code in-tree.
    - Design ref: agent-team.el docs/INTEGRATION-ADMINEVERYWHERE.org (v2).
    - Evidence: ERT first + curl smoke against a live Emacs.
-** TODO WO-23 antling provider entry — agent-org-providers.el + drift test
+** PROGRESS WO-23 antling provider entry — agent-org-providers.el + drift test
    :PROPERTIES:
    :EFFORT: 1:00
    :OWNER: qwen3.8-flash (Platform/CI Engineer)
