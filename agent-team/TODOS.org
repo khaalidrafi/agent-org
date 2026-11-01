@@ -1,6 +1,6 @@
 #+TITLE: TODOS.org — team board (single source of truth)
 #+TODO: TODO ONGOING PROGRESS BLOCKED REVIEW | DONE CANCELLED DEFERRED
-* Board
+** TODO WO-4 hooks on the response boundary + automation — TODOs.org §Hooks
 ** DONE DISPATCH #2 staffing — ai/staffing
    members carry duties + rank + evidence; Founder share sent
 
