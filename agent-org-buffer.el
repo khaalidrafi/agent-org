@@ -4428,8 +4428,20 @@ nothing under it is deleted rather than left as a heading claiming an answer."
     ;; because a display that recomputes the buffer on every boundary is exactly
     ;; the per-turn work lite exists to refuse; a chat with the mode off is the
     ;; user's own choice and stays untouched.
-    (when (and agent-org-clock-display-mode (not (agent-org-lite-p buffer)))
-      (agent-org-clock--draw))))
+    ;; Run response completion hook
+    (let ((session (agent-org-buffer--session buffer)))
+      (run-hook-with-args 'agent-org-response-completion-hook
+                         `(:buffer ,buffer
+                                   :session ,session
+                                   :response ,(agent-org-buffer--last-response-text buffer)
+                                   :duration ,(float-time (time-subtract (current-time)
+                                                                        (or agent-org-buffer--turn-start
+                                                                            (current-time)))))))
+    ;; Run automation hook if configured
+    (when (and (not (agent-org-lite-p buffer))
+               (boundp 'agent-org-automation-hook)
+               agent-org-automation-hook)
+      (agent-org--run-automation-hook buffer session))))
 
 (defun agent-org-buffer-append-chunk (buffer text session)
   "Append TEXT chunk from agent into BUFFER.
