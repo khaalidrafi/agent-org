@@ -331,7 +331,7 @@
      nemotron (docs + license note in README).
    - Evidence: ERT per feature; README carries a clean-room provenance note.
 
-** TODO WO-22 Emacs-local bridge — admin apps drive agent-team in the user's Emacs (respec 2026-10-31 19:31 #hq)
+** PROGRESS WO-22 Emacs-local bridge — admin apps drive agent-team in the user's Emacs (respec 2026-10-31 19:31 #hq)
    :PROPERTIES:
    :EFFORT: 2:00
    :OWNER: poolside (code); design review glm-5.3
