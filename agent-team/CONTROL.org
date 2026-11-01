@@ -38,6 +38,15 @@
 # kit opencode.json carries the antling provider (env ANTLING_API_KEY),
 # ci/ pointers bumped in both team repos, WO-26 rewritten; re-proof =
 # one normal kit CI turn per pair (WO-26).
+# (6) ZEN CENSUS (Owner 00:52 #hq "opencode also has a lot of free
+# models. Consider them."): llmfisher --providers opencode --fresh —
+# 7 live Zen ids; jev-1.13-free DEAD (/v1/systemone decision API, not
+# a chat route) — kit zen block corrected. Tier is client-only → rides
+# the kit's preinstalled opencode body. WO-27 batteries the four
+# un-evidenced coders (beam, deepseek-v4.1-flash, mimo-v2.6-flash,
+# flint-40b) before any hire; glm-5.3-flash-free = free backup lane
+# for glm-5.3 hard items when zai 429s; nemotron-3.5-lightning-free =
+# QA/Docs lane without the OpenRouter daily cap.
 #+OWNER-FIAT: 2026-10-31 #hq — slave-agent is FROZEN (no seat works it; the
 # repo stays as delivered: handoff docs island + upstream/main base). Terminal
 # segment after the remaining open TODOS.org WOs (in board order, #178/#130
