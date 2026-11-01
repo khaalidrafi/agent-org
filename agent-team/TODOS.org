@@ -222,6 +222,11 @@
    per dispatch. nemotron-3.5-lightning:free listed but daily-capped
    (429 free-models-per-day). zai 429. qoder fuel dead. The only lane
    that answered AND wrote ELisp at the bar tonight: antling.
+   2026-11-01 00:2xZ llmfisher sync census (a8096d0): OpenRouter delists
+   confirmed independently (poolside family, inkling-small, nemotron-3-
+   super); +recursive/flint-v1.0:free (no-data -> intern round) and
+   +inclusionai/ling-3.1-flash-1019-free (second independent free lane
+   for the Port brain).
 ** PROGRESS WO-19 agentic scripting — org-file prompt-queue script runner
    :PROPERTIES:
    :EFFORT: 2:00
@@ -360,14 +365,37 @@
 ** TODO WO-24 ELisp API lane first real landing — Ling-3.1-flash writes
    :PROPERTIES:
    :EFFORT: 1:00
-   :OWNER: Ling-3.1-flash@antling (Senior EL API lane); review Ring-2.6-1T
+   :OWNER: antling/Ling-3.1-flash@opencode (Port pair); review antling/Ring-2.6-1T@opencode
    :END:
    Route ONE real board item (smallest open WO step) through the new
-   antling lane end-to-end: dispatch -> Ling-3.1-flash@antling -> code
+   antling lane end-to-end: dispatch -> antling/Ling-3.1-flash@opencode -> code
    lands -> ERT green -> Ring-2.6-1T second review (author≠reviewer
    law). Proves the fuel fix the BLOCKED seats need (qoder + zai failed
    tonight; zai 429 confirmed by the Lead baseline probe 19:5xZ).
    Evidence: merged segment + transcript in .agent-org/.
+
+** TODO WO-25 CB credential consumption — vault -> seats (Owner 00:08 #hq)
+   :PROPERTIES:
+   :EFFORT: 0:50
+   :OWNER: qwen3.8-flash (Platform/CI Engineer)
+   :END:
+   Owner: "CB cred. is in vault, stupid!" — CODEBUDDY_AUTH_TOKEN is
+   sealed (1451 B). Wire the consumption path (env law: token never
+   logged, never written to files) so deepseek-v4.1-flash@codebuddy
+   answers on turn; every "no codebuddy credential" BLOCKED reason is
+   VOID. Evidence: one live codebuddy handshake logged in WO-18.
+
+** TODO WO-26 opencode bodies for the antling pairs — ci kit
+   :PROPERTIES:
+   :EFFORT: 1:00
+   :OWNER: qwen3.8-flash (Platform/CI Engineer)
+   :END:
+   Bake an opencode body (npm opencode-ai + project opencode.json with
+   the antling provider block, ANTLING_API_KEY from repo secrets)
+   beside the devin/cline/kilo bodies so CI seats run the SAME
+   model+agent pairs the roster names. Kit law: bump the ci/ submodule
+   in team repos when it lands. Evidence: one CI turn per pair
+   (Ling-3.1-flash, Ring-2.6-1T).
 
 * Org cheat sheet
   - ONGOING + CLOCK start; notes in :LOGBOOK:
