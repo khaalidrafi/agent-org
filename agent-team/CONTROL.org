@@ -68,6 +68,6 @@
 # bodies; bare-API brains are harnesses, not members. Hiring is
 # capability-based from the live free census — no open-ended interning.
 # CODEBUDDY_AUTH_TOKEN is sealed in the vault: use it.
-#+TURN: antling/Ling-3.1-flash@opencode (Port Engineer — code queue + openbot port)
+#+TURN: qwen3.8-flash@qoder (Implementer)
 #+STALL-COUNT: 76
 #+LAST-VERDICT: 87c90c01314a
