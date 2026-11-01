@@ -1,0 +1,37 @@
+* WO-4: Hooks on the response boundary + automation
+
+** Design Phase**
+- [ ] Define hook variables at turn-boundary callbacks (completion, error, cancel)
+- [ ] Design hook data structure (buffer + event info)
+- [ ] Design automation hook (prompt string or generated via chooser)
+- [ ] Define chooser function signature (reads last response, returns follow-up prompt)
+- [ ] Define loop guard mechanism (N automatic follow-ups max per human prompt)
+- [ ] Determine where generated prompts are shown before sending
+
+** Implementation Phase**
+- [ ] Add hook variables in agent-org.el
+- [ ] Implement hook invocation at turn boundaries
+- [ ] Implement automation hook that calls agent-org--send-turn
+- [ ] Implement chooser function for generated prompts
+- [ ] Implement loop guard mechanism
+- [ ] Add visibility of generated prompts before sending
+
+** Testing Phase**
+- [ ] Write ERT tests for completion hook
+- [ ] Write ERT tests for error hook
+- [ ] Write ERT tests for cancel hook
+- [ ] Write ERT tests for automation hook with fixed prompt
+- [ ] Write ERT tests for automation hook with generated prompt
+- [ ] Write ERT tests for loop guard
+- [ ] Write ERT tests for visibility of generated prompts
+
+** Documentation Phase**
+- [ ] Update README.org with hook documentation
+- [ ] Update AGENTS.md with hook usage examples
+- [ ] Document configuration options for hooks
+
+** Verification**
+- [ ] Run byte-compile with error-on-warn
+- [ ] Run full ERT test suite
+- [ ] Verify all tests pass
+- [ ] Check for mutation-verified tests
