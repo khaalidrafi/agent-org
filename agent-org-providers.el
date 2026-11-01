@@ -75,7 +75,12 @@
    (list :id 'qoder
          :name "Qoder"
          :command '("qoder" "--acp")
-         :environment #'agent-org-qoder-environment)
+         :environment #'agent-org-qoder-environment
+         :cross `(:root ,(expand-file-name "~/.qoder/projects")
+                       :slug #'agent-org-cross--qoder-slug
+                       :session-file #'agent-org-cross--qoder-session-file
+                       :write-leg #'agent-org-cross--write-qoder-leg
+                       :read-leg #'agent-org-cross--read-qoder-leg))
    (list :id 'opencode
          :name "OpenCode"
          :command '("opencode" "acp")

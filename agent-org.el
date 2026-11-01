@@ -4022,5 +4022,252 @@ as a new turn.  Returns the turn number if sent, nil if queued."
                               agent-org-auto-continue-prompt session)))))
           turn)))))
 
+;;; Cross-agent session handling (Unit #185)
+
+(defcustom agent-org-cross-session-root nil
+  "Root directory for cross-agent session files, per provider.
+If nil, uses the provider's documented root.  Tests set this to a temp
+directory to avoid touching the real ~/.qoder/projects or ~/.codebuddy/projects."
+  :type '(choice (const :tag "Use provider default" nil)
+                 (string :tag "Custom root"))
+  :group 'agent-org)
+
+(defun agent-org-cross--qoder-slug (directory)
+  "Convert DIRECTORY to Qoder's slug.
+Qoder: ~/<cwd> → -<cwd> (leading dash KEPT).
+Example: /home/khalid/agent-org → -home-khalid-agent-org."
+  (let* ((abs-dir (expand-file-name directory))
+         (abs-home (or (getenv "HOME") (expand-file-name "~")))
+         (rel-dir (file-relative-name abs-dir abs-home)))
+    ;; Qoder's slug keeps the leading dash
+    (concat "-" (replace-regexp-in-string "/" "-" rel-dir))))
+
+(defun agent-org-cross--codebuddy-slug (directory)
+  "Convert DIRECTORY to Codebuddy's slug.
+Codebuddy: ~/<cwd> → <cwd> (no leading dash).
+Example: /home/khalid/agent-org → home-khalid-agent-org."
+  (let* ((abs-dir (expand-file-name directory))
+         (abs-home (or (getenv "HOME") (expand-file-name "~")))
+         (rel-dir (file-relative-name abs-dir abs-home)))
+    ;; Codebuddy's slug does NOT keep the leading dash
+    (replace-regexp-in-string "/" "-" rel-dir)))
+
+(defun agent-org-cross--qoder-session-file (session-id directory)
+  "Return the full path to a Qoder session file.
+SESSION-ID must match Qoder's basename pattern:
+^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$.
+DIRECTORY is the project root (e.g., ~/.qoder/projects)."
+  (unless (and (stringp session-id)
+               (string-match-p "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" session-id))
+    (user-error "Invalid Qoder session ID: %s" session-id))
+  (let* ((root (or agent-org-cross-session-root
+                   (expand-file-name "~/.qoder/projects")))
+         (slug (agent-org-cross--qoder-slug (file-name-directory root))))
+    (expand-file-name (format "%s/%s.jsonl" slug session-id) root)))
+
+(defun agent-org-cross--codebuddy-session-file (session-id directory)
+  "Return the full path to a Codebuddy session file.
+SESSION-ID is the file basename.
+DIRECTORY is the project root (e.g., ~/.codebuddy/projects)."
+  (unless (and (stringp session-id)
+               (string-match-p "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" session-id))
+    (user-error "Invalid Codebuddy session ID: %s" session-id))
+  (let* ((root (or agent-org-cross-session-root
+                   (expand-file-name "~/.codebuddy/projects")))
+         (slug (agent-org-cross--codebuddy-slug (file-name-directory root))))
+    (expand-file-name (format "%s/%s.jsonl" slug session-id) root)))
+
+(defun agent-org-cross--message-to-record (role text)
+  "Convert a (ROLE TEXT) pair to a Qoder-style JSON record.
+ROLE is \"user\" or \"assistant\". TEXT is the message content.
+Returns a plist suitable for `agent-org-cross--write-qoder-leg'."
+  (let ((timestamp (format-time-string "%Y-%m-%dT%H:%M:%S.000Z")))
+    `(:type ,(string-downcase role)
+      :uuid ,(uuidgen)
+      :timestamp ,timestamp
+      :message ,(list `(:role ,role :content ,(list `(:type "text" :text ,text))))
+      :parentUuid nil
+      :isSidechain nil
+      :sessionId ,(uuidgen)
+      :cwd ,(or (getenv "PWD") default-directory)
+      :userType "human"
+      :entrypoint ,(or (getenv "ENTRYPOINT") "emacs")
+      :version "0.1.0"
+      :gitBranch ,(and (ignore-errors (vc-git-get-root default-directory))
+                       (ignore-errors (vc-git--current-branch))))))
+
+(defun agent-org-cross--write-qoder-leg (file messages)
+  "Write MESSAGES to FILE as a Qoder-style JSONL file.
+MESSAGES is a list of (ROLE TEXT) pairs, oldest first.
+Creates the file if it doesn't exist; otherwise appends new messages
+by matching on sessionId.  Refuses to write if a live chat buffer
+holds the file (agent-org--buffer-for-session-file)."
+  (let* ((file-dir (file-name-directory file))
+         (file-base (file-name-nondirectory file)))
+    ;; Safety rail: refuse to write a session file for a live buffer
+    (when (agent-org--buffer-for-session-file file-base)
+      (user-error "Cannot write session file %s: a live chat buffer holds it" file-base))
+    
+    ;; Safety rail: never write outside the resolved root
+    (let* ((root (or agent-org-cross-session-root
+                     (expand-file-name "~/.qoder/projects")))
+           (absolute-file (expand-file-name file))
+           (absolute-root (expand-file-name root)))
+      (unless (string-prefix-p absolute-root absolute-file)
+        (user-error "Cannot write outside cross-agent root: %s" absolute-file)))
+    
+    ;; Ensure directory exists
+    (make-directory file-dir t)
+    
+    ;; Read existing messages to find the last sessionId
+    (let ((existing (agent-org-cross--read-qoder-leg file)))
+      (let* ((last-msg (car (last existing)))
+             (last-session-id (when last-msg (alist-get :sessionId last-msg)))
+             (new-records (mapcar (lambda (msg)
+                                    (let* ((role (car msg))
+                                           (text (cdr msg))
+                                           (uuidgen-fn #'uuidgen))
+                                      (if (and last-session-id
+                                               (equal (alist-get :type (cdr msg)) role)
+                                               (equal (alist-get :sessionId (cdr msg)) last-session-id))
+                                          ;; Continue the same session
+                                          (let* ((record (agent-org-cross--message-to-record role text))
+                                                 (uuidgen-fn #'uuidgen))
+                                            (plist-put record :uuid (funcall uuidgen-fn))
+                                            (plist-put record :sessionId last-session-id)
+                                            (plist-put record :parentUuid (alist-get :uuid (car existing)))
+                                            (plist-put record :isSidechain nil)
+                                            record)
+                                        ;; New session
+                                        (let* ((record (agent-org-cross--message-to-record role text)))
+                                          (plist-put record :parentUuid nil)
+                                          (plist-put record :isSidechain nil)
+                                          record))))
+                                    messages)))
+        ;; Append new records
+        (with-temp-file file
+          (when existing
+            (dolist (msg existing)
+              (insert (json-serialize msg :object-type 'alist) "\n")))
+          (dolist (msg new-records)
+            (insert (json-serialize msg :object-type 'alist) "\n")))))))
+
+(defun agent-org-cross--read-qoder-leg (file)
+  "Read all messages from FILE as a Qoder-style JSONL file.
+Returns a list of (ROLE TEXT) pairs, oldest first.
+Ignores JSON parse errors (per Codebuddy's documented behavior)."
+  (let ((records nil))
+    (when (file-exists-p file)
+      (with-temp-buffer
+        (insert-file-contents file)
+        (goto-char (point-min))
+        (while (not (eobp))
+          (let ((line (buffer-substring (line-beginning-position) (line-end-position))))
+            (when (and (not (string-empty-p line))
+                       (string-match-p "^{" line))
+              (condition-case err
+                  (let ((record (json-parse-string line :object-type 'alist)))
+                    (let* ((role (alist-get :type record))
+                           (text (alist-get :message record))
+                           (content (alist-get :text (alist-get :content text))))
+                      (when (and (stringp role) (stringp content))
+                        (push (cons role content) records))))
+                (error nil)))))))
+    records))
+
+(defun agent-org-cross--write-codebuddy-leg (file messages)
+  "Write MESSAGES to FILE as a Codebuddy-style JSONL file.
+MESSAGES is a list of (ROLE TEXT) pairs, oldest first.
+Creates the file if it doesn't exist; otherwise appends new messages
+by matching on id.  Refuses to write if a live chat buffer
+holds the file (agent-org--buffer-for-session-file)."
+  (let* ((file-dir (file-name-directory file))
+         (file-base (file-name-nondirectory file)))
+    ;; Safety rail: refuse to write a session file for a live buffer
+    (when (agent-org--buffer-for-session-file file-base)
+      (user-error "Cannot write session file %s: a live chat buffer holds it" file-base))
+    
+    ;; Safety rail: never write outside the resolved root
+    (let* ((root (or agent-org-cross-session-root
+                     (expand-file-name "~/.codebuddy/projects")))
+           (absolute-file (expand-file-name file))
+           (absolute-root (expand-file-name root)))
+      (unless (string-prefix-p absolute-root absolute-file)
+        (user-error "Cannot write outside cross-agent root: %s" absolute-file)))
+    
+    ;; Ensure directory exists
+    (make-directory file-dir t)
+    
+    ;; Read existing messages to find the last id
+    (let ((existing (agent-org-cross--read-codebuddy-leg file)))
+      (let* ((last-msg (car (last existing)))
+             (last-id (when last-msg (alist-get :id last-msg)))
+             (new-records (mapcar (lambda (msg)
+                                    (let* ((role (car msg))
+                                           (text (cdr msg))
+                                           (timestamp (format-time-string "%d" nil)))
+                                      (if (and last-id
+                                               (equal (alist-get :type (cdr msg)) role)
+                                               (equal (alist-get :id (cdr msg)) last-id))
+                                          ;; Continue the same session
+                                          (let* ((record `(:id ,(uuidgen)
+                                                           :parentId ,last-id
+                                                           :timestamp ,timestamp
+                                                           :type ,(string-downcase role)
+                                                           :role ,role
+                                                           :content ,(list `(:type ,(string-downcase role)
+                                                                             :text ,text))
+                                                           :providerData ,(list `(:agent "cli"))
+                                                           :sessionId ,(uuidgen)
+                                                           :cwd ,(or (getenv "PWD") default-directory)))))
+                                            (plist-put record :id (uuidgen))
+                                            (plist-put record :parentId last-id)
+                                            record)
+                                        ;; New session
+                                        (let* ((record `(:id ,(uuidgen)
+                                                           :parentId nil
+                                                           :timestamp ,timestamp
+                                                           :type ,(string-downcase role)
+                                                           :role ,role
+                                                           :content ,(list `(:type ,(string-downcase role)
+                                                                             :text ,text))
+                                                           :providerData ,(list `(:agent "cli"))
+                                                           :sessionId ,(uuidgen)
+                                                           :cwd ,(or (getenv "PWD") default-directory)))))
+                                          (plist-put record :id (uuidgen))
+                                          (plist-put record :parentId nil)
+                                          record))))
+                                    messages)))
+        ;; Append new records
+        (with-temp-file file
+          (when existing
+            (dolist (msg existing)
+              (insert (json-serialize msg :object-type 'alist) "\n")))
+          (dolist (msg new-records)
+            (insert (json-serialize msg :object-type 'alist) "\n")))))))
+
+(defun agent-org-cross--read-codebuddy-leg (file)
+  "Read all messages from FILE as a Codebuddy-style JSONL file.
+Returns a list of (ROLE TEXT) pairs, oldest first.
+Ignores JSON parse errors (per Codebuddy's documented behavior)."
+  (let ((records nil))
+    (when (file-exists-p file)
+      (with-temp-buffer
+        (insert-file-contents file)
+        (goto-char (point-min))
+        (while (not (eobp))
+          (let ((line (buffer-substring (line-beginning-position) (line-end-position))))
+            (when (and (not (string-empty-p line))
+                       (string-match-p "^{" line))
+              (condition-case err
+                  (let ((record (json-parse-string line :object-type 'alist)))
+                    (let* ((role (alist-get :type record))
+                           (content (alist-get :content record))
+                           (text (alist-get :text (alist-get :content content))))
+                      (when (and (stringp role) (stringp text))
+                        (push (cons role text) records))))
+                (error nil)))))))
+    records))
+
 (provide 'agent-org)
 ;;; agent-org.el ends here
