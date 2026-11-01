@@ -404,6 +404,23 @@
    green kit CI turn per pair (Ling-3.1-flash, Ring-2.6-1T),
    transcripts in the team repos.
 
+** TODO WO-27 ELisp battery on the Zen free pool — capability before hire
+   :PROPERTIES:
+   :EFFORT: 1:30
+   :OWNER: qwen3.8-flash (Platform/CI Engineer)
+   :END:
+   Owner 00:52 #hq: "opencode also has a lot of free models. Consider
+   them." llmfisher census 2026-11-01: 7 live Zen ids; kit zen block
+   corrected (jev-1.13-free dropped — /v1/systemone is a decision API,
+   not a chat route). Client-only tier rides the kit's preinstalled
+   opencode body. Battery candidates (ci docs/INTERN-ELISP.org, 15/19
+   bar): beam-free · deepseek-v4.1-flash-free · mimo-v2.6-flash-free ·
+   flint-40b-free; nemotron-3.5-super-vl-free optional 5th (vision QA).
+   glm-5.3-flash-free needs NO battery (Lead family backup lane when
+   zai 429s); nemotron-3.5-lightning-free = QA/Docs lane, no OpenRouter
+   cap. Evidence: scorecards appended to CANDIDATES.org; hires only at
+   the bar (capability law, Owner 00:08).
+
 * Org cheat sheet
   - ONGOING + CLOCK start; notes in :LOGBOOK:
   - BLOCKED + reason; :OWN: = owner ruling
