@@ -33,6 +33,17 @@
    `agent-org-buffer--transcript-text`, `agent-org-buffer-transcript-synced-p`,
    `agent-org-buffer-transcript-messages` + 6 ERT tests.  #184 (index), #185
    (writers) and #186 (verbs + docs) still open.
+** PROGRESS WO-1 cross-agent sessions — Qoder <-> Codebuddy — TODOs.org §Cross-agent
+   STATE 2026-11-01 06:07Z: machinery green, units #183/#184 landed; units #185 (#186 verbs + docs) remaining — seat execution on live lanes.
+   UNIT #183 (parser) LANDED 2026-10-28: transcript sync check + Org→messages parser.
+   UNIT #184 (mapping store) LANDED 2026-10-28: cross-agent.org file per project, leg records with :XAGENT:/:AGENT:/:SESSION:/:FILE:/:FROM:/:SYNCED:.
+   UNIT #185 (converters) — PENDING: :cross= key in provider specs, per-agent writers, safety rails.
+   UNIT #186 (verbs + docs) — PENDING: agent-org-cross-convert, agent-org-cross-go, agent-org-cross-list, docs.
+   :LOGBOOK:
+   - Note taken on 2026-11-01 06:07 UTC "starting units #185/#186 (implementer, qwen3.8-flash@qoder)":
+     Unit #185 adds a =:cross= key to provider specs holding =:root=, slug rule, writer; adds
+     =defcustom agent-org-cross-session-root= for testability; creates pure builders and impure writers per agent; safety rails: refuse live session lock, never write outside root, validate id format. Unit #186 adds =agent-org-cross-convert=, =agent-org-cross-go=, =agent-org-cross-list= verbs; reverse hop works via existing leg record; docs in README.org, AGENTS.md, CONVENTIONS.md, AI-REVIEW.org.
+   :END:
 ** DONE WO-2 model selection menu — labels + cleaned-id fallback; ERT 432/432 (agent-org.el:1679)
 ** PROGRESS WO-3 steer — inject into the live turn — TODOs.org §Steer
 ** TODO WO-4 hooks on the response boundary + automation — TODOs.org §Hooks
