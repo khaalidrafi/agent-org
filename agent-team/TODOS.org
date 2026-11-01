@@ -385,17 +385,24 @@
    answers on turn; every "no codebuddy credential" BLOCKED reason is
    VOID. Evidence: one live codebuddy handshake logged in WO-18.
 
-** TODO WO-26 opencode bodies for the antling pairs — ci kit
+** TODO WO-26 antling pairs ride the ci kit — zero installs (Owner 00:42)
    :PROPERTIES:
-   :EFFORT: 1:00
+   :EFFORT: 0:40
    :OWNER: qwen3.8-flash (Platform/CI Engineer)
    :END:
-   Bake an opencode body (npm opencode-ai + project opencode.json with
-   the antling provider block, ANTLING_API_KEY from repo secrets)
-   beside the devin/cline/kilo bodies so CI seats run the SAME
-   model+agent pairs the roster names. Kit law: bump the ci/ submodule
-   in team repos when it lands. Evidence: one CI turn per pair
-   (Ling-3.1-flash, Ring-2.6-1T).
+   Owner 00:42 #hq: "Why did you install opencode, stupid? You are
+   supposed to use agent-team-ci!!" RETRACTED: the ad-hoc sandbox
+   opencode install behind the 00:2x pair proof (its scratch artifacts
+   are gone with the recycle) — that run is no longer seat evidence —
+   and this WO's original npm-opencode-ai body bake. The kit ALREADY
+   ships the OpenCode body preinstalled (ci body-opencode; 2026-10-20
+   law: agents preinstalled, never installed per run). Scope now: kit
+   docker/harness/opencode.json gains the antling provider block
+   (ANTLING_API_KEY env-injected per run, never baked — kit law); team
+   repos bump the ci/ submodule pointer; the pair re-proof runs as a
+   NORMAL kit CI turn per pair on the preinstalled body. Evidence: one
+   green kit CI turn per pair (Ling-3.1-flash, Ring-2.6-1T),
+   transcripts in the team repos.
 
 * Org cheat sheet
   - ONGOING + CLOCK start; notes in :LOGBOOK:
