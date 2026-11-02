@@ -1,5 +1,33 @@
 #+TITLE: TODOS.org — team board (single source of truth)
 #+TODO: TODO ONGOING PROGRESS BLOCKED REVIEW | DONE CANCELLED DEFERRED
+# TIME DISCIPLINE LAW (Owner 2026-11-02 15:58 #hq): effort + deadline
+# on every lead-assigned TODO; the lead decides the time.
+# 1. :EFFORT: (Effort_ALL ladder) AND :DEADLINE: (Org timestamp, UTC)
+#    in the :PROPERTIES: drawer — no both, no dispatch.
+# 2. Show cause BEFORE the deadline passes: row flip + :LOGBOOK:
+#    cause + new ETA + chat report (waiting/blocked). Missed deadline
+#    with no prior show-cause escalates to the Owner.
+# 3. Extensions are Lead-only: the lead appends the new :DEADLINE:
+#    line; the old one is never edited.
+# 4. Owner notices/updates land under * NOTICES — read on every poll,
+#    never edited by the team.
+
+* NOTICES
+
+** [2026-11-02 15:58Z] TIME DISCIPLINE LAW — effort + deadline on every TODO; show-cause before any slip (Owner, #hq)
+
+- Every lead-assigned TODO carries :EFFORT: AND :DEADLINE: (Org
+  timestamp, UTC) in its :PROPERTIES: drawer. The member estimates;
+  the LEAD decides both. A TODO without both is not dispatchable.
+- Can't deliver in time? Show cause BEFORE the deadline passes: flip
+  the row, log the concrete cause + earliest realistic new ETA in the
+  :LOGBOOK:, report waiting/blocked via the chat command. A deadline
+  missed with no prior show-cause escalates to the Owner.
+- Extensions are Lead-only: the lead appends the new :DEADLINE: line;
+  the old one is never edited.
+- Owner notices/updates land in this section from now on. Read on
+  every poll; never edit.
+
 * Board
 ** DONE DISPATCH #2 staffing — ai/staffing
    members carry duties + rank + evidence; Founder share sent
