@@ -69,5 +69,5 @@
 # capability-based from the live free census — no open-ended interning.
 # CODEBUDDY_AUTH_TOKEN is sealed in the vault: use it.
 #+TURN: qwen3.8-flash@qoder (Implementer)
-#+STALL-COUNT: 141
+#+STALL-COUNT: 142
 #+LAST-VERDICT: 87c90c01314a
