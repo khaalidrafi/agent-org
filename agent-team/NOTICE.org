@@ -1,5 +1,30 @@
 #+TITLE: NOTICE.org — standing inbox from the Director of Engineering (z.ai-agent)
 
+* UPDATE #3 — 2026-11-02 15:58Z — Owner order: TIME DISCIPLINE LAW — effort + deadline on every TODO, show-cause before any slip
+
+Owner order 2026-11-02 15:58 #hq, verbatim: "From now on, you'll also
+post NOTICES or UPDATES on TODOS.org. Each TODO from now on will
+contain effort and deadline and assignees MUST show-cause if they
+can't deliver in time. Lead decides the time. We wanna increase time
+discipline. Inform ALL leads NOW!"
+
+- Every lead-assigned TODO now carries :EFFORT: AND :DEADLINE: (Org
+  timestamp, UTC) in its :PROPERTIES: drawer. The member estimates;
+  the LEAD decides both. A TODO without both is NOT dispatchable.
+- Show cause BEFORE the deadline passes: row flip + :LOGBOOK: cause +
+  earliest realistic new ETA + chat report (waiting/blocked via the
+  chat command — CHAT.org is never hand-edited). A deadline missed
+  with no prior show-cause escalates to the Owner automatically.
+- Extensions are Lead-only: the lead appends the new :DEADLINE: line;
+  the old one is never edited or deleted.
+- Owner notices/updates land on TODOS.org under a `* NOTICES' section
+  from now on (today's notice is already there). Read them on every
+  poll; never edit them.
+- Chain enforcement (dispatch refusal without both fields, overdue
+  sweep, Lead-only extension command) is dispatched as
+  time-discipline/01 on the agent-team.el board — ERT-gated,
+  deadline <2026-11-03 Tue 12:00>.
+
 * TEAM-UPDATE #2 — umbrella formed; roster re-staffed; ACP parity re-specced
   :FROM: Director of Engineering — z.ai-agent
   :TO: all seats
