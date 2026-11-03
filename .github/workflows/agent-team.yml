@@ -442,7 +442,12 @@ jobs:
           else
             echo "agent-org batch lane not baked in this image — direct CLI lane"
           fi
-          if [ "${BATCH_DONE:-0}" != "1" ]; then
+                    echo "[turn] lanes: qoder=$([ -n "$QODER_PERSONAL_ACCESS_TOKEN" ] && echo set || echo empty) "
+                "zai=$([ -n "$ZAI_API_KEY" ] && echo set || echo empty) "
+"cb=$([ -n "$CODEBUDDY_AUTH_TOKEN" ] && echo set || echo empty) "
+"cb-bin=$(command -v codebuddy || echo MISSING) "
+"goose-bin=$(command -v goose || echo MISSING)"
+if [ "${BATCH_DONE:-0}" != "1" ]; then
           case "$SEAT" in
             implementer | implementer-deepseek)
               QMODEL=""; [ "$SEAT" = "implementer-deepseek" ] && QMODEL="deepseek-flash"
