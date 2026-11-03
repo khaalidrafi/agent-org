@@ -468,16 +468,16 @@ jobs:
                   echo "TURN_RESULT=goose run OK (acting lane: zai/glm-4.7-flash@goose)"
                 elif [ -n "$CODEBUDDY_AUTH_TOKEN" ] && command -v codebuddy >/dev/null 2>&1; then
                   env CODEBUDDY_AUTH_TOKEN="$CODEBUDDY_AUTH_TOKEN" \
-                      codebuddy -p "$BRIEF" -y \
-                    && echo "TURN_RESULT=codebuddy run OK (fallback lane: deepseek-v4.1-flash@codebuddy — hired 2026-10-28)" \
+                      codebuddy -p "$BRIEF" -y --model "${CODEBUDDY_MODEL:-hy3}" \
+                    && echo "TURN_RESULT=codebuddy run OK (fallback lane: ${CODEBUDDY_MODEL:-hy3}@codebuddy — CB free tier hy* (Owner 2026-11-03 #hq))" \
                     || echo "TURN_RESULT=BLOCKED (qoder + zai + codebuddy lanes all failed)"
                 else
-                  echo "TURN_RESULT=BLOCKED (qoder + zai failed, no codebuddy credential — check lanes)"
+                  echo "TURN_RESULT=BLOCKED (qoder + zai failed; codebuddy lane down — cred ok/binary was missing pre-kit-6c7b414)"
                 fi
               elif [ -n "$CODEBUDDY_AUTH_TOKEN" ] && command -v codebuddy >/dev/null 2>&1; then
                 env CODEBUDDY_AUTH_TOKEN="$CODEBUDDY_AUTH_TOKEN" \
-                    codebuddy -p "$BRIEF" -y \
-                  && echo "TURN_RESULT=codebuddy run OK (fallback lane: deepseek-v4.1-flash@codebuddy — hired 2026-10-28)" \
+                    codebuddy -p "$BRIEF" -y --model "${CODEBUDDY_MODEL:-hy3}" \
+                  && echo "TURN_RESULT=codebuddy run OK (fallback lane: ${CODEBUDDY_MODEL:-hy3}@codebuddy — CB free tier hy* (Owner 2026-11-03 #hq))" \
                   || echo "TURN_RESULT=BLOCKED (qoder + codebuddy lanes failed, no zai key)"
               else
                 echo "TURN_RESULT=BLOCKED (qoder failed and no ZAI/codebuddy fallback — check harness/lane)"
@@ -553,6 +553,8 @@ jobs:
                 glm-4.7-flash)       TURN_AUTHOR="GLM-4.7-Flash <glm-4.7-flash@z.ai>" ;;
                 glm-5.3-flash-free)  TURN_AUTHOR="glm-5.3-flash-free <glm-5.3-flash-free@opencode>" ;;
                 deepseek-v4.1-flash) TURN_AUTHOR="DeepSeek V4.1 Flash <deepseek-v4.1-flash@codebuddy.com>" ;;
+                hy3)                 TURN_AUTHOR="Hy3 <hy3@codebuddy.com>" ;;
+                hy4-preview)         TURN_AUTHOR="Hy4-Preview <hy4-preview@codebuddy.com>" ;;
                 kimi-k2.6)           TURN_AUTHOR="Kimi K2.6 <kimi-k2.6@kimi.ai>" ;;
                 qwen3.8-max)         TURN_AUTHOR="Qwen3.8-Max <qwen3.8-max@qwen.ai>" ;;
                 minimax-m3.1-flash)  TURN_AUTHOR="MiniMax-M3.1-Flash <minimax-m3.1-flash@openrouter.ai>" ;;
@@ -561,11 +563,15 @@ jobs:
               GIT_AUTHOR_NAME="${TURN_AUTHOR%% <*}" \
               GIT_AUTHOR_EMAIL="$(printf '%s' "$TURN_AUTHOR" | sed -nE 's/.*<([^@]+@[^>]+)>.*/\1/p')" \
                 git commit -m "turn(${SEAT}): segment work — host-committed" \
-                -m "result: ${TURN_RESULT}" || echo "::notice::workspace commit failed"
+                -m "result: ${TURN_RESULT}" \
+                -m "Co-authored-by: z.ai-agent <z.ai-agent@z.ai>" \
+                -m "Co-authored-by: Khalid Rafi <khaalidrafi@gmail.com>" || echo "::notice::workspace commit failed"
             else
               echo "::error::host-commit without a resolvable lane — fell back to CI author; fix the lane string (law: MODEL <MODEL@PROVIDER>)"
               git commit -m "turn(${SEAT}): segment work — host-committed" \
-                -m "result: ${TURN_RESULT}" || echo "::notice::workspace commit failed"
+                -m "result: ${TURN_RESULT}" \
+                -m "Co-authored-by: z.ai-agent <z.ai-agent@z.ai>" \
+                -m "Co-authored-by: Khalid Rafi <khaalidrafi@gmail.com>" || echo "::notice::workspace commit failed"
             fi
           else
             echo "workspace clean — no host commit needed"
@@ -746,17 +752,57 @@ jobs:
           RESULT="${{ needs.turn.outputs.seg_result }}"
           OUTCOME="${{ steps.merge.outputs.outcome }}"
           GATE="${{ steps.gate.outputs.gate }}"
+          if [ -z "$RESULT" ]; then
+            if [ "${{ needs.test.result }}" = "failure" ]; then
+              echo "CHAIN_DECISION=tests-red-halt" >> "$GITHUB_ENV"
+              echo "CHAIN_STALL=$STALL" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            echo "chain idle (no segment ran — killed/complete/no-objective): no accounting, no commit"
+            KILL=$(grep -oP '^\#\+KILL-SWITCH:\s*\K\w+' "$CTL" | head -1)
+            OBJSTATE=$(grep -oP '^\#\+OBJECTIVE-STATE:\s*\K\w+' "$CTL" | head -1)
+            case "${KILL:-OFF}:${OBJSTATE:-OPEN}" in
+              ON:*) DECISION="kill-switch" ;;
+              *:COMPLETE) DECISION="objective-complete" ;;
+              *) DECISION="idle" ;;
+            esac
+            echo "CHAIN_DECISION=$DECISION" >> "$GITHUB_ENV"
+            echo "CHAIN_STALL=$STALL" >> "$GITHUB_ENV"
+            exit 0
+          fi
           STALL=$(grep -oP '^\#\+STALL-COUNT:\s*\K\d+' "$CTL" | head -1); STALL=${STALL:-0}
+          VARSTALL=$(curl -sfS -H "Authorization: Bearer ${{ github.token }}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/variables/CHAIN_STALL" \
+            | jq -r '.value // empty' 2>/dev/null || true)
+          case "${VARSTALL:-}" in ''|*[!0-9]*) VARSTALL=$STALL ;; esac
           PROGRESS=no
           if [ "$OUTCOME" = "merged" ] && [ "$GATE" = "green" ]; then PROGRESS=yes; fi
           case "$RESULT" in *BLOCKED*) PROGRESS=no ;; esac
-          if [ "$PROGRESS" = "yes" ]; then NEW=0; else NEW=$((STALL+1)); fi
-          if [ "$NEW" != "$STALL" ]; then
+          if [ "$PROGRESS" = "yes" ]; then NEW=0; else NEW=$((VARSTALL+1)); fi
+          # SPAM LAW (Owner 2026-11-03 04:27 #hq): true count lives in the
+          # CHAIN_STALL Actions variable — no commit per bump. CONTROL.org is
+          # written ONLY on a progress reset or every 10th blocked bump;
+          # subject short, detail in the body.
+          curl -sfS -o /dev/null -X PATCH \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/variables/CHAIN_STALL" \
+            -d "{\"value\":\"${NEW}\"}" \
+          || curl -sfS -o /dev/null -X POST \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/variables/CHAIN_STALL" \
+            -d "{\"name\":\"CHAIN_STALL\",\"value\":\"${NEW}\"}" \
+          || echo "::warning::CHAIN_STALL variable write failed (milestone commits still apply)"
+          RLBL=none
+          case "$RESULT" in *BLOCKED*) RLBL=blocked ;; *OK*) RLBL=ok ;; esac
+          if [ "$NEW" = "0" ] || [ $((NEW % 10)) = "0" ]; then
             git fetch origin ai/quickstart
             git reset --hard origin/ai/quickstart
             sed -i "s|^\#+STALL-COUNT:.*|\#+STALL-COUNT: ${NEW}|" "$CTL"
             git add "$CTL"
-            git commit -m "control: #+STALL-COUNT -> ${NEW} (segment ${OUTCOME}, result ${RESULT:-none})" \
+            git commit -m "control: stall ${NEW} (${RLBL})" \
+              -m "segment ${OUTCOME}: ${RESULT:-none}" \
               -m "Co-authored-by: z.ai-agent <z.ai-agent@z.ai>" \
               -m "Co-authored-by: Khalid Rafi <khaalidrafi@gmail.com>" \
               || echo "::notice::stall commit empty"
@@ -775,6 +821,15 @@ jobs:
           if [ "$NEW" -ge 4 ] && [ "$DECISION" = "dispatch" ]; then
             DECISION="backoff-dispatch"
           fi
+          VH=$(printf '%s' "$RESULT" | sha256sum | cut -c1-12)
+          LASTV=$(grep -oP '^\#\+LAST-VERDICT:\s*\K.*' "$CTL" | head -1)
+          case "$RESULT" in
+            *BLOCKED*)
+              if [ -n "$LASTV" ] && [ "$VH" = "$LASTV" ]; then
+                DECISION="blocked-hold"
+                echo "blocked-hold: identical verdict ${VH} already recorded — no re-dispatch (hourly net re-kicks; spam law)"
+              fi ;;
+          esac
           echo "CHAIN_DECISION=$DECISION" >> "$GITHUB_ENV"
           echo "CHAIN_STALL=$NEW" >> "$GITHUB_ENV"
           DISPATCH_CODE="n/a"
