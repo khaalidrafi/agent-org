@@ -237,6 +237,53 @@ avoid.  Two call sites would otherwise each re-derive the rule."
   "Face for the Error state in the header line."
   :group 'agent-org-buffer)
 
+;;;; Chat UI kit faces (standard v1.1 section 6 — U2 half B)
+
+(defgroup agent-org-chat nil
+  "Chat UI kit for `agent-org' session buffers (standard v1.1 section 10.4)."
+  :group 'agent-org
+  :prefix "agent-org-chat-")
+
+(defgroup agent-org-chat-faces nil
+  "Faces for the agent-org chat kit, one per standard v1.1 section 6 role."
+  :group 'agent-org-chat)
+
+(defface agent-org-chat-unread-face
+  '((t :inherit org-warning))
+  "Unread role (standard v1.1 section 6).  Defined for kit completeness:
+a solo session has no unread model — the role belongs to the kit's
+list and view buffers (section 5's numeric pairs), so no anchor here
+applies it.  The agent-team.el transcript half of U2 documents the same
+deviation for the archive."
+  :group 'agent-org-chat-faces)
+
+(defface agent-org-chat-mention-face
+  '((t :inherit bold))
+  "Mention role (standard v1.1 section 6).  Defined for kit completeness:
+mentions are a group/list role (there is nobody to mention in a solo
+session), so no anchor here applies it."
+  :group 'agent-org-chat-faces)
+
+(defface agent-org-chat-preview-face
+  '((t :inherit shadow))
+  "Preview role (standard v1.1 section 6).  Defined for kit completeness:
+the preview is a list role, so no anchor here applies it."
+  :group 'agent-org-chat-faces)
+
+(defface agent-org-chat-time-face
+  '((t :inherit org-date))
+  "Time role (standard v1.1 section 6).  Delivered by Org's native
+timestamp fontification — this face inherits `org-date' so the kit
+spelling and the Org spelling cannot disagree."
+  :group 'agent-org-chat-faces)
+
+(defface agent-org-chat-current-face
+  '((t :inherit highlight))
+  "Current-chat name role (standard v1.1 section 6): the session's
+`#+TITLE:' line — the open conversation's name — applied by font-lock
+(see `agent-org-buffer--install-chat-kit-font-lock')."
+  :group 'agent-org-chat-faces)
+
 (defcustom agent-org-use-header-line t
   "When non-nil, show session status in the buffer `header-line'.
 When nil, status falls back to minibuffer `message' calls only.
@@ -1656,6 +1703,23 @@ new entry, because a slot nobody is looking at is not a slot."
   (interactive)
   (agent-org-buffer-queue-kill-entry (current-buffer)))
 
+(defun agent-org-buffer-quit ()
+  "Bury this chat buffer — the kit's `q' verb (standard v1.1 section 7, quit).
+Point on text this buffer allows typing (the live prompt box, the queue
+region — both are editable precisely where the `read-only' text property
+is absent, the freeze law of CONVENTIONS.md) self-inserts `q' instead:
+the prompt is the buffer's primary interaction, and a chat that steals a
+typed letter is not a chat.  The verb therefore owns only what section 7's
+`q' is for — the frozen transcript a reader is scrolling, where plain
+typing could only answer `text-read-only' — and every other position
+buries.  Which region point is in is read from the text property rather
+than from box/queue state, so the answer stays correct wherever the
+buffer next grows an editable region."
+  (interactive)
+  (if (not (get-text-property (point) 'read-only))
+      (self-insert-command 1 (or last-command-event ?q))
+    (bury-buffer)))
+
 (defun agent-org-buffer--build-mode-map (map)
   "Fill MAP with `agent-org-mode's bindings, and return it.
 A function that FILLS a map rather than one that RETURNS a fresh one, because a
@@ -1712,6 +1776,15 @@ rebind every buffer immediately."
     ;; stamps carry), so the chord still refreshes a clocktable and edits a
     ;; block while a clock keeps its seconds.  See `agent-org-ctrl-c-ctrl-c'.
     (define-key map (kbd "C-c C-c") #'agent-org-ctrl-c-ctrl-c)
+    ;; the chat kit's `q' verb (standard v1.1 section 7, U2 half B): bury the
+    ;; buffer over the frozen transcript, type `q' where typing is allowed —
+    ;; see `agent-org-buffer-quit' for why the split, and the ERT that pins it
+    ;; (`test-agent-org-q-verb-bound-and-typing-safe': through the real
+    ;; keymaps, not `self-insert-command' called directly, which is exactly
+    ;; the detour that would miss a steal).  Plain `q' is Org-free (measured
+    ;; on Org 9.7.11: `lookup-key org-mode-map "q"' is nil), so the shadow
+    ;; drift guard stays green.
+    (define-key map "q" #'agent-org-buffer-quit)
     ;; Org structure commands bypass `read-only' text properties and would
     ;; corrupt heading boundaries; block them all.  M-UP/M-DOWN are the two
     ;; exceptions, and only inside the queue region -- see
@@ -1780,7 +1853,15 @@ appears in a window, which is the earliest point the request can succeed, so
 `(font-lock-mode 1)' would tear down and rebuild jit-lock over a transcript
 that can be thousands of lines long, for nothing."
   (unless font-lock-mode
-    (font-lock-mode 1)))
+    (font-lock-mode 1)
+    ;; the chat kit's current-chat face (standard v1.1 section 6, U2 half
+    ;; B) rides the SAME moment — set-defaults has just run, so the
+    ;; keyword lands on the buffer's compiled keywords and survives (see
+    ;; `agent-org-buffer--install-chat-kit-font-lock' for why every other
+    ;; spelling was measured dead); flush paints the line now that the
+    ;; keyword exists
+    (agent-org-buffer--install-chat-kit-font-lock)
+    (font-lock-flush)))
 
 (define-minor-mode agent-org-mode
   "Minor mode for `agent-org' Org chat buffers.
@@ -1802,6 +1883,8 @@ is `test-agent-org-mode-map-shadows-no-org-binding'):
   C-c a v  List the waiting prompts in the echo area
   C-c a i  Interrupt the running turn and send the box, in one go
   C-c a c  Toggle the clocked-total display (C-u: force it off)
+  q  Bury the chat buffer (standard section 7 quit) — types `q' instead
+     where typing is allowed (the prompt box, the queue region)
   M-UP / M-DOWN  Reorder the queued prompt at point (in the queue only)
 M-RET, M-LEFT/RIGHT, S-UP/DOWN, `C-c -' and `C-c C-t' are bound to an error
 here ON PURPOSE: Org's structure commands on those keys write through
@@ -1868,6 +1951,39 @@ here ON PURPOSE: Org's structure commands on those keys write through
                  #'agent-org-buffer--ensure-font-lock t)
     ;; a buffer that is no longer a chat must not keep the chat's decorations
     (when agent-org-clock-display-mode (agent-org-clock-display-mode -1))))
+
+;;;; Chat UI kit font-lock (standard v1.1 section 6 — U2 half B)
+
+(defconst agent-org-buffer--chat-kit-keywords
+  '(("^#\\+TITLE:.*$" 0 'agent-org-chat-current-face append))
+  "Font-lock keywords applying the kit's current-chat face to the session's
+`#+TITLE:' line (standard v1.1 section 6, current role — the open
+conversation's name).  APPEND, not override: an Org meta-line carries its
+own face (`org-document-info-keyword') and the kit face RIDES the line —
+appended into the face list, where the later entry is what the display
+merge reads last — the same law the kit's time face rides Org's native
+stamp fontification with.  A name is identity, not syntax, but it is
+still Org too, and the kit never fights Org for the line.")
+
+(defun agent-org-buffer--install-chat-kit-font-lock ()
+  "Add `agent-org-buffer--chat-kit-keywords' to THIS buffer's font-lock.
+Guarded-idempotent by a STRUCTURE search for the face symbol, not a row
+match: the list it appends to is the buffer's `font-lock-keywords', whose
+rows `font-lock-compile-keywords' reshapes beyond what a raw-row `member'
+can see — a row-shaped guard would miss the compiled copy and stack a
+fresh row per window change (this hook re-runs on every one).
+
+Called from `agent-org-buffer--ensure-font-lock', at the moment
+`font-lock-mode' runs set-defaults: both earlier spellings were measured
+dead here — the minor-mode alist entry (`font-lock-add-keywords
+\\=\='agent-org-mode ...') sits in `font-lock-keywords-alist' but
+`font-lock-set-defaults' never merges it into this mode's keywords, and a
+mode-body add lands where the later set-defaults overwrites it.  A
+keyword that compiles on no buffer is decoration; the display moment is
+the one that holds."
+  (unless (member 'agent-org-chat-current-face
+                  (flatten-tree font-lock-keywords))
+    (font-lock-add-keywords nil agent-org-buffer--chat-kit-keywords t)))
 
 ;;;; Session metadata block (Org-native, agent-shell bootstrapping)
 
@@ -2141,6 +2257,18 @@ position rather than to every protected range: measured, the blanket version
 made a turn's own clock edit fall through to its whole-block fallback and lay a
 second drawer over the one it had just shut."
   (let ((inhibit-read-only t))
+    ;; the hygiene half of the freeze (standard v1.1 section 8, U2 half B):
+    ;; wipe the range CLEAN of whatever the wire rode in on before the
+    ;; freeze is laid down.  Every wire path ends here — the part writers,
+    ;; the drawer and bare-item paints, the markdown flush, the verbatim
+    ;; insert — so scrubbing at THE chokepoint is the one guarantee that
+    ;; backend text properties (a `face', a `keymap', a `display') never
+    ;; reach Org's fontification, whichever activity style or future path
+    ;; carried them; the substring strips at the stream and replace
+    ;; entries keep the DOWNSTREAM caches clean, and this is the buffer's
+    ;; own last line of defence.  Faces live in font-lock here, never in
+    ;; the text, so a wiped range loses nothing the package put there.
+    (set-text-properties beg end nil)
     (add-text-properties beg end
                          '(read-only t front-sticky (read-only)))
     (when-let* ((region (agent-org-buffer--queue-region))
@@ -4057,8 +4185,14 @@ where the user saw it open --- moving the completion to the turn's end
 would read as if the call happened after the thought that interrupted it.
 Everything between the two body markers goes; the clock drawers live at or above
 `:body-beg' (it moved past them when they were filed), so a repaint can never
-delete a measurement."
+delete a measurement.
+
+LINES arrive stripped of text properties (standard v1.1 section 8 hygiene,
+U2 half B): they are backend wire text, and a backend property would reach
+Org's fontification or — worse — a `read-only' the `--protect' below was
+never the owner of."
   (with-current-buffer buffer
+    (setq lines (mapcar #'substring-no-properties lines))
     (let ((beg (agent-org-buffer--part-mark key :body-beg))
           (end (agent-org-buffer--part-mark key :body-end)))
       (when (and beg end)
@@ -4086,8 +4220,14 @@ next block can be laid down underneath a streaming run without a heading gluing
 onto the agent's words.  Cost stays O(one line) per update.
 
 A call cannot use this -- its second report carries the whole output, which is a
-replacement, and `agent-org-buffer--replace-part-body' is what deletes."
+replacement, and `agent-org-buffer--replace-part-body' is what deletes.
+
+TEXT arrives stripped of text properties (standard v1.1 section 8 hygiene,
+U2 half B): it is backend wire text, and a backend property would reach
+Org's fontification or — worse — a `read-only' the `--protect' below was
+never the owner of."
   (with-current-buffer buffer
+    (setq text (substring-no-properties text))
     (let ((beg (agent-org-buffer--part-mark key :body-beg))
           (end (agent-org-buffer--part-mark key :body-end)))
       (when (and beg end)
