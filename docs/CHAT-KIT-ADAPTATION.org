@@ -174,3 +174,116 @@ the Senior seat's reviewer hands (author ≠ reviewer; z.ai lane under
 the off-peak law, moonmath fallback with disclosure); G3 = the ERT
 suite + byte-compile 0/0 on Emacs 30.1; G4 = house commit law,
 =pull --rebase=, push, =ls-remote= verify, =:RATING:= stamp.
+
+* U2 design (binding — parity pass across both repos)
+
+Unit-split row "U2" becomes binding with this section: faces (§6) +
+verbs (§7) + hygiene (§8), transcript-viewer half in
+khaalidrafi/agent-team.el (=agent-team-chat.el=), solo-ACP
+session-buffer half in agent-org (=agent-org-buffer.el=).  §10.4
+holds for the ACP half: exchange layout, keyword sets, status panels
+and CONVENTIONS.md stay; ONLY the kit's faces, verbs and hygiene
+enter.
+
+** A. Transcript viewer half (agent-team.el, agent-team-chat.el)
+
+A1. Faces (§6 role table under the §10.1 prefix law): five deffaces
+=agent-team-chat-unread-face= (inherit =org-warning=),
+=agent-team-chat-mention-face= (=bold=),
+=agent-team-chat-preview-face= (=shadow=),
+=agent-team-chat-time-face= (=org-date=),
+=agent-team-chat-current-face= (=highlight=), under a new
+defgroup =agent-team-chat= placed above them (audit/01 ordering
+hygiene).  Faces ride FONT-LOCK keywords in
+=agent-team-chat-archive-mode= — never text properties — so the
+zero-text-property render law (U1 ERT) stands untouched:
+- mention -> =@handle= tokens in body lines;
+- preview -> message body lines (the scannable-preview role);
+- current -> the level-1 =* Team chat= title (the open conversation's
+  name role);
+- time -> delivered by Org's native timestamp fontification (the kit
+  face inherits =org-date= — same law, no keyword fights Org);
+- unread -> defined for kit completeness; an append-only archive has
+  no read state, so no anchor applies it (documented deviation, same
+  law as the numeric-pair deviation).  The U4 live region applies it.
+
+A2. Verbs (§7 view column):
+- =j= -> =agent-team-chat-jump-latest=: point to the newest (last)
+  message heading — the archive degradation of jump-to-first-unread
+  (no read state; every chat client resumes at the tail).
+- =RET= -> native Org link opening.  Two new link types via
+  =org-link-set-parameters= (top-level, idempotent):
+  =chat-member:= follow -> =agent-team-chat-visit-member= locates the
+  =* <Role> — <id>= heading in MEMBERS.org and pops to it (the
+  member's registry entry — agent-team.el's own member path today);
+  unknown id = user-error naming the handle, never silent.
+  =chat-msg:= follow -> =agent-team-chat-goto-msg= resolves the
+  derived =:MSG-ID:= in the render buffer and jumps to its heading;
+  from any other buffer it opens the archive first, then jumps; not
+  found = user-error naming the id.  Transport-aware dispatch waits
+  for the U3 registry (:TRANSPORT:), documented.
+- =C-c C-c= send-draft: N-A in the archive (v1.3: the reader never
+  writes the file; drafts live on the U4 live surface) — documented
+  deviation, not an omission.
+- =g= / =q= exist since U1.
+
+A3. Touch adaptation (§7 parity): defcustom
+=agent-team-chat-adapt-for-touch= (default t), predicate
+=agent-team-chat--touch-device-p= (the kit's three signals:
+system-type android, TERMUX_VERSION env, touch-screen terminal
+parameter), and =agent-team-chat-touch-mode= minor mode bound when
+the archive buffer is built on a touch device: single tap = RET on
+the current line, =scroll-conservatively= 101, =truncate-lines= t —
+the emacs-purple kit pattern verbatim.
+
+A4. Hygiene (§8): U1 landed undo-disable, read-only,
+substring-no-properties, bury; U2 adds the ERT assertions
+(buffer-undo-list eq t; buffer-read-only t) so the law is pinned.
+
+A5. ERT additions (offline, deterministic): five faces defined with
+the §6 inheritance; font-lock in the render buffer puts
+=agent-team-chat-mention-face= on an @handle body token,
+=agent-team-chat-preview-face= on a body line,
+=agent-team-chat-current-face= on the =* Team chat= title (assert
+AFTER =font-lock-ensure= on the BUFFER — the zero-property assertion
+stays on the RENDER STRING; the two never conflate); =j= lands on the
+last message heading; chat-member follow resolves the fixture id and
+user-errors on an unknown one; chat-msg follow resolves a derived id
+inside the render buffer; touch predicate responds to the terminal
+touch-screen parameter (set-terminal-parameter in the test, restored).
+
+** B. Solo-ACP session-buffer half (agent-org, agent-org-buffer.el)
+
+B1. Faces: five deffaces =agent-org-chat-unread-face=, …-mention-,
+…-preview-, …-time-, …-current-face (same §6 inheritance) under
+defgroup =agent-org-chat=.  Solo sessions exercise current (the open
+session's name) and time (Org-native stamps); unread/mention/preview
+are group/list roles (§5 numeric pairs) — defined, documented, not
+applied (same deviation law as A1).
+
+B2. Application: font-lock keyword in =agent-org-mode= putting
+=agent-org-chat-current-face= on the session's =#+TITLE:= line (the
+open chat's name role).
+
+B3. Verbs: =q= -> bury-buffer (§7 quit) added inside
+=agent-org-buffer--build-mode-map= (the fill-not-replace law keeps
+hot reloads live).  =C-c C-c= already is the §7 send-draft verb; the
+rest of the §7 table is list/view law (N-A solo).
+
+B4. Hygiene (§8): the two backend entry points
+=agent-org-buffer--append-part-stream= and the part-body replace path
+wrap incoming wire TEXT in =substring-no-properties= — backend text
+properties never reach Org's fontification.
+
+B5. ERT additions in tests/test-agent-org.el: faces exist with §6
+inheritance; =q= is bound to bury in =agent-org-mode-map=; the
+#+TITLE keyword applies the current face; a property-laden stream
+chunk lands property-free.
+
+** Gates
+
+Same four-gate law as U1: G1 rubric (§9 points 1–11 + §10 rows),
+G2 elisp quality author≠reviewer (Senior seat's reviewer hands; the
+U2 design section above is part of the reviewed packet), G3 ERT +
+byte-compile 0/0 on Emacs 30.1 offline in BOTH repos, G4 house commit
+law per repo (two commits, one unit).
