@@ -5,11 +5,13 @@
         offline + byte-compile 0 warnings / G4 house commit law) — no
         exceptions.  Owner orders: 2026-11-04 06:12 #hq ("same Org UI
         kit/design systems/conventions for the chat buffers of
-        agent-team.el and agent-org") and 2026-11-04 04:07 #hq ("use
+        agent-team.el and agent-org"), 2026-11-04 04:07 #hq ("use
         agent-org's standards as inspiration; complete fast — Discord +
-        Telegram from Emacs Android").  Ownership correction v1.2
-        (Owner 2026-11-04 #hq): "agent-org shouldn't render team
-        transcript.  agent-team.el should."
+        Telegram from Emacs Android") and 2026-11-04 10:51 Asia/Dhaka
+        #hq ("agent-org shouldn't render team transcript.
+        agent-team.el should." — ownership correction v1.2: U1
+        re-homed to agent-team.el; agent-org never renders the team
+        transcript; binding scope in * Ownership correction below).
 
 * Ownership correction (v1.2 — Owner 2026-11-04 #hq)
 
