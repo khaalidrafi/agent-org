@@ -3939,7 +3939,12 @@ binds it.  Only a function is a stolen command."
           (should-not in-org)
           ;; and a non-guard key is one of OURS, so it must hang under the
           ;; one free prefix -- the scheme, not just the absence of clashes
-          (unless (eq cmd #'quit-window)
+          ;; (the quit verbs are the second exception: the monitor's
+          ;; `quit-window' has always sat outside the prefix, and the chat
+          ;; kit's section 7 `q' joins it by the same rule -- same verb,
+          ;; same key, every package of the kit; measured above: Org binds
+          ;; no plain `q', so nothing Org's is shadowed by it)
+          (unless (memq cmd (list #'quit-window #'agent-org-buffer-quit))
             (should (equal prefix (seq-take path 2)))))))
     ;; the premise of the whole scheme, asserted rather than trusted
     (should-not (commandp (lookup-key org-mode-map (kbd "C-c a")))))
@@ -12793,3 +12798,116 @@ it upstream keeps this green — an anchored pattern matches no identifier."
           (push f bad))))
     (when bad (message "secret-guard would redact: %S" (nreverse bad)))
     (should (null bad))))
+
+;;;; Chat UI kit (standard v1.1 sections 6/7/8 — U2 half B)
+
+(ert-deftest test-agent-org-chat-kit-faces-inherit-section-6 ()
+  "The five kit faces exist and inherit exactly the section 6 roles.
+The agent-org half of the kit defines all five for parity with the
+agent-team.el half; a solo session applies current (font-lock, see the
+title test) and time (Org-native stamps) and documents the other three
+as defined-not-applied — same deviation law as the transcript archive."
+  (should (eq (face-attribute 'agent-org-chat-unread-face :inherit)
+              'org-warning))
+  (should (eq (face-attribute 'agent-org-chat-mention-face :inherit)
+              'bold))
+  (should (eq (face-attribute 'agent-org-chat-preview-face :inherit)
+              'shadow))
+  (should (eq (face-attribute 'agent-org-chat-time-face :inherit)
+              'org-date))
+  (should (eq (face-attribute 'agent-org-chat-current-face :inherit)
+              'highlight)))
+
+(ert-deftest test-agent-org-q-verb-bound-and-typing-safe ()
+  "The kit's `q' is on the mode map; at the prompt it TYPES, over the
+frozen transcript it buries (standard v1.1 section 7 quit, U2 half B).
+The keypress goes through the binding the map actually answers —
+`lookup-key' + `call-interactively' with a real `last-command-event' —
+NOT through `ao--type' (which calls `self-insert-command' directly and
+would never notice a minor-mode map stealing the letter) and NOT through
+`execute-kbd-macro' (a keyboard macro executes against the SELECTED
+window's buffer — batch Emacs has a frame showing *scratch*, measured
+here — so the event lands in *scratch* no matter which buffer the test
+holds current).  Both detours are exactly the ones that would miss what
+a user's q keypress does."
+  (let ((buf (agent-org-buffer-create "q-verb")))
+    (with-current-buffer buf
+      ;; bound, and to the kit command, not something quieter
+      (should (eq (lookup-key agent-org-mode-map "q")
+                  #'agent-org-buffer-quit))
+      (agent-org-buffer-insert-prompt buf)
+      ;; point sits on the typeable draft (insert-prompt leaves it there,
+      ;; the same position the send flow types from): a q keypress must
+      ;; SPELL q, and must not bury the buffer out from under the draft
+      (let ((last-command-event ?q))
+        (call-interactively #'agent-org-buffer-quit))
+      (should (string-match-p "\\* PROMPT\nq" (buffer-string)))
+      (should (agent-org-buffer--open-prompt-p))
+      ;; over the frozen transcript: the same keypress buries
+      (goto-char (point-min))
+      (let ((last-command-event ?q))
+        (call-interactively #'agent-org-buffer-quit))
+      (should (eq buf (car (last (buffer-list))))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-title-line-wears-current-face ()
+  "The session's `#+TITLE:' line carries the kit's current face once the
+buffer's font-lock runs (standard v1.1 section 6, current role — U2 half
+B), and the install is idempotent: however many window changes re-run the
+ensure hook, the keyword list grows no further copy."
+  (let ((buf (agent-org-buffer-create "titled")))
+    (with-current-buffer buf
+      ;; the product's own fontify path (the display hook).  Batch refuses
+      ;; `font-lock-mode' itself for a buffer no window shows (the kit's
+      ;; own ensure docstring measured that), but the install, flush and
+      ;; ensure below still compile the kit keyword in — the face ON the
+      ;; line is the law; the mode toggle is not
+      (agent-org-buffer--ensure-font-lock)
+      (font-lock-ensure)
+      (let* ((pos (save-excursion
+                    (goto-char (point-min))
+                    (re-search-forward "^#\\+TITLE:" nil t)
+                    (match-beginning 0)))
+             ;; the property may be the bare kit face or a face LIST the
+             ;; append law built alongside Org's own meta-line face
+             ;; (`org-document-info-keyword') — both are the kit face on
+             ;; the line; a bare ORG face without ours is the miss
+             (faces (get-text-property pos 'face)))
+        (should pos)
+        (should (if (listp faces)
+                    (memq 'agent-org-chat-current-face faces)
+                  (eq faces 'agent-org-chat-current-face))))
+      ;; the guard: a re-run of the hook adds no further copy — counted by
+      ;; the keyword-list LENGTH, the shape the installer itself appends to
+      (let ((before (length font-lock-keywords)))
+        (agent-org-buffer--ensure-font-lock)
+        (should (= before (length font-lock-keywords)))))
+    (kill-buffer buf)))
+
+(ert-deftest test-agent-org-wire-text-lands-property-free ()
+  "Wire text lands WITHOUT backend properties (standard v1.1 section 8
+hygiene, U2 half B): a propertized stream chunk through the public
+thought path, and a propertized repaint through the part-body replace
+path, both arrive in the Org buffer with no `face' attached — backend
+properties must never reach Org's fontification."
+  (let ((buf (agent-org-buffer-create "hygiene")))
+    (with-current-buffer buf
+      (agent-org-buffer-insert-prompt buf)
+      ;; the stream entry: the real wire path, append-thought ->
+      ;; --open-part -> --append-part-stream
+      (agent-org-buffer-append-thought
+       buf (propertize "streamed thought\n" 'face 'bold))
+      (should (= 1 (ao--count-substrings "streamed thought")))
+      (should-not (text-property-any
+                   (point-min) (point-max) 'face 'bold))
+      ;; the replace entry: open a tool part, then repaint its body with
+      ;; propertized output — the tool path's COMPLETE report shape
+      (agent-org-buffer--open-part buf "tool:hygiene" "ONGOING" "shell" nil)
+      (agent-org-buffer--replace-part-body
+       buf "tool:hygiene"
+       (list (propertize "printed output" 'face 'bold)))
+      (should (= 1 (ao--count-substrings "printed output")))
+      (should-not (text-property-any
+                   (point-min) (point-max) 'face 'bold)))
+    (kill-buffer buf)))
+
