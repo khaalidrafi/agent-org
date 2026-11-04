@@ -11,7 +11,13 @@
         #hq ("agent-org shouldn't render team transcript.
         agent-team.el should." — ownership correction v1.2: U1
         re-homed to agent-team.el; agent-org never renders the team
-        transcript; binding scope in * Ownership correction below).
+        transcript; binding scope in * Ownership correction below) and
+        2026-11-04 20:06 Asia/Dhaka #hq ("Why do you even need a
+        CHAT.org renderer?  It's supposed to be auto-saved from team
+        chat buffer to CHAT.org." — data-flow correction v1.3: the
+        live team chat buffer is the only interactive surface,
+        CHAT.org is its auto-saved log, U1 is the reopen/resume
+        reader only; binding scope in * Data-flow correction below).
 
 * Ownership correction (v1.2 — Owner 2026-11-04 #hq)
 
@@ -34,6 +40,31 @@ Binding; applied throughout this file:
   khaalidrafi/agent-team.el on Emacs 30.1 (ERT offline, byte-compile
   0 warnings), G4 house commit law per repo.
 
+* Data-flow correction (v1.3 — Owner 2026-11-04 #hq)
+
+"Why do you even need a CHAT.org renderer?  It's supposed to be
+auto-saved from team chat buffer to CHAT.org."
+Binding; the data flow is now stated as law:
+
+- The LIVE team chat buffer (U4 region, §10.4) is the only
+  interactive chat surface.  Its auto-save APPENDS to CHAT.org —
+  the file is the log, never a second UI, and U1 never runs while
+  a live session exists.
+- U1 is the reopen/resume READER of that log, needed only for the
+  moments the live buffer does not exist: after a restart or crash
+  (the buffer dies with Emacs, the file survives), to see entries
+  other seats appended from CI or other machines while this Emacs
+  was closed, and for history inspection.  Without it the
+  auto-saved archive is write-only.
+- Command renamed =agent-team-chat-render= → =agent-team-chat-open=:
+  when a live team chat session EXISTS it switches to that buffer
+  (never forks state); only when none exists does it build
+  =*agent-team Chat*= from the file.  The file stays the single
+  source of truth (§11.3 unchanged).
+- Everything else is untouched by v1.3: kit law (MSG→§4 mapping,
+  derived =:MSG-ID:=, =chat-member:= / =chat-msg:= links), faces,
+  verbs, hygiene and the ERT fixture plan stand as written.
+
 * Sources of law
 
 - ORG-CHAT-STANDARD.org v1.1 (khaalidrafi/emacs-purple @ d3c0b2e):
@@ -49,7 +80,7 @@ Binding; applied throughout this file:
 
 | Unit | Scope | Repo | Status |
 |------+-------+------+--------|
-| U1 | CHAT.org transcript renderer (new file =agent-team-chat.el=) | agent-team.el | design = this file (v1.2); implementation next tick |
+| U1 | CHAT.org reopen/resume reader (new file =agent-team-chat.el=; auto-save write path unchanged, v1.3) | agent-team.el | design = this file (v1.3); implementation next tick |
 | U2 | parity pass: faces (§6) + verbs (§7) + hygiene (§8); transcript viewer half → agent-team.el, ACP session-buffer half → agent-org | agent-team.el + agent-org | queued |
 | U3 | §11 cloud-member bridge: MEMBERS registry :TRANSPORT:/:ENDPOINT:/:AUTH:/:PERSONA:, queued/err dispatch, transcript-tail context, loop law | agent-team.el | queued (own design first) |
 | U4 | team buffer chat region per §10.4 (status panels stay) | agent-team.el | queued |
@@ -58,15 +89,20 @@ Binding; applied throughout this file:
 
 ** Buffer and naming (§2)
 
-- Command =agent-team-chat-render= opens =*agent-team Chat*= (§2
-  naming under the =agent-team-= prefix per §10.1; v1.2 correction).
+- Command =agent-team-chat-open= opens =*agent-team Chat*= (§2
+  naming under the =agent-team-= prefix per §10.1; v1.2 correction,
+  renamed from =agent-team-chat-render= by v1.3 — open resolves to
+  the live buffer when one exists, per * Data-flow correction).
 - One level-1 heading =* Team chat= with drawer
   =:CHAT-ID: agent-team/CHAT.org= / =:KIND: group=; =#+STARTUP: overview=
   at buffer top (§4 sample).
-- The buffer RENDERS the file; the file is the single source of truth
-  (§11.3 — no parallel chat state may exist).  Re-render = kill and
-  rebuild the buffer (same decision as emacs-purple 0882373: fresh
-  buffer = fresh Org element cache and fold registry).
+- When it builds from the file (no live session), the buffer RENDERS
+  the file and the file is the single source of truth (§11.3 — no
+  parallel chat state may exist; v1.3: during a live session this
+  buffer must not exist at all — the U4 region is the surface).
+  Rebuild = kill and rebuild the buffer (same decision as
+  emacs-purple 0882373: fresh buffer = fresh Org element cache and
+  fold registry).
 
 ** MSG → §4 mapping (§10.2; CHAT.org format law unchanged)
 
