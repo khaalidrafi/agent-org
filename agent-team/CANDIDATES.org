@@ -713,3 +713,55 @@
   Verdict: NOT a candidate, NOT a catalog, NOT "all GLM models" — one harness
   brain behind a lenient router. Team model access comes from wired lanes only
   (gateway config rows + context-pack keys).
+
+* HY4 ADD + new free models — 2026-11-05 (Owner order 2026-11-04 15:46 #hq)
+
+  Owner: "Add hy4 from CB limited time free and all the new free models
+  on opencode, openrouter, cline CLI & API to CANDIDATES."  Expiry law
+  binds every row (undated free = AMBER, re-probe before relying);
+  privacy law: training-host rows never see private code.
+
+** Hy4 Preview via CodeBuddy (CB) — limited-time free
+  - Tencent Hunyuan Hy4 Preview: open-weights MoE, 770B total / 49B
+    active, 1M ctx (tencent.com + huggingface.co/tencent/Hy4-preview,
+    2026-08-28).  Vendor-run blind eval on 203 engineering tasks: 2.99
+    avg vs GLM 5.3 2.92 / Kimi K3 2.94 (vendor-claimed, read as such).
+  - Free route: CodeBuddy/WorkBuddy promo — launch window was two weeks
+    from 2026-08-28; Owner re-sighted it limited-time free on CB
+    2026-11-04 #hq.  CODEBUDDY_AUTH_TOKEN in vault (WO-25).  Re-probe
+    quota/expiry before any real unit; promo lane only, never critical
+    path.  Vendor-known limits: over-reasoning, over-verifies.
+
+** OpenCode — 11 limited-time free (docs fetched live 2026-11-05)
+  glm-5.3-flash-free (zero-retention; Senior fallback #1 confirmed
+  live) · deepseek-v4.1-flash-free (zero-retention) · beam-free (30-day
+  safety retention, no training; BD not region-blocked) · jev-1.13-free
+  · flint-40b-free · mimo-v2.6-flash-free · nemotron-3-ultra-free ·
+  nemotron-3.5-lightning-free · nemotron-3.5-super-vl-free (QA brain
+  free directly on opencode) · big-pickle (stealth, known) ·
+  pulse-alpha-free (stealth; stays benched from seats per Owner 11-03
+  order).  NEW this scan: jev-1.13, beam, flint-40b, mimo-v2.6-flash,
+  the nemotron trio.  No published expiries;
+  OPENCODE_DISABLE_FREE_MODELS=1 hides them.  "Feedback to improve the
+  model" rows (flint/mimo/nemotron/pulse) are training-adjacent ->
+  public/boilerplate only.
+
+** OpenRouter — new :free rows (collections page, Nov 2026)
+  nemotron-3-ultra:free (550B/55B, 1M ctx) · nemotron-3.5-super-vl:free
+  (120B/12B, multimodal) · nemotron-3.5-lightning:free (30B/3B) — first
+  time as OpenRouter lanes.  NEW brains: dots3-note-preview:free (Dots
+  Studio 280B/16B, 512K) · inkling:free (Thinking Machines 975B/41B,
+  1.05M, image+audio in) · north-mini-code:free (Cohere 30B/3B agentic
+  coding) · openrouter/free auto-router.  ~15-19 :free rows, rotates
+  fast; caps per the 2026-10-21 census (20 RPM; 50/day under $10
+  topup, 1,000/day at >= $10).  Host training policies vary —
+  zero-retention rows only for private code.
+
+** Cline — free is IDE + CLI only, NOT API (docs fetched live 2026-11-05)
+  Rotating FREE-tagged promos under the Cline (usage-billing) provider
+  + ClinePass during promos; quota-limited, then ClinePass $9.99/mo or
+  pay-as-you-go.  Verified correction to the order's premise: free
+  models are NOT available through the Cline API — IDE and CLI only.
+  Free usage may train -> privacy law: public/boilerplate only.  The
+  11-02 rotation stands (solar-mini-4, nemotron-3.5-super-vl);
+  re-probe /models for the live roster.
