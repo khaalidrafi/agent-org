@@ -1,0 +1,112 @@
+#+TITLE: docs/CHAT-KIT-ADAPTATION.org — standard v1.1 §10 adoption design
+#+LAW: design-before-code artifact for board item 6 (emacs-purple CANDIDATES.org
+        standing queue, d3c0b2e).  Implementation units below follow the
+        four-gate law (G1 rubric / G2 quality author≠reviewer / G3 ERT
+        offline + byte-compile 0 warnings / G4 house commit law) — no
+        exceptions.  Owner orders: 2026-11-04 06:12 #hq ("same Org UI
+        kit/design systems/conventions for the chat buffers of
+        agent-team.el and agent-org") and 2026-11-04 04:07 #hq ("use
+        agent-org's standards as inspiration; complete fast — Discord +
+        Telegram from Emacs Android").
+
+* Sources of law
+
+- ORG-CHAT-STANDARD.org v1.1 (khaalidrafi/emacs-purple @ d3c0b2e):
+  §2 naming, §4 view grammar, §5 tag/property dictionary, §6 faces,
+  §7 verbs, §8 hygiene, §9 rubric, §10 agent chat buffers, §11 team
+  chat group.
+- This repo's CONVENTIONS.md stays binding everywhere §10 does not
+  override it (exchange layout for solo ACP sessions is EXPLICITLY
+  kept per §10.4 — a solo session is not a group; faces, tags, verbs
+  and hygiene still become the kit's).
+
+* Unit split (one unit per tick, four gates each)
+
+| Unit | Scope | Repo | Status |
+|------+-------+------+--------|
+| U1 | CHAT.org transcript renderer (new file =agent-org-chat.el=) | agent-org | design = this file; implementation next tick |
+| U2 | parity pass: faces (§6) + verbs (§7) + hygiene (§8) on ACP session buffer + transcript viewer | agent-org | queued |
+| U3 | §11 cloud-member bridge: MEMBERS registry :TRANSPORT:/:ENDPOINT:/:AUTH:/:PERSONA:, queued/err dispatch, transcript-tail context, loop law | agent-team.el | queued (own design first) |
+| U4 | team buffer chat region per §10.4 (status panels stay) | agent-team.el | queued |
+
+* U1 design (binding for the implementation unit)
+
+** Buffer and naming (§2)
+
+- Command =agent-org-chat-render= opens =*agent-org Chat*=.
+- One level-1 heading =* Team chat= with drawer
+  =:CHAT-ID: agent-team/CHAT.org= / =:KIND: group=; =#+STARTUP: overview=
+  at buffer top (§4 sample).
+- The buffer RENDERS the file; the file is the single source of truth
+  (§11.3 — no parallel chat state may exist).  Re-render = kill and
+  rebuild the buffer (same decision as emacs-purple 0882373: fresh
+  buffer = fresh Org element cache and fold registry).
+
+** MSG → §4 mapping (§10.2; CHAT.org format law unchanged)
+
+| CHAT.org source                            | rendered                                  |
+|--------------------------------------------+-------------------------------------------|
+| =* MSG <from> -> @<to> :<kind>:=              | =** [<WHEN>] <from> -> [[chat-member:…][@<to>]] :<kind>:= |
+| =:FROM:=                                   | =:AUTHOR:= property                       |
+| =:TO:=                                     | =:TO:= property + =@target= in heading text |
+| =:KIND:=                                   | tag on the message heading                |
+| =:WHEN:= =[YYYY-MM-DD Day HH:MM UTC]=      | inactive stamp =[YYYY-MM-DD Day HH:MM]=; zone kept in =:WHEN-ZONE:= property |
+| =:CHANNEL:=                                | =:CHANNEL:= property (§5 addition)        |
+| indented body text                         | message body paragraphs (blank-line split); URLs → =[[url]]=; =@mentions= → =chat-member:= links |
+
+- Derived =:MSG-ID:= law: CHAT.org is append-only and union-merged, so
+  ids MUST be derivable without mutating the file.  MSG-ID =
+  =msg-<first 8 hex of sha1(FROM "\0" WHEN "\0" first 80 body chars)>=,
+  written only into the RENDER buffer's =:PROPERTIES: drawers; legacy
+  entries missing =:WHEN:= degrade to a positional id (documented,
+  links to them are best-effort).
+
+** Links (§10.3)
+
+- =[[chat-member:PROVIDER/MODEL@PLATFORM][@name]]= — FROM/TO/@mention
+  handles map through MEMBERS.org where known; unknown handles degrade
+  to plain =@name= text (never break the render).
+- =[[chat-msg:MSG-ID][↩ first words]]= — resolution via the derived-id
+  law; explicit reply-line linkification lands in U2 (U1 renders the
+  prose form unchanged).
+- =:tool:= / =:thinking:= drawers in bodies pass through unchanged and
+  keep Org's native folding (§10.3).
+
+** Faces / tags / verbs / hygiene (U2 direction, recorded here)
+
+- Faces: =agent-org-*-face= mirrors the §6 role table (unread,
+  mention, preview, time, current) — five deffaces, defgroup above
+  them (audit/01 ordering hygiene).
+- Tags: =:KIND:= passes through (=:dispatch:=, =:escalation:=, …);
+  =:queued:= / =:err:= arrive with U3; numeric unread pairs do NOT
+  apply to the transcript (append-only archive) — documented
+  deviation from §5, not a violation.
+- Verbs: =g= re-render from file, =q= bury (never lock the file —
+  other seats append from CI), =TAB= native cycling, narrowing native
+  (§7); =RET= on a =chat-member:= link opens/starts that member's
+  session through the agent-org-loader path — U2.
+- Hygiene (§8): =buffer-disable-undo= on the render buffer, read-only
+  buffer, all inserted file strings pass through
+  =substring-no-properties=, =q= buries, killing the buffer never
+  touches the file.
+
+** ERT fixture plan (§9.9 — offline, deterministic)
+
+- =tests/fixtures/chat-fixture.org=: three synthetic messages
+  (dispatch, escalation with @mention, reply with a URL).
+- Assertions: mapping regex per row of the table above; KIND tags;
+  AUTHOR/TO/CHANNEL/MSG-ID drawer fields; inactive-stamp grammar
+  (agenda never fires); URL linkification; zero text-property
+  intervals in the render; re-render idempotence (same file → same
+  buffer text); =q= bury leaves the file untouched.
+- Run law per AGENTS.md: =emacs -Q --batch=, byte-compile with
+  =byte-compile-error-on-warn t=, dependency-first compile order,
+  =load-prefer-newer= bound in the suite, mocks stay in =tests/=.
+
+** Gates
+
+G1 rubric = §9 checklist points 1–11 (point 11 rows for §10); G2 by
+the Senior seat's reviewer hands (author ≠ reviewer; z.ai lane under
+the off-peak law, moonmath fallback with disclosure); G3 = the ERT
+suite + byte-compile 0/0 on Emacs 30.1; G4 = house commit law,
+=pull --rebase=, push, =ls-remote= verify, =:RATING:= stamp.
