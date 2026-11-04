@@ -7,7 +7,30 @@
         kit/design systems/conventions for the chat buffers of
         agent-team.el and agent-org") and 2026-11-04 04:07 #hq ("use
         agent-org's standards as inspiration; complete fast — Discord +
-        Telegram from Emacs Android").
+        Telegram from Emacs Android").  Ownership correction v1.2
+        (Owner 2026-11-04 #hq): "agent-org shouldn't render team
+        transcript.  agent-team.el should."
+
+* Ownership correction (v1.2 — Owner 2026-11-04 #hq)
+
+"agent-org shouldn't render team transcript.  agent-team.el should."
+Binding; applied throughout this file:
+
+- The CHAT.org transcript renderer is agent-team.el code: U1 lands in
+  khaalidrafi/agent-team.el as =agent-team-chat.el= (command
+  =agent-team-chat-render=, buffer =*agent-team Chat*=, faces
+  =agent-team-chat-*-face=) — exactly the §10.1 package-prefix law
+  (=agent-org-*, agent-team-*), which the v1.1 draft had wrongly kept
+  under the agent-org prefix.
+- agent-org ships NO transcript renderer.  Its §10 duty is kit parity
+  for its own chat buffers (solo ACP sessions, §10.4): kit faces,
+  tags, verbs and hygiene — the agent-org half of U2.
+- The MSG→§4 mapping, the derived =:MSG-ID:= law and the
+  =chat-member:= / =chat-msg:= link laws are kit law, not agent-org
+  code; agent-team.el implements them exactly as written below.
+- Gates are unchanged and run where the code lives: G2/G3 against
+  khaalidrafi/agent-team.el on Emacs 30.1 (ERT offline, byte-compile
+  0 warnings), G4 house commit law per repo.
 
 * Sources of law
 
@@ -24,16 +47,17 @@
 
 | Unit | Scope | Repo | Status |
 |------+-------+------+--------|
-| U1 | CHAT.org transcript renderer (new file =agent-org-chat.el=) | agent-org | design = this file; implementation next tick |
-| U2 | parity pass: faces (§6) + verbs (§7) + hygiene (§8) on ACP session buffer + transcript viewer | agent-org | queued |
+| U1 | CHAT.org transcript renderer (new file =agent-team-chat.el=) | agent-team.el | design = this file (v1.2); implementation next tick |
+| U2 | parity pass: faces (§6) + verbs (§7) + hygiene (§8); transcript viewer half → agent-team.el, ACP session-buffer half → agent-org | agent-team.el + agent-org | queued |
 | U3 | §11 cloud-member bridge: MEMBERS registry :TRANSPORT:/:ENDPOINT:/:AUTH:/:PERSONA:, queued/err dispatch, transcript-tail context, loop law | agent-team.el | queued (own design first) |
 | U4 | team buffer chat region per §10.4 (status panels stay) | agent-team.el | queued |
 
-* U1 design (binding for the implementation unit)
+* U1 design (binding — implemented in khaalidrafi/agent-team.el)
 
 ** Buffer and naming (§2)
 
-- Command =agent-org-chat-render= opens =*agent-org Chat*=.
+- Command =agent-team-chat-render= opens =*agent-team Chat*= (§2
+  naming under the =agent-team-= prefix per §10.1; v1.2 correction).
 - One level-1 heading =* Team chat= with drawer
   =:CHAT-ID: agent-team/CHAT.org= / =:KIND: group=; =#+STARTUP: overview=
   at buffer top (§4 sample).
@@ -74,7 +98,7 @@
 
 ** Faces / tags / verbs / hygiene (U2 direction, recorded here)
 
-- Faces: =agent-org-*-face= mirrors the §6 role table (unread,
+- Faces: =agent-team-chat-*-face= mirrors the §6 role table (unread,
   mention, preview, time, current) — five deffaces, defgroup above
   them (audit/01 ordering hygiene).
 - Tags: =:KIND:= passes through (=:dispatch:=, =:escalation:=, …);
@@ -84,7 +108,8 @@
 - Verbs: =g= re-render from file, =q= bury (never lock the file —
   other seats append from CI), =TAB= native cycling, narrowing native
   (§7); =RET= on a =chat-member:= link opens/starts that member's
-  session through the agent-org-loader path — U2.
+  session/dispatch through agent-team.el's own member path — U2, with
+  the U3 MEMBERS registry as the transport source of truth.
 - Hygiene (§8): =buffer-disable-undo= on the render buffer, read-only
   buffer, all inserted file strings pass through
   =substring-no-properties=, =q= buries, killing the buffer never
@@ -92,8 +117,9 @@
 
 ** ERT fixture plan (§9.9 — offline, deterministic)
 
-- =tests/fixtures/chat-fixture.org=: three synthetic messages
-  (dispatch, escalation with @mention, reply with a URL).
+- =tests/fixtures/chat-fixture.org= in khaalidrafi/agent-team.el:
+  three synthetic messages (dispatch, escalation with @mention,
+  reply with a URL).
 - Assertions: mapping regex per row of the table above; KIND tags;
   AUTHOR/TO/CHANNEL/MSG-ID drawer fields; inactive-stamp grammar
   (agenda never fires); URL linkification; zero text-property
