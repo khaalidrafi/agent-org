@@ -16,9 +16,17 @@ result the protocol allows.
             replay chunk + the same session id (resume happy path).
 --load-fail advertise loadSession but ERROR on `session/load' —
             exercises the batch resume's degrade-to-fresh-session path.
+
+R1 exercise surface (FAKE_ACP_STATE=<file>): a PERSISTENT per-cwd
+session store in that file, so `session/new' registers and
+`session/list' answers across PROCESS restarts — what the interactive
+`agent-org-start' `latest' strategy and `agent-org-resume-session'
+drive against a real agent's session store.
 """
 import json
+import os
 import sys
+import time
 
 
 def send(obj):
@@ -32,6 +40,32 @@ if "--reply" in sys.argv:
 
 CAN_LOAD = "--load" in sys.argv or "--load-fail" in sys.argv
 LOAD_FAILS = "--load-fail" in sys.argv
+STATE = os.environ.get("FAKE_ACP_STATE")
+
+
+def store_load():
+    if not STATE or not os.path.exists(STATE):
+        return []
+    out = []
+    with open(STATE) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    pass
+    return out
+
+
+def store_add(session_id, cwd):
+    if not STATE:
+        return
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    with open(STATE, "a") as f:
+        f.write(json.dumps({"sessionId": session_id, "cwd": cwd,
+                            "title": "fake session",
+                            "updatedAt": int(time.time() * 1000)}) + "\n")
 
 
 def main():
@@ -45,13 +79,25 @@ def main():
             continue
         method = msg.get("method")
         msg_id = msg.get("id")
+        params = msg.get("params") or {}
         if method == "initialize":
             send({"jsonrpc": "2.0", "id": msg_id,
                   "result": {"protocolVersion": 1,
                              "agentCapabilities": {"loadSession": CAN_LOAD},
                              "authMethods": []}})
+        elif method == "session/new":
+            sid = "sid-fake-e2e-%d" % int(time.time() * 1000)
+            store_add(sid, params.get("cwd", os.getcwd()))
+            send({"jsonrpc": "2.0", "id": msg_id,
+                  "result": {"sessionId": sid}})
+        elif method == "session/list":
+            cwd = params.get("cwd")
+            rows = store_load()
+            if cwd:
+                rows = [s for s in rows if s.get("cwd") == cwd]
+            send({"jsonrpc": "2.0", "id": msg_id,
+                  "result": {"sessions": rows}})
         elif method == "session/load":
-            params = msg.get("params") or {}
             sid = params.get("sessionId", "sid-fake-e2e")
             if LOAD_FAILS:
                 send({"jsonrpc": "2.0", "id": msg_id,
@@ -66,15 +112,12 @@ def main():
                                                         "text": "replayed"}}}})
                 send({"jsonrpc": "2.0", "id": msg_id,
                       "result": {"sessionId": sid}})
-        elif method == "session/new":
-            send({"jsonrpc": "2.0", "id": msg_id,
-                  "result": {"sessionId": "sid-fake-e2e"}})
         elif method == "session/prompt":
-            params = msg.get("params") or {}
             sid = params.get("sessionId", "sid-fake-e2e")
             send({"jsonrpc": "2.0", "method": "session/update",
                   "params": {"sessionId": sid,
-                             "update": {"sessionUpdate": "agent_message_chunk",
+                             "update": {"sessionUpdate":
+                                        "agent_message_chunk",
                                         "content": {"type": "text",
                                                     "text": REPLY}}}})
             send({"jsonrpc": "2.0", "id": msg_id,
