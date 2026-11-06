@@ -1,0 +1,51 @@
+#+TITLE: R1 live exercise — the Emacs chat, end to end
+#+DATE: [2026-11-06 Fri 20:08Z]
+#+LAW: DISPATCH #10 (Owner 2026-11-05 19:07Z #hq).  The
+#+LAW: INTERACTIVE stack — agent-org-slave-agent-start-agent —
+#+LAW: driven against tests/fake-acp-agent.py over the REAL wire
+#+LAW: (acp.el pinned vv0.14.3); slave-acp is a PATH shim, the
+#+LAW: product source unchanged.  Real slave-acp is not installed
+#+LAW: in this sandbox; the handshake shape (initialize reports
+#+LAW: loadSession + session/list + session/load) is the one
+#+LAW: FORK.org:221 pins.  Re-run: tests/e2e-agent-org-r1.sh.
+
+* Phase A — fresh start (session/list empty -> session/new)
+#+begin_example org
+:PROPERTIES:
+:Provider: slave-agent
+:ID: sid-fake-e2e-1793995708326
+:Mode: unknown
+:Model: unknown
+:Context: unknown
+:Cost: $0.00
+:END:
+
+#+TITLE: slave-agent
+
+* RESPONDED hello slave-agent, answer with the token
+:PROPERTIES:
+:RESPONSE: 0
+:END:
+:LOGBOOK:
+CLOCK: [2026-11-06 Fri 20:08:31]--[2026-11-06 Fri 20:08:31] =>  0:00
+:END:
+
+** WROTE Agent
+:PROPERTIES:
+:SECONDS: 0
+:END:
+:LOGBOOK:
+CLOCK: [2026-11-06 Fri 20:08:31]--[2026-11-06 Fri 20:08:31] =>  0:00
+:END:
+R1-LIVE-OK: the slave-agent chat heard this turn.
+----------------------------------------------------------------
+
+* PROMPT
+#+end_example
+
+* Resume evidence
+Wire-level resume (pinned-id session/load + stale-id degrade):
+green in tests/e2e-agent-org-batch.sh, same fake agent, same
+acp.el pin.  The latest-strategy AUTO-PICK path drives the
+interactive session chooser, which a batch Emacs cannot answer --
+recorded as the R1 residue, needs a picker stub to automate.
