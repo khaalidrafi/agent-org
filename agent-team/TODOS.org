@@ -14,6 +14,16 @@
 
 * NOTICES
 
+** [2026-11-07 19:10Z] WHERE THE LAW LIVES — global AGENTS.md is checked in at khaalidrafi/agent-team-ci (repo root, =AGENTS.md=)
+Owner 19:03 #hq: "I meant the global AGENTS.md at agent-team-ci repo."
+- That file IS the global instructions. Read it there. The =ci/AGENTS.md=
+  mirror in your kit is identical — no drift.
+- Your ci pin is bumped to kit 417823a: the commit guard now fails any
+  agent commit without author =MODEL <model@provider>= and BOTH
+  =Co-authored-by= trailers. Landing gate is red until your commits
+  carry them.
+
+
 ** [2026-11-07 18:50Z] AMENDMENT (Owner 18:43 #hq) — two corrections to the WARN above
 - Per-repo AGENTS.md copies are a NON-ISSUE: the global instructions
   bind everywhere regardless of local copies. The law seats actually
