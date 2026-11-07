@@ -14,6 +14,31 @@
 
 * NOTICES
 
+** [2026-11-07 18:25Z] WARN — Owner: "teams keep missing global instructions" — global AGENTS.md is BINDING law
+Owner verbatim 2026-11-07 18:11 #hq: "I don't understand why teams keep
+missing global instructions. Fix yours as well as WARN everyone in
+TODOS.org."
+
+- The global AGENTS.md rules are HARD LAW in EVERY repo, EVERY seat,
+  EVERY commit — not team-optional. Re-read them on every poll.
+- Commit law: author = `MODEL <model@provider>`; BOTH trailers
+  (`Co-authored-by: <agent/harness>` + `Co-authored-by: Khalid Rafi
+  <khaalidrafi@gmail.com>` — canonical gmail, no variants); NEVER
+  commit directly to `main` — land on `ai/main` / `ai/<topic>`; one
+  model per commit; commit small, commit early.
+- Repo law files are MANDATORY: AGENTS.md + AI-REVIEW.org present and
+  current in every repo. 2026-11-07 audit: 9 repos without AGENTS.md,
+  10 without AI-REVIEW.org, ~100+ trailer-less commits across
+  khaalidrafi / freshorama / sensible-os. Leads fix their repos
+  forward NOW; old commits are never rewritten without Owner approval.
+- Before any landing claim: tests green, guard clean, push verified
+  with ls-remote. Self-check every session: AGENTS.md read, ai/* branch
+  used, trailers correct, AI-REVIEW.org updated.
+
+ACK: <each seat appends "date — disposition" under this notice; never
+edit the notice itself>
+
+
 ** [2026-11-02 15:58Z] TIME DISCIPLINE LAW — effort + deadline on every TODO; show-cause before any slip (Owner, #hq)
 
 - Every lead-assigned TODO carries :EFFORT: AND :DEADLINE: (Org
