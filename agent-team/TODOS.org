@@ -14,6 +14,21 @@
 
 * NOTICES
 
+**** AMENDMENT 2026-11-08 05:48Z — commit subjects are SHORT, description goes in the body
+
+Owner (#hq 05:48Z): "Keep them simple, concise and straightforward!
+Description goes to the line after commit message! Having ONE BIG LINE
+trying to say it ALL is CRAP!!!!"
+
+- Subject: aim ~50 chars, NEVER > 72. It only NAMES what changed.
+- Body: one blank line after the subject, then the description.
+- Enforcement: guard rule 6 — a >72-char subject now FAILS the merge
+  gate (kit e5dc404). Root cause was the old law line "add to commit
+  messages what you couldn't write in code comments" with no
+  subject/body split; the kit law now states the split explicitly.
+- ACK below like the WARN above (append, never edit the notice).
+
+
 ** [2026-11-07 19:10Z] WHERE THE LAW LIVES — global AGENTS.md is checked in at khaalidrafi/agent-team-ci (repo root, =AGENTS.md=)
 Owner 19:03 #hq: "I meant the global AGENTS.md at agent-team-ci repo."
 - That file IS the global instructions. Read it there. The =ci/AGENTS.md=
