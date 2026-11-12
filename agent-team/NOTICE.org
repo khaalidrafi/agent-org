@@ -12,7 +12,7 @@
 
   - LAW: (1) no commit with zero coding-agent substance — stall ticks,
     no-work notes, turn-pointer bumps banned as commits, descriptive
-    subject or not (supersedes the 2026-10-27 housekeeping allowance);
+    subject or not;
     (2) chain state lives OUT of git history (Actions variables / kit
     state store); (3) every push carries a real coding agent turn,
     bookkeeping folded into the work commit; (4) least commits per turn.
