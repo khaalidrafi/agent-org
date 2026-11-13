@@ -1,0 +1,73 @@
+#+TITLE: CONTROL.org — chain control plane (Lead-owned; seats READ, never write)
+#+KILL-SWITCH: OFF
+#+OBJECTIVE: umbrella/01 (Owner 2026-10-29 #hq — agent-org + agent-team.el ONE umbrella, common Lead z.ai-agent; "Add all missing ACP clients to agent-org"): WO-16 CLI/ACP support parity — wire every missing ACP client provider in agent-org-providers.el + tests/ (omp ("omp" "acp") · pi (pi-acp adapter) · dsh (verify ACP surface in docs first, REPORT gaps — never invent) · mcode ("mcode" "acp") · gemini-cli ("gemini" "--acp")), one provider per segment, provider drift test green per landing; continue the WO-1 unit series (#184 index, #185 writers, #186 verbs+docs) between providers; WO-17 devin CI credential restore — before any devin spawn, write env DEVIN_CREDENTIALS_TOML (sealed GitHub secret; durable vault hold secrets/DEVIN_CREDENTIALS_TOML) to $HOME/.local/share/devin/credentials.toml mode 600, no-op on absent/blank (env-value law), content never logged, ERT set/unset/blank × temp HOME (choke point: the devin :environment fn — every lane funnels through agent-org--open-session funcalling it); Owner orders 2026-10-29 #hq: WO-18 provider works-test — live-test EVERY agent-org provider (initialize handshake per provider, evidence matrix provider→verdict, gaps REPORTED never invented, blocked bodies documented with unblock proposals; includes proving/wiring the glm-5.3@chat.z.ai lane for the re-staffed Senior EL seat — ZAI_API_KEY on file), then WO-19 agentic scripting — org-file script runner: user writes a prompt queue + per-step model/provider/options in an org file, agent-org executes the steps sequentially on the batch lane and writes results back into the org file; design (file format + API + abort/continue semantics) BEFORE code, lands behind ERT; Owner order 2026-10-29 #hq ("add Kilo Code"): WO-20 kilo add — BOTH halves mandatory: (a) agent-team-ci docker harness — bake a kilo body beside the devin/cline bodies (npm @kilocode/cli, command `kilo`, headless `kilo run --auto`; no creds baked); (b) agent-org — ACP provider entry in agent-org-providers.el on the native server `kilo acp` + provider drift test green per landing (WO-16 discipline); verify the ACP surface in the CLI's own docs/help before wiring, REPORT gaps never invent (dsh precedent); ci/ submodule cascade in team repos follows the harness landing; then work ALL remaining open TODOS.org WOs in board order (WO-1 stays parked on its fuel blocker); fuel law stands (qwen3.8-flash built-in free at Qoder · deepseek-v4.1-flash@codebuddy wired fallback · paid qoder ids stay dead until the Owner refuels) · Owner fiat 2026-10-30 #hq "cred. NOT required for working" — no task waits on the vault upload, WO-17 rides code + ERT now and the live seal lands when the Owner uploads
+#+OBJECTIVE-STATE: OPEN
+#+DISPATCH: 2026-11-01 00:08 #hq — Owner corrections (all landed tonight):
+# "CB cred. is in vault, stupid! WTH is '@antling'? Didn't you run it
+# inside a coding agent? Just hire based on capabilities! You lacked
+# members! LLMFisher can find out latest list of free models in API. And,
+# ZAI needs to be properly configured in GoModel since it works after
+# repeated retries!" — (0) IDS RE-FORMED: key-rented models carry the
+# company prefix and every seat is a REAL model+agent PAIR
+# (antling/Ling-3.1-flash@opencode et al.); the bare-API rig was the
+# interning harness, not a seat. PAIR PROVEN: opencode headless turn —
+# Ling-3.1-flash read the spec, wrote rev.el, ran ERT, caught its own
+# pp-e failure and fixed it; the artifact passes 5/5 under the Lead's
+# independent ERT run (evidence scripts/pair_proof/ — RETRACTED 00:42,
+# see (5); scratch recycled). (1) CB CRED EXISTS:
+# CODEBUDDY_AUTH_TOKEN sealed in the vault (1451 B) — every "no codebuddy
+# credential" BLOCKED reason is VOID; WO-25 wires consumption. (2) HIRED,
+# NOT MORE INTERNING — Port Engineer seat (poolside dead) re-staffed on
+# antling/Ling-3.1-flash@opencode (19/19 + dual free lane); Senior EL API
+# lane = antling/Ring-2.6-1T@opencode (reviewer, hardest items); grunt =
+# antling/Ling-3.0-tiny@opencode; bench antling/Ling-3.0-flash@opencode +
+# groq/qwen3.8-27b via gateway (direct groq 403s — key is gateway-scoped).
+# (3) LLMFISHER CENSUS RUN (llmfisher a8096d0): poolside + inkling-small +
+# nemotron-3-super DELISTED from OpenRouter; +recursive/flint-v1.0:free
+# (no-data → intern round next), +inclusionai/ling-3.1-flash-1019-free
+# (independent second free lane for the Port brain). (4) GOMODEL: zai
+# same-model retry widened to 5 attempts x 10s initial backoff in compose
+# (llmfisher a8096d0) — seats never see raw 429s; reload = docker compose
+# restart gomodel on the box. LANE ORDER: WO-25 CB cred wiring → WO-23
+# antling provider entry → WO-24 first landing → code queue WO-4/5/8/
+# 10-13 + WO-19 + WO-22 under the new Port pair → #178/#130 sync (glm-5.3
+# when zai answers, else Ling-3.0-tiny) → nemotron docs per landing.
+# (5) KIT, NOT INSTALLS (Owner 00:42 #hq): "Why did you install opencode,
+# stupid? You are supposed to use agent-team-ci!!" — pairs ride the ci
+# kit AS-IS: body-opencode is preinstalled (no new body, no npm bake),
+# kit opencode.json carries the antling provider (env ANTLING_API_KEY),
+# ci/ pointers bumped in both team repos, WO-26 rewritten; re-proof =
+# one normal kit CI turn per pair (WO-26).
+# (6) ZEN CENSUS (Owner 00:52 #hq "opencode also has a lot of free
+# models. Consider them."): llmfisher --providers opencode --fresh —
+# 7 live Zen ids; jev-1.13-free DEAD (/v1/systemone decision API, not
+# a chat route) — kit zen block corrected. Tier is client-only → rides
+# the kit's preinstalled opencode body. WO-27 batteries the four
+# un-evidenced coders (beam, deepseek-v4.1-flash, mimo-v2.6-flash,
+# flint-40b) before any hire; glm-5.3-flash-free = free backup lane
+# for glm-5.3 hard items when zai 429s; nemotron-3.5-lightning-free =
+# QA/Docs lane without the OpenRouter daily cap.
+#+OWNER-FIAT: 2026-10-31 #hq — slave-agent is FROZEN (no seat works it; the
+# repo stays as delivered: handoff docs island + upstream/main base). Terminal
+# segment after the remaining open TODOS.org WOs (in board order, #178/#130
+# AGENTS-TODOs.org sync stays FIRST — Owner URGENT): WO-21 openbot.run port
+# into agent-team.el — CLEAN-ROOM law (source is PolyForm Noncommercial 1.0.0:
+# specs from public site docs only, NO source reading, NO code/name/asset
+# reuse); spec = agent-team.el docs/OPENBOT-PORT.org; beware name collisions
+# (CopilotKit/OpenBot and other MIT OpenBot projects are NOT openbot.run).
+#+OWNER-FIAT: 2026-10-31 19:31/19:46 #hq — "Use Ant Ling free models for
+# what they are good at via API. We MUST use models that are good at ELisp.
+# You can even intern models to find out." + "Complete ALL tasks tonight.
+# Review CANDIDATES.org for better options to write ELisp!" ELisp lanes
+# staff on interned-ELisp-good Ant Ling models via api.ant-ling.com/v1.
+# Values-filter exception RECORDED: the antling free tier is an UNDATED
+# DAILY GRANT, not permanent-free — re-hire risk per EXPIRY-LAW; Owner
+# fiat overrides for these lanes. Evidence: agent-team.el
+# templates/CANDIDATES.org batch-6 + scripts/intern_results/.
+#+OWNER-FIAT: 2026-11-01 00:08 #hq — seats are model+agent PAIRS on real
+# bodies; bare-API brains are harnesses, not members. Hiring is
+# capability-based from the live free census — no open-ended interning.
+# CODEBUDDY_AUTH_TOKEN is sealed in the vault: use it.
+#+TURN: qwen3.8-flash@qoder (Implementer)
+#+STALL-COUNT: 17
+#+LAST-VERDICT: 908fa5d5db0f

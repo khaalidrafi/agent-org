@@ -94,7 +94,7 @@ jobs:
           KILL=$(grep -oP '^\#\+KILL-SWITCH:\s*\K\w+' "$CTL" | head -1)
           OBJSTATE=$(grep -oP '^\#\+OBJECTIVE-STATE:\s*\K\w+' "$CTL" | head -1)
           OBJECTIVE=$(grep -oP '^\#\+OBJECTIVE:\s*\K.*' "$CTL" | head -1)
-          TURN=$(grep -oP '^\#\+TURN:\s*\K.*' "$CTL" | head -1 | xargs)
+          TURN=$(curl -sf -H "Authorization: Bearer ${{ github.token }}" "https://api.github.com/repos/${{ github.repository }}/actions/variables/CHAIN_TURN" | jq -r '.value' 2>/dev/null || true); [ -n "$TURN" ] || TURN=$(grep -oP '^\#\+TURN:\s*\K.*' "$CTL" | head -1 | xargs)
           echo "kill=${KILL:-OFF} objstate=${OBJSTATE:-OPEN} turn='${TURN}'"
           echo "base_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           if [ "${KILL:-OFF}" = "ON" ]; then
@@ -651,27 +651,20 @@ if [ "${BATCH_DONE:-0}" != "1" ]; then
             implementer)          NEXT="qwen3.8-flash@qoder (Implementer)" ;;
             *)                    NEXT="qwen3.8-flash@qoder (Implementer)" ;;
           esac
-          git checkout -f ai/quickstart
-          git fetch origin ai/quickstart
-          git reset --hard origin/ai/quickstart
-          sed -i "s|^\#+TURN:.*|\#+TURN: ${NEXT}|" "$CTL"
-          git add "$CTL"
-          git commit -m "control: rotate #+TURN to ${NEXT%% *} after ${TURN_AGENT:-${TURN_SEAT:-previous seat}} segment" \
-            -m "next seat: ${NEXT}" \
-            -m "segment result: ${TURN_RESULT:-unknown}" \
-            -m "Co-authored-by: z.ai-agent <z.ai-agent@z.ai>" \
-            -m "Co-authored-by: Khalid Rafi <khaalidrafi@gmail.com>" \
-            || echo "::notice::nothing to commit"
-          CPUSH=no
-          for i in 1 2 3; do
-            if git push origin "ai/quickstart"; then CPUSH=yes; break; fi
-            git fetch origin ai/quickstart && git reset --hard origin/ai/quickstart
-            sed -i "s|^\#+TURN:.*|\#+TURN: ${NEXT}|" "$CTL"
-            git add "$CTL"
-            git commit -m "control: rotate #+TURN to ${NEXT%% *} after ${TURN_AGENT:-${TURN_SEAT:-previous seat}} segment" \
-              -m "segment result: ${TURN_RESULT:-unknown}" || true
-          done
-          [ "$CPUSH" = "yes" ] || echo "::warning::control push failed after 3 attempts"
+          # TURN rotation lives in the CHAIN_TURN variable — no commit
+          # (Owner 2026-11-13 #hq: bookkeeping commits are forbidden).
+          set_var() {
+            curl -sf -X PATCH -H "Authorization: Bearer ${{ github.token }}" \
+              -H "Content-Type: application/json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/variables/$1" \
+              -d "{\"value\":\"$2\"}" >/dev/null \
+              || curl -sf -X POST -H "Authorization: Bearer ${{ github.token }}" \
+              -H "Content-Type: application/json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/variables" \
+              -d "{\"name\":\"$1\",\"value\":\"$2\"}" >/dev/null \
+              || echo "::warning::variable $1 write failed"
+          }
+          set_var CHAIN_TURN "${NEXT}"
 
   finalize:
     if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
@@ -775,7 +768,7 @@ if [ "${BATCH_DONE:-0}" != "1" ]; then
             echo "CHAIN_STALL=$STALL" >> "$GITHUB_ENV"
             exit 0
           fi
-          STALL=$(grep -oP '^\#\+STALL-COUNT:\s*\K\d+' "$CTL" | head -1); STALL=${STALL:-0}
+          STALL=$(curl -sf -H "Authorization: Bearer ${{ github.token }}" "https://api.github.com/repos/${{ github.repository }}/actions/variables/CHAIN_STALL" | jq -r '.value' 2>/dev/null || true); [ -n "$STALL" ] || STALL=$(grep -oP '^\#\+STALL-COUNT:\s*\K\d+' "$CTL" | head -1); STALL=${STALL:-0}
           VARSTALL=$(curl -sfS -H "Authorization: Bearer ${{ github.token }}" \
             "https://api.github.com/repos/${{ github.repository }}/actions/variables/CHAIN_STALL" \
             | jq -r '.value // empty' 2>/dev/null || true)
@@ -801,18 +794,8 @@ if [ "${BATCH_DONE:-0}" != "1" ]; then
           || echo "::warning::CHAIN_STALL variable write failed (milestone commits still apply)"
           RLBL=none
           case "$RESULT" in *BLOCKED*) RLBL=blocked ;; *OK*) RLBL=ok ;; esac
-          if [ "$NEW" = "0" ] || [ $((NEW % 10)) = "0" ]; then
-            git fetch origin ai/quickstart
-            git reset --hard origin/ai/quickstart
-            sed -i "s|^\#+STALL-COUNT:.*|\#+STALL-COUNT: ${NEW}|" "$CTL"
-            git add "$CTL"
-            git commit -m "control: stall ${NEW} (${RLBL})" \
-              -m "segment ${OUTCOME}: ${RESULT:-none}" \
-              -m "Co-authored-by: z.ai-agent <z.ai-agent@z.ai>" \
-              -m "Co-authored-by: Khalid Rafi <khaalidrafi@gmail.com>" \
-              || echo "::notice::stall commit empty"
-            git push origin "ai/quickstart" || echo "::warning::stall push failed"
-          fi
+          # Stall lives ONLY in the CHAIN_STALL variable now
+          # (Owner 2026-11-13 #hq: milestone commits are also spam).
           KILL=$(grep -oP '^\#\+KILL-SWITCH:\s*\K\w+' "$CTL" | head -1)
           OBJSTATE=$(grep -oP '^\#\+OBJECTIVE-STATE:\s*\K\w+' "$CTL" | head -1)
           OBJECTIVE=$(grep -oP '^\#\+OBJECTIVE:\s*\K.*' "$CTL" | head -1)
@@ -827,7 +810,7 @@ if [ "${BATCH_DONE:-0}" != "1" ]; then
             DECISION="backoff-dispatch"
           fi
           VH=$(printf '%s' "$RESULT" | sha256sum | cut -c1-12)
-          LASTV=$(grep -oP '^\#\+LAST-VERDICT:\s*\K.*' "$CTL" | head -1)
+          LASTV=$(curl -sf -H "Authorization: Bearer ${{ github.token }}" "https://api.github.com/repos/${{ github.repository }}/actions/variables/CHAIN_LAST_VERDICT" | jq -r '.value' 2>/dev/null || true); [ -n "$LASTV" ] || LASTV=$(grep -oP '^\#\+LAST-VERDICT:\s*\K.*' "$CTL" | head -1)
           case "$RESULT" in
             *BLOCKED*)
               if [ -n "$LASTV" ] && [ "$VH" = "$LASTV" ]; then
@@ -876,7 +859,7 @@ if [ "${BATCH_DONE:-0}" != "1" ]; then
           [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$CHAT" ] || { echo "telegram mirror: silent (no token or chat id yet)"; exit 0; }
           VH=$(printf '%s' "$SEG" | sha256sum | cut -c1-12)
           CTL=agent-team/CONTROL.org
-          LAST=$(grep -oP '^\#\+LAST-VERDICT:\s*\K.*' "$CTL" | head -1)
+          LAST=$(curl -sf -H "Authorization: Bearer ${{ github.token }}" "https://api.github.com/repos/${{ github.repository }}/actions/variables/CHAIN_LAST_VERDICT" | jq -r '.value' 2>/dev/null || true); [ -n "$LAST" ] || LAST=$(grep -oP '^\#\+LAST-VERDICT:\s*\K.*' "$CTL" | head -1)
           if [ "$LAST" = "$VH" ]; then
             echo "telegram mirror: identical verdict ${VH} already mirrored — silent (dedupe law)"
             exit 0
@@ -894,15 +877,17 @@ if [ "${BATCH_DONE:-0}" != "1" ]; then
             --data-urlencode "text=${TXT}") || CODE="curl-failed"
           echo "telegram mirror: HTTP ${CODE}"
           if [ "$CODE" = "200" ] || [ "$CODE" = "curl-failed" ]; then :; fi
-          git config user.name "agent-team-ci"
-          git config user.email "agent-team-ci@users.noreply.github.com"
-          git remote set-url --push origin \
-            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
-          git fetch origin ai/quickstart && git reset --hard origin/ai/quickstart
-          sed -i "s|^\#+LAST-VERDICT:.*|\#+LAST-VERDICT: ${VH}|" "$CTL"
-          git add "$CTL"
-          git commit -m "ci-chain: verdict ${VH} mirrored" || exit 0
-          for i in 1 2 3; do git push origin "ai/quickstart" && break; git fetch origin ai/quickstart && git reset --hard origin/ai/quickstart; sed -i "s|^\#+LAST-VERDICT:.*|\#+LAST-VERDICT: ${VH}|" "$CTL"; git add "$CTL"; git commit -m "ci-chain: verdict ${VH} mirrored" || exit 0; done
+          # Verdict dedupe marker lives in the CHAIN_LAST_VERDICT variable
+          # — no commit (Owner 2026-11-13 #hq: bookkeeping commits forbidden).
+          curl -sf -X PATCH -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/variables/CHAIN_LAST_VERDICT" \
+            -d "{\"value\":\"${VH}\"}" >/dev/null \
+            || curl -sf -X POST -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/variables" \
+            -d "{\"name\":\"CHAIN_LAST_VERDICT\",\"value\":\"${VH}\"}" >/dev/null \
+            || echo "::warning::CHAIN_LAST_VERDICT write failed"
 
       # Owner order 2026-10-21 03:53Z: per-project channels. This repo's
       # channel = the agent-org Discord channel (secret
