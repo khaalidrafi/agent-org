@@ -3,6 +3,20 @@
 * Board
 ** DONE DISPATCH #2 staffing — ai/staffing
    members carry duties + rank + evidence; Founder share sent
+** PROGRESS DISPATCH #3 resolve agent-org dangling state (Owner order 2026-11-15)
+   :LOGBOOK:
+   - QA+Docs seat (nemotron-3.5-lightning@cline): vendored the untracked
+     nested-clone ci/ kit onto ai/main (fcca8f8, snapshot of
+     agent-team-ci 6c7b414); audited agent-org-fresh — its unpushed
+     commits duplicated agent-team-ci history, nothing lost — and
+     removed the directory.  Session cut short before the AI-REVIEW
+     pass (context deadline).
+   - Lead (GLM 5.3): landed the board truthfully; AI-REVIEW.org
+     reading queue TRIAGED, not resolved: 90 code-readable TODOs +
+     4 live-session TODOs remain — the queue IS the async review
+     debt; next QA dispatch works it in batches.  Evidence:
+     AI-REVIEW.org "* Dispatch 2026-11-15 — resolve agent-org state".
+   :END:
 * Org cheat sheet
   - PROGRESS + CLOCK start; notes in :LOGBOOK:
   - BLOCKED + reason; :OWN: = owner ruling

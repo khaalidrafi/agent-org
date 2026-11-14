@@ -3110,3 +3110,34 @@ headline), =…-builder-moves-nothing=, =…-mode-installs-the-scroll-hook-buffe
 Clean rebuild zero warnings; full suite =Ran 423 tests, 423 results as expected,
 0 unexpected=.  Live: =set-window-start= into the streaming exchange fired the
 hook, produced one truncated =org-level-1= row and a 2-row bar.
+* Dispatch 2026-11-15 — resolve agent-org state
+
+** DONE Dangling state closed (Lead-verified)
+   Owner order: "Resolve agent-org."  What the dangling state was,
+   and where each piece went:
+   1. Untracked =ci/= in the repo root was a nested clone of the
+      shared agent-team-ci kit carrying its own =.git= — invisible
+      to git status as files, unusable from CI.  QA+Docs vendored
+      it as plain files onto ai/main (=fcca8f8=, exact snapshot of
+      agent-team-ci 6c7b414), matching how sibling repos carry the
+      kit.  Verified: =git ls-files ci/= now lists the kit;
+      =ci/.git= is gone.
+   2. =agent-org-fresh/= — a second working copy of this same repo
+      whose local commits ("ci: chain bookkeeping state -> Actions
+      variables", "notice: short subjects, description in body")
+      duplicated commits ALREADY in agent-team-ci history
+      (77fb32a, e5dc404).  Audited, nothing unique lost, directory
+      removed.  One working copy remains: this one.
+   3. Branch =ai/doe-commit-hygiene= was even with origin/ai/main
+      (nothing unpushed); work continues on ai/main.
+** OPEN Reading queue triaged (the honest remainder)
+   The AI-REVIEW.org "Read/Verify" TODOs are this repo's async
+   review debt.  Count 2026-11-15: 90 code-readable TODOs + 5
+   needing a live interactive Emacs session.  These are NOT
+   dangling state — they are the standing queue the Owner reads
+   asynchronously; the next QA+Docs dispatch works them in batches
+   of ~15, rewriting each entry as RESOLVED with evidence (or
+   leaving "needs live session" notes).  Nothing was bulk-closed
+   today; no fake resolutions.
+   Gates: docs/board-only changes, no Elisp touched; no emacs
+   binary in this sandbox (CI not applicable to .org edits).
