@@ -1,0 +1,98 @@
+name: self-check
+
+# ci-core's own CI: the kit must prove itself before any repo consumes it.
+#   1. every bin script parses (bash -n)
+#   2. commit_msg_guard.sh catches bad subjects and passes good ones
+#      (fixture git repo, real commits)
+#   3. law_brief.sh composes global + local + segment and degrades loudly
+#   4. AGENTS.md present, and no credential-shaped strings anywhere
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  self-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax-check every script
+        run: |
+          set -e
+          for f in bin/*.sh; do bash -n "$f"; echo "ok: $f"; done
+
+      - name: commit_msg_guard fixtures
+        run: |
+          set -e
+          rm -rf /tmp/guard-fx && mkdir -p /tmp/guard-fx
+          cd /tmp/guard-fx
+          git init -q
+          git config user.name fixture
+          git config user.email fx@fx
+          echo a > a.txt
+          git add . && git commit -qm "wip"
+          git commit --allow-empty -qm "ci-turn: seat done"
+          git commit --allow-empty -qm "stall=2"
+          git commit --allow-empty -qm "update"
+          # Owner law 2026-10-29: turn() work authored by the CI machine
+          GIT_AUTHOR_NAME="agent-team-ci" \
+            GIT_AUTHOR_EMAIL="agent-team-ci@users.noreply.github.com" \
+            git commit --allow-empty -qm "turn(principal-engineer): fix parser"
+          if bash "$OLDPWD/bin/commit_msg_guard.sh" HEAD~4..HEAD; then
+            echo "FAIL: guard passed a bad range"; exit 1
+          fi
+          if bash "$OLDPWD/bin/commit_msg_guard.sh" BOGUS..REF; then
+            echo "FAIL: guard passed an unresolvable range"; exit 1
+          fi
+          # agent-authored turn() work is the compliant shape — must PASS.
+          # Owner correction 2026-10-30: the author is a MODEL identity in
+          # the AGENTS.md format MODEL <MODEL@PROVIDER> (a lane string as
+          # the name violates rule 3).
+          GIT_AUTHOR_NAME="GLM-4.7-Flash" \
+            GIT_AUTHOR_EMAIL="glm-4.7-flash@z.ai" \
+            git commit --allow-empty -qm "turn(principal-engineer): fix parser — host-committed for the seat"
+          git commit --allow-empty -qm "parser: reject empty org headline tags"
+          git commit --allow-empty -qm "control: rotate #+TURN to release-engineer after QA segment"
+          bash "$OLDPWD/bin/commit_msg_guard.sh" HEAD~3..HEAD
+          # Owner order 2026-10-31 #hq: control subjects never say "unknown"
+          git commit --allow-empty -qm "control: unknown segment ended"
+          if bash "$OLDPWD/bin/commit_msg_guard.sh" HEAD~1..HEAD; then
+            echo "FAIL: guard passed an 'unknown' control subject"; exit 1
+          fi
+          echo "guard fixtures PASS"
+
+      - name: law_brief composition
+        run: |
+          set -e
+          rm -rf /tmp/brief-fx && mkdir -p /tmp/brief-fx/ws/ci
+          cd /tmp/brief-fx
+          printf 'GLOBAL LAW TEXT\n' > ws/ci/AGENTS.md
+          printf 'LOCAL LAW TEXT\n' > ws/AGENTS.md
+          printf 'SEGMENT TASK\n' > seg.txt
+          OUT=$(bash "$OLDPWD/bin/law_brief.sh" seg.txt ws)
+          echo "$OUT" | grep -q 'GLOBAL LAW TEXT'
+          echo "$OUT" | grep -q 'LOCAL LAW TEXT'
+          echo "$OUT" | grep -q 'SEGMENT TASK'
+          # missing local law degrades loudly, never silently
+          rm ws/AGENTS.md
+          OUT2=$(bash "$OLDPWD/bin/law_brief.sh" seg.txt ws)
+          echo "$OUT2" | grep -q 'no root AGENTS.md'
+          # CI_LAW_DIGEST rides instead of the full local law
+          printf 'DIGEST TEXT\n' > digest.md
+          OUT3=$(CI_LAW_DIGEST=digest.md bash "$OLDPWD/bin/law_brief.sh" seg.txt ws)
+          echo "$OUT3" | grep -q 'DIGEST TEXT'
+          echo "law_brief fixtures PASS"
+
+      - name: No credential-shaped strings in the kit
+        run: |
+          if grep -rInE 'ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{20,}|xox[bap]-[A-Za-z0-9-]{10,}' \
+             --exclude-dir=.git .; then
+            echo "FAIL: credential-shaped string found"; exit 1
+          fi
+          echo "no-leak scan PASS"

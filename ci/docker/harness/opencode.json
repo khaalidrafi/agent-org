@@ -1,0 +1,124 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "edit": "allow",
+    "bash": "allow",
+    "webfetch": "allow"
+  },
+  "provider": {
+    "openrouter": {
+      "npm": "@openrouter/ai-sdk-provider",
+      "name": "OpenRouter",
+      "options": {
+        "apiKey": "{env:OPENROUTER_API_KEY}"
+      },
+      "models": {
+        "poolside/laguna-s-2.1:free": {
+          "name": "Laguna S 2.1 (free)"
+        }
+      }
+    },
+    "zai": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Z.ai",
+      "options": {
+        "baseURL": "https://api.z.ai/api/paas/v4",
+        "apiKey": "{env:ZAI_API_KEY}"
+      },
+      "models": {
+        "glm-4.7-flash": {
+          "name": "GLM 4.7 Flash"
+        }
+      }
+    },
+    "antling": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ant Ling",
+      "options": {
+        "baseURL": "https://api.ant-ling.com/v1",
+        "apiKey": "{env:ANTLING_API_KEY}"
+      },
+      "models": {
+        "Ling-3.1-flash": {
+          "name": "Ling 3.1 Flash"
+        },
+        "Ling-3.0-flash": {
+          "name": "Ling 3.0 Flash"
+        },
+        "Ling-3.0-tiny": {
+          "name": "Ling 3.0 Tiny"
+        },
+        "Ling-2.6-1T": {
+          "name": "Ling 2.6 1T"
+        },
+        "Ring-2.6-1T": {
+          "name": "Ring 2.6 1T"
+        }
+      }
+    },
+    "groq": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Groq",
+      "options": {
+        "baseURL": "https://api.groq.com/openai/v1",
+        "apiKey": "{env:GROQ_API_KEY}"
+      },
+      "models": {
+        "qwen3.8-27b": {
+          "name": "Qwen3.8 27B"
+        }
+      }
+    },
+    "zen": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "OpenCode Zen",
+      "options": {
+        "baseURL": "https://opencode.ai/zen/v1",
+        "apiKey": "{env:OPENCODE_API_KEY}"
+      },
+      "models": {
+        "glm-5.3-flash-free": {
+          "name": "GLM 5.3 Flash (free)"
+        },
+        "beam-free": {
+          "name": "Beam (free)"
+        },
+        "flint-40b-free": {
+          "name": "Flint 40B (free)"
+        },
+        "mimo-v2.6-flash-free": {
+          "name": "MiMo v2.6 Flash (free)"
+        },
+        "nemotron-3.5-super-vl-free": {
+          "name": "Nemotron 3.5 Super VL (free)"
+        },
+        "nemotron-3.5-lightning-free": {
+          "name": "Nemotron 3.5 Lightning (free)"
+        },
+        "deepseek-v4.1-flash-free": {
+          "name": "DeepSeek V4.1 Flash (free)"
+        }
+      }
+    },
+    "cline": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Cline",
+      "options": {
+        "baseURL": "https://api.cline.bot/api/v1",
+        "apiKey": "{env:CLINE_API_KEY}"
+      },
+      "models": {
+        "poolside/laguna-s-2.1:free": {
+          "name": "Laguna S 2.1 (Cline free)"
+        },
+        "nvidia/nemotron-3.5-lightning:free": {
+          "name": "Nemotron 3.5 Lightning (Cline free)"
+        }
+      }
+    }
+  },
+  "instructions": [
+    "agent-team/CONTROL.org",
+    "agent-team/CHARTER.md"
+  ]
+}

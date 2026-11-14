@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# team-chat — send one message to agent-team/CHAT.org (Owner order
+# 2026-10-27 #hq: the chat is COMMAND-MAINTAINED by agent-team.el, never
+# hand-written). Env-driven:
+#   AGENT_CHAT_FROM, AGENT_CHAT_TO, AGENT_CHAT_KIND (required set),
+#   AGENT_CHAT_BODY or AGENT_CHAT_BODY_FILE,
+#   optional AGENT_CHAT_REPO, AGENT_CHAT_PRIORITY, AGENT_CHAT_RISK,
+#   AGENT_CHAT_FILE (override the chat file path).
+# The entry carries the ONE comms protocol (headline FROM; drawer
+# FROM/TO/KIND/REPO/PRIORITY/RISK/WHEN — the same fields as a
+# TEAM-UPDATE) and appends at EOF.
+set -eu
+exec emacs --batch -L /opt/agent-team -l agent-team.el \
+  -f agent-team-chat-send-batch

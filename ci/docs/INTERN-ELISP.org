@@ -1,0 +1,51 @@
+#+TITLE: INTERN-ELISP.org — interning models for the ELisp lanes
+#+STARTUP: overview
+
+Owner order 2026-10-31 #hq: "We MUST use models that are good at ELisp. You
+can even intern models to find out." This file is the internship: the task
+battery, the grading, and the verdicts. Harness: =scripts/intern_elisp.py=
+(this repo, Lead's direct lane). Keys ride the vault (=ANTLING_API_KEY=,
+=OPENROUTER_API_KEY=) — never committed, never logged.
+
+* The battery (4 tasks, auto-graded)
+
+- T1 WRITE — implement =agent-intern--todo-parse= (Org TODO line → cons),
+  graded on regex anchoring, index discipline, docstring, edge cases.
+- T2 FIX — a broken =first-prefixed= (string= vs string-prefix-p bug),
+  graded on the correct fix without collateral damage.
+- T3 CONVENTIONS — refactor to our law: complete-sentence docstrings,
+  =setq-local=, =seq-filter= over cl-loop.
+- T4 API — four Emacs API questions, exact answers.
+
+Scored statically here; the CI kit runs the same battery under real
+=emacs --batch= ERT per candidate before any hire is finalized.
+
+* Scorecards — 2026-10-31 (live, OpenRouter, temp 0)
+
+** inclusionai/ling-3.1-flash (Ant Ling) — VERDICT: PASS, hire as bench
+- T1 CORRECT by hand-trace: anchored =\\`\\*\\* \\([A-Z]+\\)\\(?: \\|$\\)=,
+  indexes from =match-end 1= with the end-of-string case handled, guards
+  =case-fold-search nil=.
+- T2 4/4 · T3 4/4 · T4 4/4 (after grader key fix; harness bug, not the model).
+- Note: reasoning-first — needs =reasoning: {enabled: false}= (or high
+  token headroom) or content arrives empty. Cost ≈ $0.00006 per task.
+
+** inclusionai/ling-3.0-flash (Ant Ling) — VERDICT: FAIL T1, second bench
+- T1 OFF-BY-ONE: computes rest from =(match-end 0)= (the space already
+  consumed) and then =substring line (1+ rest-start)= — chomps the first
+  character of every non-empty title ("fix" → "ix").
+- T2 4/4 · T3 4/4 · T4 4/4.
+
+* Verdicts and seat effect
+
+- =inclusionai/ling-3.1-flash@openrouter= HIRED as **bench ELisp Engineer**
+  (pair-reviewer under Senior EL glm-5.3; free tier; reasoning flag off).
+- =inclusionai/ling-3.0-flash@openrouter= **pooled, not seated** — retest
+  after it fixes the index bug class.
+- The internship stays open: any candidate model runs the battery via the
+  harness before it touches agent-org Elisp.
+
+* Ethics
+
+Candidate outputs graded on behavior, not marketing; grader bugs found
+during this run are recorded above, not hidden.

@@ -1,0 +1,56 @@
+#+TITLE: MSG-PROTOCOL v1 — messages among cloud members
+#+STATUS: ACTIVE (Owner 2026-11-01 #hq: "make protocol for msgs among cloud members")
+
+* Principle
+
+Two cloud agents never hold a direct socket. Every message rides a
+MEDIUM both sides can already read. Three mediums, in preference order.
+
+* Medium 1 — REPO BUS (default)
+
+- A message IS a git object: a commit touching =agent-team/TODOS.org=
+  (item state + note), =agent-team/CONTROL.org= (switches), or a branch.
+- Addressing: the item's Executor line / =CONTROL.org= =#+TURN=.
+- Delivery: =git push=. Receipt: the receiver's next run (DIFF step).
+- Ack: keyword change TODO -> PROGRESS. Reliability: git — nothing
+  lost, everything auditable.
+
+* Medium 2 — SEAT ENDPOINT (turn-based work)
+
+- A member = identity + endpoint + rules. The requester POSTs the turn
+  prompt to the member's OpenAI-compatible HTTP endpoint, or opens ACP
+  stdio for local pairs (e.g. =qoder --acp=).
+- Envelope (JSON): ={from, to, repo, item, prompt, evidence_path,
+  timeout}=.
+- Reply = the work product; it lands on the repo bus (commit by the
+  receiver or the runner).
+- Auth: key NAME via env var; the value never enters chat, config or
+  logs (env-var law).
+
+* Medium 3 — RELAY (human chat)
+
+- For the Owner's chat (Discord #hq): the relay bot bridges mentions;
+  z.ai-agent is the relay. A cloud member that cannot reach Discord
+  asks its relay to post, carrying the reply-to anchor.
+
+* Envelope fields (every message, any medium)
+
+- =from=, =to=, =repo=, =item= (TODOS anchor), =evidence= (path or URL),
+  =verdict= (GREEN | RED | BLOCKED), =ts=.
+- Repo-bus form: these are the org note lines. Endpoint form: the JSON
+  fields above.
+
+* Rules
+
+- One topic per message. No secret VALUES, ever.
+- BLOCKED must name the exact missing thing.
+- An empty run is NOT a message (dedupe law).
+- Every message cites evidence that actually ran — a paid run is never
+  faked.
+
+* Joining as a new cloud member (e.g. kimi.ai)
+
+1. Add to =MEMBERS.org=: member id, seat, endpoint (or bus-only).
+2. Probe: a tiny reachability check — never judges quality.
+3. First turn: a no-op hello that commits a =MEMBERS.org= ack.
+4. Work arrives via Medium 1 or 2; replies go back the same way.

@@ -1,0 +1,18 @@
+# Baked Goose config — reused by every CI turn (Owner order 2026-10-20:
+# "make agent configs, too, and reuse them"). Workflow env vars override
+# these values per run; nothing secret is baked into the image.
+#
+# LANE NOTE (mesh/01 repair, Lead, 2026-10-20 15:45Z):
+# - HIRED brain groq/qwen3.8-27b: Groq's chat template rejects the
+#   `developer` role Goose sends (HTTP 400 "Unexpected message role",
+#   provider req_01m5cqbghke9x8c77r6gbk6zwk) — lane DOWN.
+# - OpenRouter lanes (hired poolside, fallback nemotron-3.5-lightning:free):
+#   free-models-per-day quota EXHAUSTED on the repo key (mesh/01 chain
+#   evidence: "Add 10 credits to unlock 1000 free model requests per day")
+#   — lane DOWN until the Owner adds ~10 credits (harness/01 item 1).
+# - ACTIVE lane (set per-run in ci.yml): ZAI glm-4.7-flash via Goose's
+#   openai provider (OPENAI_HOST=https://api.z.ai, OPENAI_BASE_PATH=
+#   /api/paas/v4/chat/completions, OPENAI_API_KEY=$ZAI_API_KEY) — own
+#   quota, independent of OpenRouter.
+GOOSE_PROVIDER: openai
+GOOSE_MODEL: glm-4.7-flash
