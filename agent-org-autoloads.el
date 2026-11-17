@@ -365,6 +365,11 @@ was written around: it opens on the model named in ~/.slave/config.yaml
 (no pin) and resumes the directory's earlier slave-agent sessions through
 `session/list'.  Run `slave-acp --check' in a shell if this fails to
 start -- that says whether the ACP extra is installed." t)
+(autoload 'agent-org-devin-start-agent "agent-org-providers" "\
+Start an interactive Devin agent-org chat.
+Devin is Cognition's CLI agent (`npm i -g devin'); its ACP server is the
+`devin acp' subcommand.  Authenticate once outside Emacs with `devin login',
+or export DEVIN_API_KEY for headless use." t)
 (autoload 'agent-org-goose-start-agent "agent-org-providers" "\
 Start an interactive Goose agent-org chat." t)
 (autoload 'agent-org-qoder-start-agent "agent-org-providers" "\

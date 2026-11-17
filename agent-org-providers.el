@@ -68,6 +68,17 @@
          :name "slave-agent"
          :command '("slave-acp")
          :environment #'agent-org-slave-agent-environment)
+   ;; Devin (Cognition) is its own CLI agent (`npm i -g devin', docs.devin.ai/cli)
+   ;; and ACP is a subcommand: `devin acp'.  The pairing is corroborated by two
+   ;; independent npm packages that drive exactly that command (devin-subagents:
+   ;; "Expose `devin acp' sessions as lifecycle-managed subagents";
+   ;; @tian.zuo/pi-devin-acp: "Use Devin (devin acp) models").  Devin keeps its
+   ;; own login (`devin login'), so nothing is exported by default;
+   ;; DEVIN_API_KEY is passed through when the environment carries it.
+   (list :id 'devin
+         :name "Devin"
+         :command '("devin" "acp")
+         :environment #'agent-org-devin-environment)
    (list :id 'goose
          :name "Goose"
          :command '("goose" "acp")
@@ -137,6 +148,7 @@ its `session/list' does not answer in practice.  slave-agent implements
 both methods too, and becomes the better default as soon as it is proven
 live on that path from this package -- until then the claim is untested."
   :type '(choice (const :tag "slave-agent" slave-agent)
+                 (const :tag "Devin" devin)
                  (const :tag "Qoder" qoder)
                  (const :tag "Goose" goose)
                  (const :tag "OpenCode" opencode)
@@ -158,6 +170,15 @@ was written around: it opens on the model named in ~/.slave/config.yaml
 start -- that says whether the ACP extra is installed."
   (interactive)
   (agent-org-start 'slave-agent))
+
+;;;###autoload
+(defun agent-org-devin-start-agent ()
+  "Start an interactive Devin agent-org chat.
+Devin is Cognition's CLI agent (`npm i -g devin'); its ACP server is the
+`devin acp' subcommand.  Authenticate once outside Emacs with `devin login',
+or export DEVIN_API_KEY for headless use."
+  (interactive)
+  (agent-org-start 'devin))
 
 ;;;###autoload
 (defun agent-org-goose-start-agent ()
@@ -242,6 +263,15 @@ profile's home rather than the launch default."
   (let ((home (agent-org--env-value "SLAVE_HOME")))
     (when home
       (list (format "SLAVE_HOME=%s" home)))))
+
+(defun agent-org-devin-environment ()
+  "Return environment variables for the Devin ACP client.
+Devin keeps its own login (`devin login'), so nothing is exported by
+default; DEVIN_API_KEY is passed through when the environment has it,
+which is the CLI's non-interactive credential."
+  (let ((key (agent-org--env-value "DEVIN_API_KEY")))
+    (when key
+      (list (format "DEVIN_API_KEY=%s" key)))))
 
 (defun agent-org-goose-environment ()
   "Return environment variables for the Goose ACP client.
